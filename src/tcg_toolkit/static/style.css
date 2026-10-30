@@ -929,3 +929,103 @@ button.switch:hover .switch-track { filter: brightness(.95); }
 #cart-subtotal .converted-price { flex-direction: row; align-items: baseline; gap: 8px; }
 #cart-subtotal .original-price { display: inline; margin-top: 0; font-size: 12px; font-weight: 500; }
 .cart-overview .stat-note { margin-top: 2px; }
+
+
+/* Logo text */
+.chip:has(img.chip-logo) {
+  position: relative;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+
+  min-height: 44px;
+  width: auto;
+  padding: 7px 14px;
+  margin: 0;
+  gap: 8px;
+
+  background: transparent;
+  color: #38343c;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  box-shadow: none;
+  overflow: visible;
+  cursor: pointer;
+
+  transition: background-color 150ms ease,
+            border-color 150ms ease,
+            color 150ms ease,
+            box-shadow 150ms ease;
+}
+
+/* Bring up the previous check mark */
+.chip:has(img.chip-logo) > i {
+  display: none !important;
+}
+
+/* Logo */
+.chip img.chip-logo {
+  order: 0;
+  position: static;
+  display: block;
+  flex: none;
+
+  width: 60px;
+  height: 26px;
+  max-width: none;
+  object-fit: contain;
+  transform: none;
+
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+}
+
+/* Brand text */
+.chip:has(img.chip-logo) > span {
+  order: 1;
+  position: static;
+  display: inline;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+
+  clip-path: none;
+  overflow: visible;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  border-radius: 0;
+
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* Remove the check marks added after the text */
+.chip:has(img.chip-logo) > span::after {
+  content: none !important;
+}
+
+/* Selected: Keep light background, show border */
+.chip:has(img.chip-logo):has(input:checked) {
+  background: transparent;
+  color: #38343c;
+  border-color: #807487;
+}
+
+/* Hover: only add shadow, don't change the border */
+.chip:has(img.chip-logo):hover {
+  box-shadow: 0 3px 10px rgba(60, 45, 70, 0.2);
+}
+
+/* Keyboard focus */
+.chip:has(img.chip-logo):has(input:focus-visible) {
+  outline: 2px solid #8d8295;
+  outline-offset: 3px;
+}

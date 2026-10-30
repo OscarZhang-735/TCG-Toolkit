@@ -74,7 +74,7 @@ function visibleCards(records) {
   return sortCards(rows, filters.sort);
 }
 // Game logos shown after the game name in filter chips (keys match gameKey()).
-const GAME_LOGOS = {ws: './game-ws.webp', 'ws en': './game-ws.webp', wsr: './game-wsr.webp', pm: './game-pm.webp', sev: './game-sev.png', 'sev en': './game-sev.png', lycee: './game-lycee.webp', chaostcg: './game-chaos.webp'};
+const GAME_LOGOS = {ws: './game-ws-sticker.png', 'ws en': './game-ws-sticker.png', wsr: './game-wsr.webp', pm: './game-pm.webp', sev: './game-sev.png', 'sev en': './game-sev.png', lycee: './game-lycee.webp', chaostcg: './game-chaos.webp'};
 function gameChips() {
   const games = new Map(inventory.state.records.map(row => [row.game.toLowerCase(), row.game]));
   $('cards-game-chips').replaceChildren(...[...games].sort((a, b) => collator.compare(a[1], b[1])).map(([key, label]) => {
