@@ -9,6 +9,9 @@ from typing import Annotated
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
 
 from . import (ChaosTCGSearcher, Game, LyceeSearcher, SearchParseError,
                SearchRequestError, WSRSearcher, WSSearcher, PMSearcher, SEVSearcher)
@@ -41,11 +44,20 @@ class BrowserCORS:
         await CORSMiddleware(self.app, allow_origins=list(origins),
                              allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
                              allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
-                             expose_headers=["Idempotency-Replayed"])(scope, receive, send)
+                             expose_headers=["Idempotency-Replayed", "Retry-After"])(scope, receive, send)
 
 
 app = FastAPI(title="TCG Toolkit", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(BrowserCORS)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, exc):
+    if request.url.path.startswith('/api/auth/'):
+        return JSONResponse({'detail': 'validation_error'}, status_code=422)
+    return await request_validation_exception_handler(request, exc)
+
+
 app.include_router(auth_router)
 app.include_router(favorites_router)
 app.include_router(cards_router)
@@ -82,7 +94,7 @@ async def request_proxy_mode(request, call_next):
 async def browser_cache_policy(request, call_next):
     response = await call_next(request)
     if any(request.url.path == path or request.url.path.startswith(path + '/')
-           for path in ('/api/favorites', '/api/cards', '/api/yuyutei')):
+           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei')):
         response.headers['Cache-Control'] = 'no-store'
     elif not request.url.path.startswith('/api/'):
         # Static filenames are stable across releases; validate cached modules.

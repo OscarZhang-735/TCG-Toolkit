@@ -1,0 +1,14 @@
+#auth-email-fields, .email-settings form { display: grid; gap: 16px; }
+#auth-email-fields[hidden], .email-settings form[hidden] { display: none; }
+.email-settings { margin-bottom: 16px; }
+.email-settings h2 { margin: 0 0 12px; font-size: 18px; }
+.email-settings form { max-width: 440px; margin-top: 16px; }
+.email-settings .field input, #auth-email-fields .field input { margin-top: 6px; width: 100%; }
+.email-code-row { display: flex; align-items: flex-end; gap: 10px; }
+.email-code-row .field { min-width: 0; flex: 1; }
+.email-code-row button { flex-shrink: 0; }
+.email-status, #account-email-state { color: var(--color-text-muted); font-size: 12px; line-height: 1.6; margin: 0; }
+#account-email { overflow-wrap: anywhere; }
+#bind-email-error { font-size: 13px; margin: 0; }
+.email-status:empty, #bind-email-error:empty { display: none; }
+@media (max-width: 380px) { .email-code-row { flex-direction: column; align-items: stretch; } }

@@ -1,3 +1,4 @@
+from auth_helpers import register_user
 from pathlib import Path
 
 import httpx
@@ -33,8 +34,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(module, '_cache', {})
     FakeClient.calls, FakeClient.reply = [], FIXTURE
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
-        response = client.post('/api/auth/register', json={
-            'username': 'alice', 'password': 'password123', 'confirm_password': 'password123'})
+        response = register_user(client)
         client.headers['Authorization'] = 'Bearer ' + response.json()['token']
         yield client
 

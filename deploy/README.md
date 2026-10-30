@@ -59,6 +59,17 @@ sudo python3 /opt/tcg-http/releases/当前SHA/deploy.py /opt/tcg-http --rollback
 
 ## 认证与测试边界
 
+邮箱注册版本使用用户数据库 schema v8。发布前在服务器 `/opt/tcg-http/.env` 配置
+`TCG_SMTP_HOST`、`TCG_SMTP_PORT`（可留空）、`TCG_SMTP_TLS`（默认 `starttls`）、
+`TCG_SMTP_USERNAME`、`TCG_SMTP_PASSWORD`、`TCG_SMTP_FROM` 和 `TCG_EMAIL_CODE_SECRET`。
+参数说明和密钥生成见 [开发文档](../docs/developer.md#邮箱注册与验证)。SMTP 及验证码密钥只保存在服务端。
+未配置时老账户继续可用，邮件注册和绑定返回 503，不视为健康检查失败。
+
+部署沿用备份 → 后端 → Pages 顺序。v8 在 v7 凭据清理成功后迁移，保留用户、会话、收藏和卡牌数据。
+老账户无需立即补绑；旧页面的无邮箱注册请求会返回 422，刷新后使用新表单。
+v8 升级后不能直接运行只支持 v7 的镜像；跨 schema 回滚须使用上面的人工恢复流程。
+上线后用受控测试邮箱验收真实 SMTP 投递、验证码注册、邮箱登录及老账户补绑；自动化测试仅模拟邮件传输。
+
 Bearer 令牌存 localStorage，服务端保存摘要，7 天过期，退出撤销并同步其他标签页。
 旧 Cookie 不再认证，更新后的旧页面需刷新并重新登录。
 同一 GitHub 用户下的 Pages 仓库共享 Origin；仓库路径不能隔离 localStorage。

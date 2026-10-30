@@ -947,8 +947,8 @@ button.switch:hover .switch-track { filter: brightness(.95); }
   gap: 8px;
 
   background: transparent;
-  color: #38343c;
-  border: 3px solid transparent;
+  color: var(--color-primary);
+  border: 2px solid transparent;
   border-radius: 999px;
   box-shadow: none;
   overflow: visible;

@@ -210,6 +210,6 @@ def test_v5_migration_removes_credentials(tmp_path):
             PRAGMA user_version=5;''')
     for _ in range(2):
         with UserStore(path).connect() as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 7
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 8
             assert not db.execute("SELECT name FROM sqlite_master WHERE name='yuyutei_credentials'").fetchone()
             assert db.execute('SELECT count(*) FROM cart_operations').fetchone()[0] == 0

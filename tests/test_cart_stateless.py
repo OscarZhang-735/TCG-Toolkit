@@ -1,3 +1,4 @@
+from auth_helpers import create_v6_database
 import json
 from contextlib import contextmanager
 import sqlite3
@@ -52,10 +53,10 @@ def test_idempotency_excludes_credentials_and_still_requires_valid_envelope(clie
 
 def test_v6_migration_erases_old_and_freed_secrets_preserves_operations(tmp_path):
     path = tmp_path / 'legacy.sqlite3'
-    UserStore(path)
+    create_v6_database(path)
     old_secret = 'OLD-SECRET-' * 1000
     current_secret = 'CURRENT-COOKIE-SECRET'
-    with UserStore(path).connect() as db:
+    with sqlite3.connect(path) as db:
         db.execute('PRAGMA secure_delete=OFF')
         db.execute("INSERT INTO users VALUES ('u','alice','hash',1)")
         db.execute("INSERT INTO sessions VALUES ('session-hash','u',9999999999)")
@@ -65,10 +66,9 @@ def test_v6_migration_erases_old_and_freed_secrets_preserves_operations(tmp_path
         db.execute('UPDATE yuyutei_credentials SET session_cookie=?, csrf_token=?', (current_secret, 'current-token-secret'))
         db.execute("INSERT INTO cart_operations VALUES ('u','done','digest','complete',200,'{}',1,1)")
         db.execute("INSERT INTO cart_operations VALUES ('u','pending','digest','processing',NULL,NULL,1,1)")
-        db.execute('PRAGMA user_version=6')
     for _ in range(2):
         with UserStore(path).connect() as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 7
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 8
             assert not db.execute("SELECT name FROM sqlite_master WHERE name='yuyutei_credentials'").fetchone()
             assert db.execute('SELECT count(*) FROM users').fetchone()[0] == 1
             assert db.execute('SELECT count(*) FROM sessions').fetchone()[0] == 1
@@ -81,9 +81,8 @@ def test_v6_migration_erases_old_and_freed_secrets_preserves_operations(tmp_path
 
 def test_failed_credential_cleanup_is_retried_on_restart(tmp_path):
     path = tmp_path / 'interrupted.sqlite3'
-    UserStore(path)
+    create_v6_database(path)
     with sqlite3.connect(path) as db:
-        db.execute('PRAGMA user_version=6')
         db.execute('CREATE TABLE yuyutei_credentials (secret TEXT)')
         db.execute("INSERT INTO yuyutei_credentials VALUES ('legacy-credential')")
 
@@ -104,5 +103,5 @@ def test_failed_credential_cleanup_is_retried_on_restart(tmp_path):
         assert db.execute('PRAGMA user_version').fetchone()[0] == 6
     UserStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 7
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
     assert b'legacy-credential' not in path.read_bytes()
