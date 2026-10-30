@@ -20,8 +20,12 @@ function renderEmail(prefix, challenge) {
 }
 function refreshEmails() {
   renderEmail('auth', registrationEmail); renderEmail('bind', bindingEmail);
-  $('account-email').textContent = user?.email || '';
-  $('account-email-state').textContent = t(user?.email_verified ? 'email_verified' : 'email_unbound');
+  const verified = Boolean(user?.email_verified);
+  $('account-email').textContent = user?.email || t('email_bind_intro');
+  $('account-email').classList.toggle('bound', Boolean(user?.email));
+  $('account-email-state').classList.toggle('ok', verified);
+  $('account-email-state-icon').className = `bi ${verified ? 'bi-check-circle-fill' : 'bi-dash-circle'}`;
+  $('account-email-state-label').textContent = t(verified ? 'email_verified' : 'email_unbound');
   $('bind-email-form').hidden = !user || Boolean(user.email);
   $('bind-email-error').textContent = bindError ? t(bindError) : '';
 }
@@ -69,7 +73,8 @@ function refresh() {
   refreshEmails();
   updateConfirmState();
   $('auth-password').autocomplete = registering ? 'new-password' : 'current-password';
-  $('auth-rules').hidden = !registering;
+  $('auth-form').classList.toggle('registering', registering);
+  for (const id of ['auth-required-note', 'auth-username-hint', 'auth-password-hint']) $(id).hidden = !registering;
   const visible = $('auth-password').type === 'text';
   $('password-toggle').setAttribute('aria-pressed', String(visible));
   $('password-toggle').setAttribute('aria-label', t(visible ? 'auth_hide_password' : 'auth_show_password'));

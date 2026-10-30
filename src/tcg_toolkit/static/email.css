@@ -1,14 +1,33 @@
-#auth-email-fields, .email-settings form { display: grid; gap: 16px; }
+/* Register: email block sits below the account fields, set off by a divider. */
+#auth-email-fields { display: grid; gap: 16px; padding-top: 16px; border-top: 1px solid var(--color-border); }
 #auth-email-fields[hidden], .email-settings form[hidden] { display: none; }
-.email-settings { margin-bottom: 16px; }
-.email-settings h2 { margin: 0 0 12px; font-size: 18px; }
-.email-settings form { max-width: 440px; margin-top: 16px; }
-.email-settings .field input, #auth-email-fields .field input { margin-top: 6px; width: 100%; }
 .email-code-row { display: flex; align-items: flex-end; gap: 10px; }
 .email-code-row .field { min-width: 0; flex: 1; }
-.email-code-row button { flex-shrink: 0; }
-.email-status, #account-email-state { color: var(--color-text-muted); font-size: 12px; line-height: 1.6; margin: 0; }
-#account-email { overflow-wrap: anywhere; }
-#bind-email-error { font-size: 13px; margin: 0; }
+/* Fixed width so the countdown label doesn't make the row jump. */
+.email-code-row button { flex-shrink: 0; min-width: 120px; font-variant-numeric: tabular-nums; }
+.auth-card .email-code-row button { height: 44px; }
+#auth-code:not(:placeholder-shown), #bind-code:not(:placeholder-shown) { letter-spacing: .25em; font-variant-numeric: tabular-nums; }
+.email-status { color: var(--color-text-muted); font-size: 12px; line-height: 1.6; margin: 0; }
 .email-status:empty, #bind-email-error:empty { display: none; }
+
+/* User centre: same head as the other settings cards. */
+.email-settings { margin-bottom: 16px; }
+.email-settings-head { display: flex; align-items: center; gap: 14px; }
+.email-settings-text { flex: 1; min-width: 0; }
+.email-settings-text h2 { font-size: 15px; }
+#account-email { margin: 4px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-text-muted); overflow-wrap: anywhere; }
+#account-email.bound { font-weight: 500; color: var(--color-text); }
+.email-settings form { display: grid; gap: 14px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--color-divider); }
+.bind-email-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.email-settings .field input { margin-top: 6px; }
+#bind-email-error {
+  margin: 0; padding: 10px 14px; font-size: 13px; color: var(--color-text);
+  background: var(--color-surface-muted); border: 1px solid var(--color-border-strong);
+  border-left: 3px solid var(--color-primary); border-radius: var(--radius-md);
+}
+.bind-email-actions { display: flex; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .bind-email-fields { grid-template-columns: 1fr; }
+  .bind-email-actions button { width: 100%; }
+}
 @media (max-width: 380px) { .email-code-row { flex-direction: column; align-items: stretch; } }

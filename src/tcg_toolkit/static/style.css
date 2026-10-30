@@ -378,7 +378,13 @@ button.password-toggle {
   background: transparent; color: var(--color-text-subtle); font-size: 15px;
 }
 button.password-toggle:hover { border: 0; background: var(--color-hover); color: var(--color-text); }
-#auth-rules { margin: -4px 0 0; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
+/* Register: every field is required; the asterisk follows the input's required attribute. */
+.required-mark, #auth-form.registering .field:has(:required) > span:first-child::after { color: var(--color-required); font-weight: 600; }
+#auth-form.registering .field:has(:required) > span:first-child::after { content: "*"; margin-left: 3px; }
+.required-note { margin: -12px 0 -4px; font-size: 12px; color: var(--color-text-muted); text-align: right; }
+.required-note .required-mark { margin-right: 3px; }
+.field-hint { display: block; margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
+.field-hint[hidden] { display: none; }
 #auth-error {
   margin: 0; padding: 10px 14px; font-size: 13px; color: var(--color-text);
   background: var(--color-surface-muted); border: 1px solid var(--color-border-strong);
@@ -695,8 +701,8 @@ button.cart-step:disabled:hover { background: transparent; }
 .cart-settings-text h2 { font-size: 15px; }
 .cart-settings-text p { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-text-muted); }
 .cart-settings-meta { display: flex; flex: none; align-items: center; gap: 10px; }
-.cart-state { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 10px; font-size: 12px; font-weight: 500; color: var(--color-text-muted); background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
-.cart-state.ok { color: var(--color-success); background: var(--color-success-bg); border-color: var(--color-success-border); }
+.cart-state, .email-state { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 10px; font-size: 12px; font-weight: 500; color: var(--color-text-muted); background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
+.cart-state.ok, .email-state.ok { color: var(--color-success); background: var(--color-success-bg); border-color: var(--color-success-border); }
 .cart-state.warn { color: var(--color-text); border-color: var(--color-border-strong); }
 .cart-settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .cart-settings-fields input { margin-top: 6px; }
