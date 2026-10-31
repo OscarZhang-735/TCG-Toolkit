@@ -44,11 +44,13 @@ class SMTPMailer:
         message["From"] = self.sender
         message["To"] = email
         if language == "zh-CN":
-            action = "注册账户" if purpose == "register" else "绑定邮箱"
+            action = {"register": "注册账户", "bind": "绑定邮箱",
+                      "password_change": "修改密码", "password_reset": "重设密码"}[purpose]
             message["Subject"] = "TCG Toolkit 邮箱验证码"
             message.set_content(f"你正在{action}。\n\n验证码：{code}\n\n验证码在 10 分钟内有效，请勿向他人透露。\n如果不是你本人操作，请忽略此邮件。")
         else:
-            action = "create an account" if purpose == "register" else "link your email"
+            action = {"register": "create an account", "bind": "link your email",
+                      "password_change": "change your password", "password_reset": "reset your password"}[purpose]
             message["Subject"] = "TCG Toolkit email verification code"
             message.set_content(f"You requested to {action}.\n\nYour code: {code}\n\nThis code expires in 10 minutes. Do not share it.\nIf you did not request this, ignore this email.")
         context = ssl.create_default_context()
@@ -86,11 +88,21 @@ class EmailVerification:
         digest = self.digest(challenge_id, email, purpose, user_id, code)
         with self.store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            if user_id:
+            if purpose in ("password_change", "password_reset"):
+                user = db.execute("SELECT * FROM users WHERE email=? AND email_verified_at IS NOT NULL",
+                                  (email,)).fetchone()
+                if not user or (user_id is not None and user["id"] != user_id):
+                    if purpose == "password_change":
+                        raise AuthError("verified_email_required")
+                    # Same success shape; never send recovery mail for an unknown address.
+                    return {"challenge_id": challenge_id, "expires_in": 600, "retry_after": 60}
+                user_id = user["id"]
+                digest = self.digest(challenge_id, email, purpose, user_id, code)
+            elif user_id:
                 user = db.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
                 if not user or user["email"] is not None:
                     raise AuthError("email_already_bound", 409)
-            if db.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            if purpose in ("register", "bind") and db.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
                 raise AuthError("email_taken", 409)
             recent = db.execute("""SELECT created_at FROM email_challenges
                 WHERE email = ? AND created_at > ? ORDER BY created_at""", (email, now - 3600)).fetchall()
@@ -117,14 +129,16 @@ class EmailVerification:
             newer = db.execute("""SELECT 1 FROM email_challenges WHERE email=? AND purpose=?
                 AND user_id IS ? AND created_at>? AND state IN ('active','used')""",
                 (email, purpose, user_id, now)).fetchone()
-            if newer or int(time.time()) >= now + 600:
+            pending = db.execute("SELECT state FROM email_challenges WHERE id=?", (challenge_id,)).fetchone()
+            cancelled = not pending or pending["state"] != "pending"
+            if newer or int(time.time()) >= now + 600 or cancelled:
                 db.execute("UPDATE email_challenges SET state='failed' WHERE id=?", (challenge_id,))
             else:
                 db.execute("""UPDATE email_challenges SET state='superseded'
                     WHERE email=? AND purpose=? AND user_id IS ? AND state='active'""",
                     (email, purpose, user_id))
                 db.execute("UPDATE email_challenges SET state='active' WHERE id=?", (challenge_id,))
-        if newer or int(time.time()) >= now + 600:
+        if newer or int(time.time()) >= now + 600 or cancelled:
             raise AuthError("email_send_failed", 503)
         return {"challenge_id": challenge_id, "expires_in": max(0, now + 600 - int(time.time())),
                 "retry_after": max(0, now + 60 - int(time.time()))}

@@ -378,21 +378,21 @@ button.password-toggle {
   background: transparent; color: var(--color-text-subtle); font-size: 15px;
 }
 button.password-toggle:hover { border: 0; background: var(--color-hover); color: var(--color-text); }
-/* Register: every field is required; the asterisk follows the input's required attribute. */
-.required-mark, #auth-form.registering .field:has(:required) > span:first-child::after { color: var(--color-required); font-weight: 600; }
-#auth-form.registering .field:has(:required) > span:first-child::after { content: "*"; margin-left: 3px; }
+/* Register and password reset: every field is required; the asterisk follows the input's required attribute. */
+.required-mark, :is(#auth-form.registering, #password-reset-form) .field:has(:required) > span:first-child::after { color: var(--color-required); font-weight: 600; }
+:is(#auth-form.registering, #password-reset-form) .field:has(:required) > span:first-child::after { content: "*"; margin-left: 3px; }
 .required-note { margin: -12px 0 -4px; font-size: 12px; color: var(--color-text-muted); text-align: right; }
 .required-note .required-mark { margin-right: 3px; }
-.field-hint { display: block; margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
+.field-hint { display: block; margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
 .field-hint[hidden] { display: none; }
-#auth-error {
+#auth-error, #password-reset-error {
   margin: 0; padding: 10px 14px; font-size: 13px; color: var(--color-text);
   background: var(--color-surface-muted); border: 1px solid var(--color-border-strong);
   border-left: 3px solid var(--color-primary); border-radius: var(--radius-md);
 }
 #auth-error:empty { display: none; }
-#auth-submit { width: 100%; height: 44px; margin-top: 4px; }
-#auth-switch { justify-self: center; font-size: 13px; }
+#auth-submit, #password-reset-submit { width: 100%; height: 44px; margin-top: 4px; }
+#auth-switch, #password-reset-back { justify-self: center; font-size: 13px; }
 /* Confirm password */
 #auth-confirm-password { padding-right: 44px; }
 .input-icon > .confirm-state { left: auto; right: 14px; font-size: 15px; }

@@ -93,6 +93,8 @@ class AuthService:
                 verify_password(None, password)
                 return None
         with self.store.connect() as db:
+            # Serialize password verification/session issuance with password changes.
+            db.execute("BEGIN IMMEDIATE")
             query = ("SELECT * FROM users WHERE email = ? AND email_verified_at IS NOT NULL"
                      if is_email else "SELECT * FROM users WHERE username = ?")
             row = db.execute(query, (username,)).fetchone()
@@ -102,6 +104,62 @@ class AuthService:
                 db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
                            (hasher.hash(password), row["id"]))
             return public_user(row), self._session(db, row["id"])
+
+    def send_password_code(self, user_id, language):
+        with self.store.connect() as db:
+            user = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not user or not user["email"] or user["email_verified_at"] is None:
+            raise AuthError("verified_email_required")
+        return self.verification.send(user["email"], language, "password_change", user_id)
+
+    def _replace_password(self, db, user_id, encoded):
+        db.execute("UPDATE users SET password_hash=? WHERE id=?", (encoded, user_id))
+        db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        # Also invalidate pending deliveries: SMTP completion must not reactivate them.
+        db.execute("""UPDATE email_challenges SET state='superseded'
+            WHERE user_id=? AND state IN ('pending','active')""", (user_id,))
+
+    def change_password(self, user_id, token, new_password, method, current_password=None,
+                        challenge_id=None, code=None):
+        encoded = hasher.hash(new_password)
+        with self.store.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            session = db.execute("SELECT 1 FROM sessions WHERE token_hash=? AND user_id=? AND expires_at>?",
+                                 (token_hash(token), user_id, int(time.time()))).fetchone()
+            if not session:
+                raise AuthError("authentication_required", 401)
+            user = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+            error = None
+            if method == "password":
+                if not verify_password(user["password_hash"], current_password):
+                    error = AuthError("invalid_password")
+            else:
+                if not user["email"] or user["email_verified_at"] is None:
+                    raise AuthError("verified_email_required")
+                _, error = self.verification.check(db, challenge_id, code, "password_change",
+                                                   email=user["email"], user_id=user_id)
+            if error is None:
+                if method == "email":
+                    db.execute("UPDATE email_challenges SET state='used' WHERE id=?", (challenge_id,))
+                self._replace_password(db, user_id, encoded)
+        if error:
+            raise error
+
+    def reset_password(self, email, challenge_id, code, new_password):
+        encoded = hasher.hash(new_password)
+        with self.store.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            user = db.execute("SELECT * FROM users WHERE email=? AND email_verified_at IS NOT NULL",
+                              (email,)).fetchone()
+            if not user:
+                raise AuthError("invalid_code")
+            _, error = self.verification.check(db, challenge_id, code, "password_reset",
+                                               email=email, user_id=user["id"])
+            if error is None:
+                db.execute("UPDATE email_challenges SET state='used' WHERE id=?", (challenge_id,))
+                self._replace_password(db, user["id"], encoded)
+        if error:
+            raise error
 
     def current_user(self, token):
         if not token:

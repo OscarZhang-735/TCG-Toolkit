@@ -4,12 +4,15 @@ import {createAuthenticatedRequest} from './auth-client.js';
 import {yuyuteiClient} from './yuyutei-client.js';
 import {bindNavMenus, syncNavMenus} from './nav-menu.js';
 import {createEmailChallenge, authError} from './email-code.js';
+import {createPasswordUI} from './password-ui.js';
 const $ = id => document.getElementById(id);
 let user = null, searchApp = null, registering = false, errorKey = '';
-let bindError = '', authGeneration = 0;
+let bindError = '', authGeneration = 0, forgotten = false;
 const api = createAuthenticatedRequest(() => signedOut('auth_expired'), apiRequest);
 const registrationEmail = createEmailChallenge({request: apiRequest});
 const bindingEmail = createEmailChallenge({request: api.fetch});
+const passwordUI = createPasswordUI({request: apiRequest, authenticatedRequest: api.fetch,
+  getUser: () => user, onChanged: () => signedOut('password_changed')});
 function renderEmail(prefix, challenge) {
   const state = challenge.snapshot();
   const button = $(`${prefix}-send-code`);
@@ -19,6 +22,7 @@ function renderEmail(prefix, challenge) {
     : state.expired ? t('email_code_expired') : state.challengeId ? t('email_sent') : '';
 }
 function refreshEmails() {
+  passwordUI.refresh();
   renderEmail('auth', registrationEmail); renderEmail('bind', bindingEmail);
   const verified = Boolean(user?.email_verified);
   $('account-email').textContent = user?.email || t('email_bind_intro');
@@ -30,6 +34,7 @@ function refreshEmails() {
   $('bind-email-error').textContent = bindError ? t(bindError) : '';
 }
 function resetEmails() {
+  passwordUI.reset();
   registrationEmail.reset(); bindingEmail.reset(); bindError = '';
   for (const id of ['auth-email', 'auth-code', 'bind-email', 'bind-code', 'bind-password']) $(id).value = '';
 }
@@ -58,7 +63,10 @@ function refresh() {
   applyLanguage(document);
   syncNavMenus();  // page names in the dropdown toggles follow the language
   $('auth-language').value = getLanguage();
-  $('auth-heading').textContent = t(registering ? 'auth_register' : 'auth_login');
+  $('auth-heading').textContent = t(forgotten ? 'password_reset_title' : registering ? 'auth_register' : 'auth_login');
+  $('auth-form').hidden = forgotten;
+  $('password-reset-form').hidden = !forgotten;
+  $('auth-forgot').hidden = registering;
   $('auth-submit').textContent = t(registering ? 'auth_register' : 'auth_login');
   $('auth-switch').textContent = t(registering ? 'auth_have_account' : 'auth_need_account');
   $('auth-confirm-field').hidden = !registering;
@@ -94,6 +102,7 @@ function setAvatar(name) {
   for (const id of ['user-avatar', 'account-avatar']) $(id).textContent = name.slice(0, 1).toUpperCase();
 }
 function signedOut(message = '', clearToken = true) {
+  forgotten = false;
   authGeneration++; resetEmails();
   yuyuteiClient.deactivate({clear: clearToken});
   if (clearToken) setToken(null);
@@ -125,7 +134,7 @@ $('auth-form').addEventListener('submit', async event => {
   const challenge = registrationEmail.payload($('auth-code').value);
   if (registering && !challenge) { errorKey = 'email_request_code'; refresh(); return; }
   const started = authGeneration;
-  $('auth-submit').disabled = true; $('auth-switch').disabled = true;
+  $('auth-submit').disabled = true; $('auth-switch').disabled = true; $('auth-forgot').disabled = true;
   errorKey = ''; refresh();
   try {
     const response = await apiRequest(`/api/auth/${registering ? 'register' : 'login'}`, {
@@ -137,7 +146,7 @@ $('auth-form').addEventListener('submit', async event => {
     if (!response.ok) {errorKey = authError(result.detail, response.status); refresh(); return;}
     setToken(result.token); await signedIn(result.user);
   } catch { if (started === authGeneration) { errorKey = 'auth_unavailable'; refresh(); } }
-  finally { $('auth-submit').disabled = false; $('auth-switch').disabled = false; }
+  finally { $('auth-submit').disabled = false; $('auth-switch').disabled = false; $('auth-forgot').disabled = false; }
 });
 $('password-toggle').addEventListener('click', () => {
   $('auth-password').type = $('auth-password').type === 'password' ? 'text' : 'password'; refresh();
@@ -146,6 +155,14 @@ for (const id of ['auth-password', 'auth-confirm-password']) $(id).addEventListe
 $('auth-switch').addEventListener('click', () => {
   authGeneration++; resetEmails();
   registering = !registering; errorKey = ''; $('auth-password').value = ''; $('auth-confirm-password').value = ''; refresh();
+});
+$('auth-forgot').addEventListener('click', () => {
+  authGeneration++; resetEmails(); forgotten = true; registering = false; errorKey = '';
+  $('auth-password').value = ''; $('auth-confirm-password').value = ''; refresh();
+  $('password-reset-email').focus();
+});
+$('password-reset-back').addEventListener('click', () => {
+  authGeneration++; resetEmails(); forgotten = false; errorKey = ''; refresh();
 });
 for (const [prefix, challenge] of [['auth', registrationEmail], ['bind', bindingEmail]]) {
   $(`${prefix}-email`).addEventListener('input', () => {

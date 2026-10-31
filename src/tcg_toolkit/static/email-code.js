@@ -4,7 +4,7 @@ export function authError(detail, status) {
     email_already_bound: 'email_already_bound', invalid_password: 'email_invalid_password',
     invalid_code: 'email_invalid_code', code_expired: 'email_code_expired',
     code_attempts_exhausted: 'email_code_exhausted', email_unavailable: 'email_unavailable',
-    email_send_failed: 'email_send_failed'})[detail]
+    email_send_failed: 'email_send_failed', verified_email_required: 'password_email_required'})[detail]
     || ({401: 'auth_invalid', 409: 'auth_taken', 422: 'auth_validation',
       429: 'auth_limited', 403: 'auth_origin'})[status] || 'auth_unavailable';
 }
