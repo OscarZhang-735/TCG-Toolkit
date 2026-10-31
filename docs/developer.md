@@ -58,6 +58,69 @@ python -m pytest -q tests
 node --test tests/*.test.mjs
 ```
 
+## 邮箱注册与验证
+
+新用户必须验证邮箱才能创建账户；用户名和密码规则保持不变。注册成功仍返回 `{user, token}` 并自动登录。
+登录请求的 `username` 字段接受用户名或已验证邮箱。`user` 和 `/api/auth/me` 增加 `email`、`email_verified`；
+老账户分别为 `null`、`false`，可正常登录及在用户中心补绑。当前不提供更换邮箱或免密登录。
+
+### SMTP 配置
+
+| 变量 | 说明 | 默认值 |
+| --- | --- | --- |
+| `TCG_SMTP_HOST` | SMTP 主机 | 空 |
+| `TCG_SMTP_PORT` | SMTP 端口 | 留空时 STARTTLS 为 587、SSL 为 465 |
+| `TCG_SMTP_TLS` | `starttls` 或 `ssl`，均校验证书；不支持明文回退 | `starttls` |
+| `TCG_SMTP_USERNAME` | SMTP 登录名 | 空 |
+| `TCG_SMTP_PASSWORD` | SMTP 密码或服务商授权码，与登录名一起设置；受信任的免认证中继可同时留空 | 空 |
+| `TCG_SMTP_FROM` | 发件地址，例如 `TCG Toolkit <noreply@example.com>` | 空 |
+| `TCG_EMAIL_CODE_SECRET` | 持久保存的随机 HMAC 密钥，至少 32 字节 | 空 |
+
+用 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 生成密钥并保存到服务端 `.env`，不要每次启动重新生成。
+更换密钥会使已发送验证码失效，但不会注销既有会话。发件地址需符合所用 SMTP 服务的发信权限。
+配置由启动时读取，修改后重启服务。本地和部署 Compose 均传入这些变量，不进入前端静态产物。
+主机、发件人、TLS、端口或密钥缺失／无效时，邮件操作返回 `503 email_unavailable`；既有账户登录不受影响。
+SMTP 连接和 socket 操作超时为 10 秒，发送失败返回 `503 email_send_failed`，不自动重发。
+
+### API 流程
+
+所有写入要求受信任 Origin 和 JSON；所有认证响应均带 `Cache-Control: no-store`。
+
+| 接口 | JSON 请求 | 成功响应 |
+| --- | --- | --- |
+| `POST /api/auth/register/email-code` | `email`，可选 `language`（`en` 或 `zh-CN`，默认 `en`） | `challenge_id, expires_in, retry_after`（秒） |
+| `POST /api/auth/register` | `username, password, confirm_password, email, challenge_id, code` | `201 {user, token}` |
+| `POST /api/auth/email/bind-code` | `email, current_password`，可选 `language`；需 Bearer | `challenge_id, expires_in, retry_after` |
+| `POST /api/auth/email/bind` | `challenge_id, code`；需发起验证码的账户 Bearer | 更新后的 `user` |
+| `POST /api/auth/password/change/email-code` | 可选 `language`；需 Bearer，只向当前账户已验证邮箱发送 | `challenge_id, expires_in, retry_after` |
+| `POST /api/auth/password/change` | `method, new_password, confirm_password`；`method=password` 时提供 `current_password`，`method=email` 时提供 `challenge_id, code`；需 Bearer | `204`，所有会话撤销 |
+| `POST /api/auth/password/reset/email-code` | `email`，可选 `language`；无需登录 | 相同发送响应结构；未知或未验证邮箱不发信 |
+| `POST /api/auth/password/reset` | `email, challenge_id, code, new_password, confirm_password`；无需登录 | `204`，所有会话撤销 |
+
+`code` 是保留前导零的六位数字字符串；验证码 10 分钟有效，最多错误 5 次，成功后不可重用。
+邮箱去除首尾空白、规范化后转为小写，不折叠点号或 `+` 别名，不执行 DNS 查询。
+同邮箱各用途共享 60 秒发送间隔及每小时 5 次配额（发送失败也计入）；配额和验证码摘要持久化。
+IP 限制为各发送接口每分钟 5 次、注册／绑定验证及登录接口每分钟 10 次；IP 限制为现有进程内实现。
+`429` 的 `Retry-After` 表示需等待秒数，CORS 向跨域前端开放此响应头。
+
+错误码包括 `username_taken`、`email_taken`、`email_already_bound`（409）；
+`invalid_code`、`code_expired`、`code_attempts_exhausted`、`invalid_password`（400）；
+`validation_error`（422）、`rate_limited`（429）及上述邮件错误（503）。
+邮箱改密要求已验证邮箱，否则返回 `400 verified_email_required`。旧密码改密不依赖 SMTP 配置。
+用户名或邮箱冲突不消耗有效验证码；成功重发使同邮箱、用途和绑定账户的旧码失效，发送失败保留旧码。
+验证记录绑定用途和账户，注册／绑定与验证码消费在同一事务完成。响应不回显敏感输入；不要在代理或日志中记录认证请求体。
+
+新密码仍为 8–18 个字符，必须与确认密码一致。邮箱改密和忘记密码分别使用 `password_change`、`password_reset` 用途，
+不能混用，也不能用注册或绑定验证码改密。忘记密码的发码成功提示保持统一，不直接说明邮箱是否存在；
+未注册或未验证邮箱获得不可使用的随机 challenge ID，不保存记录、不发送邮件。
+改密事务同时更新 Argon2id 摘要、消费验证码、撤销全部会话，并作废该用户其余待发送或有效验证码。
+登录的密码校验和会话创建也在写事务内完成，避免并发登录在改密后留下旧密码会话。
+验证码邮件晚到时不会重新激活已作废记录。前端改密成功清除本地会话，返回登录页，并提示使用新密码登录。
+本次沿用 schema v8 和现有 SMTP 配置，无需数据库迁移或新增环境变量。
+
+自动化测试注入内存发信器，仍经过真实验证码校验；没有生产环境绕过开关。
+真实投递验收：配置 SMTP 后，向自己的测试邮箱发送验证码，确认邮件语言、到达时间、验证码注册和邮箱登录，再确认重发旧码失效。
+
 ## Shadowverse Evolve 搜索器（Python）
 
 `SEVSearcher` 使用 `/sell/sev/s/search?search_word=`，复用现有搜索结果结构和分页方法。

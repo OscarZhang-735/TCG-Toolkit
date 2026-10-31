@@ -14,7 +14,7 @@ const {t, setLanguage, getLanguage, resolveLanguage} = await import(asModule(sou
 test('both languages cover HTML and dynamic translation keys', async () => {
   assert.deepEqual(Object.keys(messages.en).sort(), Object.keys(messages['zh-CN']).sort());
   const html = await readFile(new URL('index.html', base), 'utf8');
-  const app = await readFile(new URL('app.js', base), 'utf8') + await readFile(new URL('auth.js', base), 'utf8') + await readFile(new URL('cards-ui.js', base), 'utf8');
+  const app = await readFile(new URL('app.js', base), 'utf8') + await readFile(new URL('auth.js', base), 'utf8') + await readFile(new URL('cards-ui.js', base), 'utf8') + await readFile(new URL('password-ui.js', base), 'utf8');
   for (const match of html.matchAll(/data-i18n(?:-[\w-]+)?="([^"]+)"/g)) assert.ok(messages.en[match[1]], match[1]);
   for (const match of app.matchAll(/\bt\('([^']+)'/g)) assert.ok(messages.en[match[1]], match[1]);
   for (const key of Object.keys(messages.en)) {

@@ -6,6 +6,13 @@ services:
     ports:
       - "18080:8000"
     environment:
+      TCG_SMTP_HOST: "${TCG_SMTP_HOST:-}"
+      TCG_SMTP_PORT: "${TCG_SMTP_PORT:-}"
+      TCG_SMTP_USERNAME: "${TCG_SMTP_USERNAME:-}"
+      TCG_SMTP_PASSWORD: "${TCG_SMTP_PASSWORD:-}"
+      TCG_SMTP_FROM: "${TCG_SMTP_FROM:-}"
+      TCG_SMTP_TLS: "${TCG_SMTP_TLS:-starttls}"
+      TCG_EMAIL_CODE_SECRET: "${TCG_EMAIL_CODE_SECRET:-}"
       RAPIDAPI_KEY: ${RAPIDAPI_KEY:-}
       TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/proxy}"
       TCG_TRUSTED_ORIGINS: http://99.79.33.22:18080,https://oscarzhang-735.github.io

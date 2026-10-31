@@ -1,0 +1,85 @@
+/* Register: email block sits below the account fields, set off by a divider. */
+#auth-email-fields { display: grid; gap: 16px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+#auth-email-fields[hidden], .email-settings form[hidden] { display: none; }
+.email-code-row { display: flex; align-items: flex-end; gap: 10px; }
+.email-code-row .field { min-width: 0; flex: 1; }
+/* Fixed width so the countdown label doesn't make the row jump. */
+.email-code-row button { flex-shrink: 0; min-width: 120px; font-variant-numeric: tabular-nums; }
+.auth-card .email-code-row button { height: 44px; }
+#auth-code:not(:placeholder-shown), #bind-code:not(:placeholder-shown), #password-reset-code:not(:placeholder-shown), #password-change-code:not(:placeholder-shown) { letter-spacing: .25em; font-variant-numeric: tabular-nums; }
+.email-status { color: var(--color-text-muted); font-size: 12px; line-height: 1.6; margin: 0; }
+.email-status:empty, #bind-email-error:empty { display: none; }
+
+/* User centre: same head as the other settings cards. */
+.email-settings { margin-bottom: 16px; }
+.email-settings-head { display: flex; align-items: center; gap: 14px; }
+.email-settings-text { flex: 1; min-width: 0; }
+.email-settings-text h2 { font-size: 15px; }
+#account-email { margin: 4px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-text-muted); overflow-wrap: anywhere; }
+#account-email.bound { font-weight: 500; color: var(--color-text); }
+.email-settings form { display: grid; gap: 14px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--color-divider); }
+.bind-email-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.email-settings .field input { margin-top: 6px; }
+#bind-email-error {
+  margin: 0; padding: 10px 14px; font-size: 13px; color: var(--color-text);
+  background: var(--color-surface-muted); border: 1px solid var(--color-border-strong);
+  border-left: 3px solid var(--color-primary); border-radius: var(--radius-md);
+}
+.bind-email-actions { display: flex; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .bind-email-fields { grid-template-columns: 1fr; }
+  .bind-email-actions button { width: 100%; }
+}
+@media (max-width: 380px) { .email-code-row { flex-direction: column; align-items: stretch; } }
+
+/* Password recovery and user-centre password changes. */
+.auth-card form[hidden] { display: none; }
+.password-form { display: grid; gap: 14px; }
+.password-form .field > input { width: 100%; margin-top: 6px; }
+.password-help { color: var(--color-text-muted); font-size: 13px; line-height: 1.6; margin: 4px 0 0; overflow-wrap: anywhere; }
+#password-change-email-fields[hidden], #password-old-field[hidden], #password-email-required[hidden] { display: none; }
+.password-error { margin: 0; font-size: 13px; }
+.password-error:empty { display: none; }
+
+/* Forgot password: same look as the register form; email proof, divider, then the new password. */
+.auth-card .password-form { gap: 16px; }
+.password-reset-intro { margin: -12px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-text-muted); text-align: center; }
+#password-reset-form .required-note { margin: -4px 0 -4px; }
+.password-reset-new-field { padding-top: 16px; border-top: 1px solid var(--color-border); }
+
+/* User centre: same layout as the email card — proof row, then new/confirm row. */
+.password-settings { margin-bottom: 16px; }
+.password-settings form[hidden] { display: none; }
+.password-settings form { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--color-divider); }
+.password-change-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+#password-change-email-fields .field-hint { overflow-wrap: anywhere; }
+#password-change-status { margin-top: 4px; }
+.password-settings .password-error {
+  padding: 10px 14px; color: var(--color-text);
+  background: var(--color-surface-muted); border: 1px solid var(--color-border-strong);
+  border-left: 3px solid var(--color-primary); border-radius: var(--radius-md);
+}
+.password-change-actions { display: flex; justify-content: flex-end; }
+
+/* Segmented radio control for the verification method. */
+fieldset.password-method { min-width: 0; margin: 0; padding: 0; border: 0; }
+.password-method legend { padding: 0; font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
+.segmented { display: flex; gap: 3px; margin-top: 6px; padding: 3px; background: var(--color-hover); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.segmented label { position: relative; flex: 1; min-width: 0; }
+.segmented input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.segmented label > span {
+  display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 10px;
+  border-radius: calc(var(--radius-md) - 2px); font-size: 13px; font-weight: 500; white-space: nowrap;
+  color: var(--color-text-muted); transition: background .15s, color .15s, box-shadow .15s;
+}
+.segmented label:hover > span { color: var(--color-text); }
+.segmented input:checked + span { background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-sm); }
+.segmented input:focus-visible + span { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.segmented input:disabled { cursor: not-allowed; }
+.segmented input:disabled + span { opacity: .45; }
+.segmented label:hover > input:disabled + span { color: var(--color-text-muted); }
+
+@media (max-width: 640px) {
+  .password-change-grid { grid-template-columns: 1fr; }
+  .password-change-actions button { width: 100%; }
+}

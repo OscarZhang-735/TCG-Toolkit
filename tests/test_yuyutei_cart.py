@@ -1,3 +1,4 @@
+from auth_helpers import register_user
 from datetime import datetime
 import json
 import sqlite3
@@ -18,8 +19,7 @@ SECRETS = {'cookie': 'alice-session%3D', 'csrf_token': 'alice-csrf'}
 
 
 def login(client, name):
-    response = client.post('/api/auth/register', json={
-        'username': name, 'password': 'password123', 'confirm_password': 'password123'})
+    response = register_user(client, name)
     assert response.status_code == 201
     client.headers['Authorization'] = 'Bearer ' + response.json()['token']
 
@@ -214,7 +214,7 @@ def test_v4_migration_preserves_existing_tables(tmp_path):
             PRAGMA user_version=4;''')
     for _ in range(2):
         with UserStore(path).connect() as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 7
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 8
             assert db.execute('SELECT id FROM users').fetchone()[0] == 'alice'
             assert db.execute('SELECT token_hash FROM sessions').fetchone()[0] == 'existing-session'
             assert db.execute('SELECT id FROM favorites').fetchone()[0] == 'existing-favorite'

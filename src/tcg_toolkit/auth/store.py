@@ -11,7 +11,7 @@ class UserStore:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version > 7:
+            if version > 8:
                 raise RuntimeError("User database is newer than this application.")
             if version == 0:
                 db.execute("""CREATE TABLE users (
@@ -67,7 +67,28 @@ class UserStore:
                     raise RuntimeError("Credential cleanup is waiting for database readers; retry startup.")
                 # Keep version 6 until cleanup succeeds, so an interrupted or
                 # failed cleanup is retried on the next startup.
-                db.execute("PRAGMA user_version = 7")
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("PRAGMA user_version").fetchone()[0] < 7:
+                    db.execute("PRAGMA user_version = 7")
+
+        # Re-read under the write lock: another startup may have migrated already.
+        # v7's secret cleanup must finish before recording any later version.
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("PRAGMA user_version").fetchone()[0] < 8:
+                db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+                db.execute("ALTER TABLE users ADD COLUMN email_verified_at INTEGER")
+                db.execute("CREATE UNIQUE INDEX users_email ON users(email)")
+                db.execute("""CREATE TABLE email_challenges (
+                    id TEXT PRIMARY KEY, email TEXT NOT NULL, purpose TEXT NOT NULL,
+                    user_id TEXT REFERENCES users(id), code_hash TEXT NOT NULL,
+                    created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    state TEXT NOT NULL CHECK(state IN
+                        ('pending', 'active', 'failed', 'superseded', 'used')))
+                """)
+                db.execute("CREATE INDEX email_challenges_quota ON email_challenges(email, created_at)")
+                db.execute("PRAGMA user_version = 8")
 
     @contextmanager
     def connect(self):

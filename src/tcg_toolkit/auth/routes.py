@@ -4,19 +4,44 @@ import os
 from threading import Lock
 import time
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field, model_validator
+from typing import Literal
+from pydantic import BaseModel, Field, field_validator, model_validator
 from .service import AuthService, DuplicateUsername
 from .store import UserStore
+from .email_verification import normalize_email
 
 router = APIRouter(prefix="/api/auth")
 
 
 class Credentials(BaseModel):
-    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    username: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=18)
 
 
-class RegistrationCredentials(Credentials):
+class EmailInput(BaseModel):
+    email: str = Field(max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value):
+        return normalize_email(value)
+
+
+class CodeRequest(EmailInput):
+    language: Literal["en", "zh-CN"] = "en"
+
+
+class BindingCodeRequest(CodeRequest):
+    current_password: str = Field(min_length=8, max_length=18)
+
+
+class CodeInput(BaseModel):
+    challenge_id: str = Field(min_length=1, max_length=128)
+    code: str = Field(pattern=r"^[0-9]{6}$")
+
+
+class RegistrationCredentials(Credentials, EmailInput, CodeInput):
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
     confirm_password: str = Field(min_length=8, max_length=18)
 
     @model_validator(mode="after")
@@ -24,6 +49,42 @@ class RegistrationCredentials(Credentials):
         if self.password != self.confirm_password:
             raise ValueError("Passwords do not match.")
         return self
+
+
+class NewPassword(BaseModel):
+    new_password: str = Field(min_length=8, max_length=18)
+    confirm_password: str = Field(min_length=8, max_length=18)
+
+    @model_validator(mode="after")
+    def passwords_match(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match.")
+        return self
+
+
+class PasswordChange(NewPassword):
+    method: Literal["password", "email"]
+    current_password: str | None = Field(default=None, min_length=8, max_length=18)
+    challenge_id: str | None = Field(default=None, min_length=1, max_length=128)
+    code: str | None = Field(default=None, pattern=r"^[0-9]{6}$")
+
+    @model_validator(mode="after")
+    def require_proof(self):
+        if self.method == "password":
+            valid = self.current_password is not None and self.challenge_id is None and self.code is None
+        else:
+            valid = self.current_password is None and self.challenge_id is not None and self.code is not None
+        if not valid:
+            raise ValueError("Provide the selected verification method.")
+        return self
+
+
+class PasswordReset(NewPassword, EmailInput, CodeInput):
+    pass
+
+
+class PasswordCodeRequest(BaseModel):
+    language: Literal["en", "zh-CN"] = "en"
 
 
 class RateLimiter:
@@ -80,17 +141,32 @@ def credentials_guard(request: Request):
     write_guard(request)
     action = request.url.path.rsplit("/", 1)[-1]
     ip = request.client.host if request.client else "unknown"
-    request.app.state.auth_limiter.check((action, ip), 5 if action == "register" else 10)
+    request.app.state.auth_limiter.check((action, ip), 5 if action in ("email-code", "bind-code") else 10)
 
 
 @router.post("/register", status_code=201, dependencies=[Depends(credentials_guard)])
 def register(body: RegistrationCredentials, request: Request, response: Response):
     try:
-        user, token = service(request).register(body.username, body.password)
+        user, token = service(request).register(body.username, body.password, body.email, body.challenge_id, body.code)
     except DuplicateUsername:
         raise HTTPException(409, detail="username_taken") from None
     response.headers["Cache-Control"] = "no-store"
     return {"user": user, "token": token}
+
+
+@router.post("/register/email-code", dependencies=[Depends(credentials_guard)])
+def registration_code(body: CodeRequest, request: Request):
+    return service(request).verification.send(body.email, body.language)
+
+
+@router.post("/email/bind-code", dependencies=[Depends(credentials_guard)])
+def binding_code(body: BindingCodeRequest, request: Request, user=Depends(current_user)):
+    return service(request).send_binding_code(user["id"], body.email, body.current_password, body.language)
+
+
+@router.post("/email/bind", dependencies=[Depends(credentials_guard)])
+def bind_email(body: CodeInput, request: Request, user=Depends(current_user)):
+    return service(request).bind_email(user["id"], body.challenge_id, body.code)
 
 
 @router.post("/login", dependencies=[Depends(credentials_guard)])
@@ -104,6 +180,29 @@ def login(body: Credentials, request: Request, response: Response):
         service(request).logout(old_token)
     response.headers["Cache-Control"] = "no-store"
     return {"user": user, "token": token}
+
+
+@router.post("/password/change/email-code", dependencies=[Depends(credentials_guard)])
+def password_change_code(body: PasswordCodeRequest, request: Request, user=Depends(current_user)):
+    return service(request).send_password_code(user["id"], body.language)
+
+
+@router.post("/password/change", status_code=204, dependencies=[Depends(credentials_guard)])
+def change_password(body: PasswordChange, request: Request, user=Depends(current_user)):
+    service(request).change_password(user["id"], bearer_token(request), body.new_password, body.method,
+                                    body.current_password, body.challenge_id, body.code)
+    return Response(status_code=204)
+
+
+@router.post("/password/reset/email-code", dependencies=[Depends(credentials_guard)])
+def password_reset_code(body: CodeRequest, request: Request):
+    return service(request).verification.send(body.email, body.language, "password_reset")
+
+
+@router.post("/password/reset", status_code=204, dependencies=[Depends(credentials_guard)])
+def reset_password(body: PasswordReset, request: Request):
+    service(request).reset_password(body.email, body.challenge_id, body.code, body.new_password)
+    return Response(status_code=204)
 
 
 @router.post("/logout", status_code=204, dependencies=[Depends(write_guard)])

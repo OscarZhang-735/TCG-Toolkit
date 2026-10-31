@@ -1,3 +1,4 @@
+from auth_helpers import register_user
 import json
 import sqlite3
 from dataclasses import replace
@@ -30,8 +31,7 @@ def client(tmp_path, monkeypatch):
 
 
 def login(client, username):
-    response = client.post('/api/auth/register', json={
-        'username': username, 'password': 'password123', 'confirm_password': 'password123'})
+    response = register_user(client, username)
     assert response.status_code == 201
     client.headers["Authorization"] = "Bearer " + response.json()["token"]
     return response.json()["user"]
@@ -123,7 +123,7 @@ def test_v1_migration_preserves_existing_data(tmp_path):
             INSERT INTO sessions VALUES ('token', 'u', 9999999999);
             PRAGMA user_version = 1;''')
     with UserStore(path).connect() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 7
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
         assert db.execute('SELECT username FROM users').fetchone()[0] == 'alice'
         assert db.execute('SELECT token_hash FROM sessions').fetchone()[0] == 'token'
         assert db.execute('SELECT count(*) FROM favorites').fetchone()[0] == 0

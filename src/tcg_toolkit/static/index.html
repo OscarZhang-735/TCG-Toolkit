@@ -11,6 +11,7 @@
 <link rel="apple-touch-icon" href="./apple-touch-icon.png"/>
 <link href="./theme.css" rel="stylesheet"/>
 <link href="./style.css" rel="stylesheet"/>
+<link href="./email.css" rel="stylesheet"/>
 <script src="./auth.js" type="module"></script>
 </head>
 <body class="signed-out">
@@ -33,13 +34,31 @@
 <section class="panel auth-card">
 <h1 id="auth-heading"></h1>
 <form id="auth-form">
-<label class="field"><span data-i18n="auth_username"></span><span class="input-icon"><i class="bi bi-person"></i><input id="auth-username" name="username" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_\-]+" required aria-describedby="auth-rules"/></span></label>
-<label class="field"><span data-i18n="auth_password"></span><span class="input-icon"><i class="bi bi-lock"></i><input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="18" required aria-describedby="auth-rules"/><button id="password-toggle" class="password-toggle" type="button" aria-pressed="false"><i class="bi bi-eye"></i></button></span></label>
+<p id="auth-required-note" class="required-note" hidden><span class="required-mark" aria-hidden="true">*</span><span data-i18n="form_required_note"></span></p>
+<label class="field"><span id="auth-identifier-label"></span><span class="input-icon"><i class="bi bi-person"></i><input id="auth-username" name="username" autocomplete="username" minlength="3" maxlength="320" required aria-describedby="auth-username-hint"/></span><small id="auth-username-hint" class="field-hint" data-i18n="auth_username_rule" hidden></small></label>
+<label class="field"><span data-i18n="auth_password"></span><span class="input-icon"><i class="bi bi-lock"></i><input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="18" required aria-describedby="auth-password-hint"/><button id="password-toggle" class="password-toggle" type="button" aria-pressed="false"><i class="bi bi-eye"></i></button></span><small id="auth-password-hint" class="field-hint" data-i18n="auth_password_rule" hidden></small></label>
 <label class="field" id="auth-confirm-field" hidden><span data-i18n="auth_confirm_password"></span><span class="input-icon"><i class="bi bi-shield-lock"></i><input id="auth-confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="18"/><i id="confirm-state" class="confirm-state" aria-hidden="true"></i></span></label>
-<p id="auth-rules" data-i18n="auth_rules" hidden></p>
+<div id="auth-email-fields" hidden>
+<label class="field"><span data-i18n="email_address"></span><span class="input-icon"><i class="bi bi-envelope"></i><input id="auth-email" name="email" type="email" autocomplete="email" maxlength="254"/></span></label>
+<div class="email-code-row"><label class="field"><span data-i18n="email_code"></span><span class="input-icon"><i class="bi bi-123"></i><input id="auth-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" data-i18n-placeholder="email_code_placeholder" aria-describedby="auth-email-status"/></span></label><button id="auth-send-code" class="secondary" type="button"></button></div>
+<p id="auth-email-status" class="email-status" role="status" aria-live="polite"></p>
+</div>
 <p id="auth-error" role="alert"></p>
 <button id="auth-submit" type="submit" disabled></button>
+<button id="auth-forgot" type="button" class="text-button" data-i18n="password_forgot"></button>
 <button id="auth-switch" type="button" class="text-button"></button>
+</form>
+<form id="password-reset-form" class="password-form" hidden>
+<p class="password-reset-intro" data-i18n="password_reset_intro"></p>
+<p class="required-note"><span class="required-mark" aria-hidden="true">*</span><span data-i18n="form_required_note"></span></p>
+<label class="field"><span data-i18n="email_address"></span><span class="input-icon"><i class="bi bi-envelope"></i><input id="password-reset-email" type="email" autocomplete="email" maxlength="254" required/></span></label>
+<div class="email-code-row"><label class="field"><span data-i18n="email_code"></span><span class="input-icon"><i class="bi bi-123"></i><input id="password-reset-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required data-i18n-placeholder="email_code_placeholder" aria-describedby="password-reset-status"/></span></label><button id="password-reset-send" type="button" class="secondary"></button></div>
+<p id="password-reset-status" class="email-status" role="status" aria-live="polite"></p>
+<label class="field password-reset-new-field"><span data-i18n="password_new"></span><span class="input-icon"><i class="bi bi-lock"></i><input id="password-reset-new" type="password" autocomplete="new-password" minlength="8" maxlength="18" required aria-describedby="password-reset-hint"/></span><small id="password-reset-hint" class="field-hint" data-i18n="auth_password_rule"></small></label>
+<label class="field"><span data-i18n="auth_confirm_password"></span><span class="input-icon"><i class="bi bi-shield-lock"></i><input id="password-reset-confirm" type="password" autocomplete="new-password" minlength="8" maxlength="18" required/></span></label>
+<p id="password-reset-error" class="password-error" role="alert"></p>
+<button id="password-reset-submit" type="submit" data-i18n="password_reset_title"></button>
+<button id="password-reset-back" type="button" class="text-button"><i class="bi bi-arrow-left"></i><span data-i18n="password_back"></span></button>
 </form>
 </section>
 </div>
@@ -53,6 +72,43 @@
 <button id="logout" type="button" class="secondary"><i class="bi bi-box-arrow-right"></i><span data-i18n="auth_logout"></span></button>
 <span id="account-status" role="alert"></span>
 </div>
+</section>
+<section class="panel email-settings" aria-labelledby="email-settings-title">
+<div class="email-settings-head"><span class="account-icon"><i class="bi bi-envelope"></i></span>
+<div class="email-settings-text"><h2 id="email-settings-title" data-i18n="email_address"></h2><p id="account-email"></p></div>
+<span id="account-email-state" class="email-state"><i id="account-email-state-icon" aria-hidden="true"></i><span id="account-email-state-label"></span></span></div>
+<form id="bind-email-form" hidden>
+<div class="bind-email-fields">
+<label class="field"><span data-i18n="email_address"></span><input id="bind-email" type="email" autocomplete="email" maxlength="254" required/></label>
+<label class="field"><span data-i18n="email_current_password"></span><input id="bind-password" type="password" autocomplete="current-password" minlength="8" maxlength="18" required/></label>
+<div class="email-code-row"><label class="field"><span data-i18n="email_code"></span><input id="bind-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required data-i18n-placeholder="email_code_placeholder" aria-describedby="bind-email-status"/></label><button id="bind-send-code" class="secondary" type="button"></button></div>
+</div>
+<p id="bind-email-status" class="email-status" role="status" aria-live="polite"></p>
+<p id="bind-email-error" role="alert"></p>
+<div class="bind-email-actions"><button id="bind-email-submit" type="submit"><i class="bi bi-link-45deg"></i><span data-i18n="email_bind"></span></button></div>
+</form>
+</section>
+<section id="password-settings" class="panel password-settings collapsed" aria-labelledby="password-settings-title">
+<div class="email-settings-head"><span class="account-icon"><i class="bi bi-shield-lock"></i></span><div class="email-settings-text"><h2 id="password-settings-title" data-i18n="password_change_title"></h2><p class="password-help" data-i18n="password_change_intro"></p></div>
+<button type="button" id="password-settings-toggle" class="icon-button panel-toggle" aria-controls="password-change-form" aria-expanded="false"><i id="password-settings-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div>
+<form id="password-change-form" class="password-form" hidden>
+<div class="password-change-grid">
+<fieldset id="password-change-method" class="field password-method"><legend data-i18n="password_method"></legend>
+<div class="segmented"><label><input id="password-method-password" type="radio" name="password-method" value="password" checked/><span><i class="bi bi-key"></i><span data-i18n="password_by_old"></span></span></label><label><input id="password-email-option" type="radio" name="password-method" value="email"/><span><i class="bi bi-envelope"></i><span data-i18n="password_by_email"></span></span></label></div>
+<p id="password-email-required" class="field-hint" data-i18n="password_email_required"></p>
+</fieldset>
+<label id="password-old-field" class="field"><span data-i18n="email_current_password"></span><input id="password-current" type="password" autocomplete="current-password" minlength="8" maxlength="18" required/></label>
+<div id="password-change-email-fields" hidden>
+<div class="email-code-row"><label class="field"><span data-i18n="email_code"></span><input id="password-change-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required data-i18n-placeholder="email_code_placeholder" aria-describedby="password-change-address password-change-status"/></label><button id="password-change-send" type="button" class="secondary"></button></div>
+<p id="password-change-address" class="field-hint"></p>
+<p id="password-change-status" class="email-status" role="status" aria-live="polite"></p>
+</div>
+<label class="field"><span data-i18n="password_new"></span><input id="password-change-new" type="password" autocomplete="new-password" minlength="8" maxlength="18" required aria-describedby="password-change-hint"/><small id="password-change-hint" class="field-hint" data-i18n="auth_password_rule"></small></label>
+<label class="field"><span data-i18n="auth_confirm_password"></span><input id="password-change-confirm" type="password" autocomplete="new-password" minlength="8" maxlength="18" required/></label>
+</div>
+<p id="password-change-error" class="password-error" role="alert"></p>
+<div class="password-change-actions"><button id="password-change-submit" type="submit"><i class="bi bi-shield-check"></i><span data-i18n="password_change_title"></span></button></div>
+</form>
 </section>
 <section id="proxy-settings" class="panel proxy-settings" aria-labelledby="proxy-title" hidden>
 <span class="account-icon"><i class="bi bi-hdd-network"></i></span>

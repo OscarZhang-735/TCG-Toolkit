@@ -1,3 +1,4 @@
+from auth_helpers import registration_body, register_user
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
@@ -19,10 +20,10 @@ def client(monkeypatch, tmp_path):
 
 
 def test_register_session_logout_login(client):
-    response = client.post("/api/auth/register", json={**BODY, "confirm_password": BODY["password"]})
+    response = register_user(client, **BODY)
     assert response.status_code == 201
     user = response.json()["user"]
-    assert set(user) == {"id", "username", "created_at"}
+    assert set(user) == {"id", "username", "created_at", "email", "email_verified"}
     assert user["username"] == "alice"
     assert "set-cookie" not in response.headers
     token = response.json()["token"]
@@ -34,7 +35,7 @@ def test_register_session_logout_login(client):
         digest = db.execute("SELECT token_hash FROM sessions").fetchone()[0]
         assert encoded.startswith("$argon2id$") and BODY["password"] not in encoded
         assert digest == token_hash(token) and token != digest
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 8
     assert AuthService(UserStore(store.path)).current_user(token) == user
     assert client.post("/api/auth/logout", json={}).status_code == 204
     assert app.state.auth.current_user(token) is None
@@ -46,8 +47,8 @@ def test_register_session_logout_login(client):
 
 
 def test_validation_and_errors(client):
-    assert client.post("/api/auth/register", json={**BODY, "confirm_password": BODY["password"]}).status_code == 201
-    assert client.post("/api/auth/register", json={**BODY, "confirm_password": BODY["password"], "username": "ALICE"}).status_code == 409
+    assert register_user(client, **BODY).status_code == 201
+    assert register_user(client, "ALICE", BODY["password"], "another@example.com").status_code == 409
     for username in ("Alice", "unknown"):
         response = client.post("/api/auth/login", json={"username": username, "password": "wrong password!"})
         assert response.status_code == 401 and response.json()["detail"] == "invalid_credentials"
@@ -86,10 +87,10 @@ def test_write_guard(client):
         assert client.post(f"/api/auth/{endpoint}", json={**BODY, "confirm_password": BODY["password"]}, headers={"Origin": "https://evil.test"}).status_code == 403
         assert client.post(f"/api/auth/{endpoint}", content="{}", headers={"Content-Type": "text/plain"}).status_code == 415
     client.headers.pop("origin")
-    assert client.post("/api/auth/register", json={**BODY, "confirm_password": BODY["password"]}).status_code == 403
+    assert client.post('/api/auth/register', json=BODY).status_code == 403
 
 
-@pytest.mark.parametrize("action,limit", [("login", 10), ("register", 5)])
+@pytest.mark.parametrize("action,limit", [("login", 10), ("register", 10), ("register/email-code", 5)])
 def test_rate_limit_and_spoofed_ip(client, action, limit, monkeypatch):
     import tcg_toolkit.auth.routes as routes
     now = [100.0]
@@ -103,18 +104,19 @@ def test_rate_limit_and_spoofed_ip(client, action, limit, monkeypatch):
 
 
 def test_concurrent_registration(client):
-    def register():
+    bodies = [registration_body(client, **BODY, email=f"concurrent{i}@example.com") for i in range(2)]
+    def register(body):
         try:
-            return app.state.auth.register(**BODY)[0]
+            return app.state.auth.register(**{k:v for k,v in body.items() if k != "confirm_password"})[0]
         except DuplicateUsername:
             return None
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: register(), range(2)))
+        results = list(pool.map(register, bodies))
     assert sum(result is not None for result in results) == 1
 
 
 def test_restart_keeps_session(client):
-    client.post("/api/auth/register", json={**BODY, "confirm_password": BODY["password"]})
+    register_user(client, **BODY)
     token = app.state.auth.login(BODY["username"], BODY["password"])[1]
     with TestClient(app, base_url=ORIGIN) as restarted:
         restarted.headers["Authorization"] = "Bearer " + token
@@ -124,8 +126,7 @@ def test_restart_keeps_session(client):
 @pytest.mark.parametrize("length,expected", [(7,422),(8,201),(18,201),(19,422)])
 def test_password_lengths(client, length, expected):
     password = "x" * length
-    assert client.post("/api/auth/register", json={"username":"length_test", "password":password,
-        "confirm_password":password}).status_code == expected
+    assert register_user(client, "length_test", password).status_code == expected
     if expected == 201:
         assert client.post("/api/auth/login", json={"username":"length_test", "password":password}).status_code == 200
 
@@ -149,7 +150,7 @@ def test_cors(client, method):
 
 
 def test_cookie_ignored_and_malformed_bearer(client):
-    token = app.state.auth.register(**BODY)[1]
+    token = register_user(client, **BODY).json()["token"]
     client.cookies.set("tcg_session", token)
     assert client.get("/api/auth/me").status_code == 401
     for value in ("Basic " + token, "Bearer", "Bearer wrong", "Bearer " + token + " extra"):
