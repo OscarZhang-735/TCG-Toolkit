@@ -49,6 +49,7 @@
 
 /* User centre: same layout as the email card — proof row, then new/confirm row. */
 .password-settings { margin-bottom: 16px; }
+.password-settings form[hidden] { display: none; }
 .password-settings form { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--color-divider); }
 .password-change-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
 #password-change-email-fields .field-hint { overflow-wrap: anywhere; }

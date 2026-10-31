@@ -775,8 +775,8 @@ button.cart-step:disabled:hover { background: transparent; }
   .cart-settings-head { flex-wrap: wrap; }
   .cart-settings-meta { width: 100%; justify-content: space-between; }
 }
-button.cart-settings-toggle { width: 32px; height: 32px; border-radius: 50%; font-size: 15px; }
-button.cart-settings-toggle:hover { background: var(--color-hover); }
+button.cart-settings-toggle, button.panel-toggle { flex: none; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; }
+button.cart-settings-toggle:hover, button.panel-toggle:hover { background: var(--color-hover); }
 /* No icon for neutral states: drop the empty element so the gap does not offset the text. */
 #cart-settings-state-icon:not([class~="bi"]) { display: none; }
 

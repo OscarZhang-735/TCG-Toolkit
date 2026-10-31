@@ -16,7 +16,9 @@ function setup(user = {email:'alice@example.com',email_verified:true}) {
   let changed = 0;
   const $ = id => {
     if (!fields.has(id)) fields.set(id, {value:'', hidden:false,
-      disabled:false, required:false, textContent:'', listeners:{},
+      disabled:false, required:false, textContent:'', listeners:{}, attributes:{}, classes:new Set(),
+      classList:{toggle(name,on){on?fields.get(id).classes.add(name):fields.get(id).classes.delete(name);}},
+      setAttribute(name,value){this.attributes[name]=value;}, getAttribute(name){return this.attributes[name];},
       addEventListener(name,handler){this.listeners[name]=handler;}, reportValidity(){return true;},
       reset(){
         const prefix = id.includes('change') ? 'change' : 'reset';
@@ -62,6 +64,19 @@ test('email change uses the verified account email and does not submit old passw
   assert.equal(s.calls[1].body.challenge_id,'challenge');
   assert.ok(!Object.hasOwn(s.calls[1].body,'current_password'));
   assert.equal(s.changed,1);
+});
+
+test('user-centre form starts collapsed, toggles open, and collapses again on reset',async()=>{
+  const s=setup();
+  assert.equal(s.$('password-change-form').hidden,true);
+  assert.equal(s.$('password-settings-toggle').attributes['aria-expanded'],'false');
+  await s.emit('password-settings-toggle');
+  assert.equal(s.$('password-change-form').hidden,false);
+  assert.equal(s.$('password-settings').classes.has('collapsed'),false);
+  assert.equal(s.$('password-settings-toggle').attributes['aria-label'],'panel_collapse');
+  s.ui.reset(); s.ui.refresh();
+  assert.equal(s.$('password-change-form').hidden,true);
+  assert.equal(s.$('password-settings').classes.has('collapsed'),true);
 });
 
 test('unbound accounts retain old-password option and see binding guidance',()=>{

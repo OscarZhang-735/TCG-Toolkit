@@ -88,9 +88,10 @@
 <div class="bind-email-actions"><button id="bind-email-submit" type="submit"><i class="bi bi-link-45deg"></i><span data-i18n="email_bind"></span></button></div>
 </form>
 </section>
-<section class="panel password-settings" aria-labelledby="password-settings-title">
-<div class="email-settings-head"><span class="account-icon"><i class="bi bi-shield-lock"></i></span><div class="email-settings-text"><h2 id="password-settings-title" data-i18n="password_change_title"></h2><p class="password-help" data-i18n="password_change_intro"></p></div></div>
-<form id="password-change-form" class="password-form">
+<section id="password-settings" class="panel password-settings collapsed" aria-labelledby="password-settings-title">
+<div class="email-settings-head"><span class="account-icon"><i class="bi bi-shield-lock"></i></span><div class="email-settings-text"><h2 id="password-settings-title" data-i18n="password_change_title"></h2><p class="password-help" data-i18n="password_change_intro"></p></div>
+<button type="button" id="password-settings-toggle" class="icon-button panel-toggle" aria-controls="password-change-form" aria-expanded="false"><i id="password-settings-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div>
+<form id="password-change-form" class="password-form" hidden>
 <div class="password-change-grid">
 <fieldset id="password-change-method" class="field password-method"><legend data-i18n="password_method"></legend>
 <div class="segmented"><label><input id="password-method-password" type="radio" name="password-method" value="password" checked/><span><i class="bi bi-key"></i><span data-i18n="password_by_old"></span></span></label><label><input id="password-email-option" type="radio" name="password-method" value="email"/><span><i class="bi bi-envelope"></i><span data-i18n="password_by_email"></span></span></label></div>

@@ -7,10 +7,19 @@ export function createPasswordUI({request, authenticatedRequest, getUser, onChan
     change: createEmailChallenge({request: authenticatedRequest}),
     reset: createEmailChallenge({request})
   };
-  let generation = 0;
+  let generation = 0, open = false;  // the user-centre form starts collapsed
   const errors = {change: '', reset: ''}, busy = {change: false, reset: false};
   function refresh() {
     const user = getUser();
+    $('password-change-form').hidden = !open;
+    $('password-settings').classList.toggle('collapsed', !open);
+    // Icon-only, like the cart card: down expands, up collapses; the words stay as its accessible name.
+    const toggle = $('password-settings-toggle');
+    toggle.disabled = busy.change;
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-label', t(open ? 'panel_collapse' : 'panel_expand'));
+    toggle.title = toggle.getAttribute('aria-label');
+    $('password-settings-toggle-icon').className = `bi ${open ? 'bi-chevron-up' : 'bi-chevron-down'}`;
     $('password-email-option').disabled = !user?.email_verified;
     if (!user?.email_verified) $('password-method-password').checked = true;
     const byEmail = $('password-email-option').checked;
@@ -36,12 +45,15 @@ export function createPasswordUI({request, authenticatedRequest, getUser, onChan
     }
   }
   function reset() {
-    generation++;
+    generation++; open = false;
     for (const prefix of ['change', 'reset']) {
       challenges[prefix].reset(); errors[prefix] = ''; busy[prefix] = false;
       $(`password-${prefix}-form`).reset();
     }
   }
+  $('password-settings-toggle').addEventListener('click', () => {
+    open = !open; refresh();
+  });
   $('password-change-method').addEventListener('change', () => {
     $('password-current').value = ''; $('password-change-code').value = '';
     errors.change = ''; refresh();
