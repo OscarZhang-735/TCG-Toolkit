@@ -11,3 +11,5 @@
 
 !src/tcg_toolkit/auth/
 !src/tcg_toolkit/auth/*.py
+!src/tcg_toolkit/migrations/
+!src/tcg_toolkit/migrations/*.sql

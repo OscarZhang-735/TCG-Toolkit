@@ -108,7 +108,7 @@ class RateLimiter:
 
 
 def initialize_auth(app):
-    app.state.auth = AuthService(UserStore(os.getenv("TCG_USER_DB", "data/users.sqlite3")))
+    app.state.auth = AuthService(UserStore())
     app.state.auth_limiter = RateLimiter()
     app.state.auth_origins = {value.strip().rstrip("/") for value in
                               os.getenv("TCG_TRUSTED_ORIGINS", "").split(",") if value.strip()}

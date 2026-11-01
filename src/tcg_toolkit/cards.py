@@ -1,5 +1,5 @@
 """Private, manually maintained card inventory."""
-import sqlite3
+from psycopg.errors import UniqueViolation
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -53,7 +53,7 @@ def record(row):
 
 
 def owned(db, user_id, card_id):
-    row = db.execute('SELECT * FROM owned_cards WHERE user_id = ? AND id = ?',
+    row = db.execute('SELECT * FROM owned_cards WHERE user_id = %s AND id = %s',
                      (user_id, card_id)).fetchone()
     if row is None:
         raise HTTPException(404, detail='card_not_found')
@@ -66,8 +66,8 @@ def values(body):
 
 
 def conflict(db, user_id, body):
-    row = db.execute('''SELECT id FROM owned_cards WHERE user_id = ?
-        AND game_key = ? AND number_key = ? AND rarity_key = ?''',
+    row = db.execute('''SELECT id FROM owned_cards WHERE user_id = %s
+        AND game_key = %s AND number_key = %s AND rarity_key = %s''',
         (user_id, body.game.casefold(), body.card_number.casefold(), body.rarity.casefold())).fetchone()
     if row:
         raise HTTPException(409, detail={'type': 'card_duplicate', 'id': row['id']})
@@ -77,7 +77,7 @@ def conflict(db, user_id, body):
 def listing(request: Request, user=Depends(current_user)):
     with request.app.state.auth.store.connect() as db:
         return {'items': [record(row) for row in db.execute(
-            'SELECT * FROM owned_cards WHERE user_id = ? ORDER BY created_at DESC, rowid DESC', (user['id'],))]}
+            'SELECT * FROM owned_cards WHERE user_id = %s ORDER BY created_at DESC, sort_id DESC', (user['id'],))]}
 
 
 @router.post('', status_code=201, dependencies=[Depends(write_guard)])
@@ -85,9 +85,10 @@ def add(body: CardInput, request: Request, user=Depends(current_user)):
     card_id, now = str(uuid.uuid4()), int(time.time())
     with request.app.state.auth.store.connect() as db:
         try:
-            db.execute('INSERT INTO owned_cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            with db.transaction():
+                db.execute('INSERT INTO owned_cards (id,user_id,game,card_number,rarity,name,quantity,notes,game_key,number_key,rarity_key,created_at,updated_at,image_url) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
                        (card_id, user['id'], *values(body), now, now, body.image_url))
-        except sqlite3.IntegrityError:
+        except UniqueViolation:
             conflict(db, user['id'], body)
             raise
         return record(owned(db, user['id'], card_id))
@@ -98,10 +99,11 @@ def update(card_id: str, body: CardInput, request: Request, user=Depends(current
     with request.app.state.auth.store.connect() as db:
         owned(db, user['id'], card_id)
         try:
-            db.execute('''UPDATE owned_cards SET game=?, card_number=?, rarity=?, name=?, quantity=?,
-                notes=?, game_key=?, number_key=?, rarity_key=?, image_url=?, updated_at=? WHERE user_id=? AND id=?''',
+            with db.transaction():
+                db.execute('''UPDATE owned_cards SET game=%s, card_number=%s, rarity=%s, name=%s, quantity=%s,
+                notes=%s, game_key=%s, number_key=%s, rarity_key=%s, image_url=%s, updated_at=%s WHERE user_id=%s AND id=%s''',
                 (*values(body), body.image_url, int(time.time()), user['id'], card_id))
-        except sqlite3.IntegrityError:
+        except UniqueViolation:
             conflict(db, user['id'], body)
             raise
         return record(owned(db, user['id'], card_id))
@@ -111,4 +113,4 @@ def update(card_id: str, body: CardInput, request: Request, user=Depends(current
 def remove(card_id: str, request: Request, user=Depends(current_user)):
     with request.app.state.auth.store.connect() as db:
         owned(db, user['id'], card_id)
-        db.execute('DELETE FROM owned_cards WHERE user_id = ? AND id = ?', (user['id'], card_id))
+        db.execute('DELETE FROM owned_cards WHERE user_id = %s AND id = %s', (user['id'], card_id))

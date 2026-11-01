@@ -53,7 +53,7 @@ def record(row):
 
 
 def owned(db, user_id, favorite_id):
-    row = db.execute('SELECT * FROM favorites WHERE user_id = ? AND id = ?',
+    row = db.execute('SELECT * FROM favorites WHERE user_id = %s AND id = %s',
                      (user_id, favorite_id)).fetchone()
     if row is None:
         raise HTTPException(404, detail='favorite_not_found')
@@ -64,18 +64,18 @@ def owned(db, user_id, favorite_id):
 def listing(request: Request, user=Depends(current_user)):
     with store(request).connect() as db:
         return {'items': [record(row) for row in db.execute(
-            'SELECT * FROM favorites WHERE user_id = ? ORDER BY created_at DESC, rowid DESC',
+            'SELECT * FROM favorites WHERE user_id = %s ORDER BY created_at DESC, sort_id DESC',
             (user['id'],))]}
 
 
 @router.post('', dependencies=[Depends(write_guard)])
 def add(body: CardSnapshot, request: Request, user=Depends(current_user)):
     with store(request).connect() as db:
-        db.execute('''INSERT INTO favorites VALUES (?, ?, ?, ?, ?, ?, NULL)
+        db.execute('''INSERT INTO favorites (id,user_id,game,product_url,snapshot,created_at,refreshed_at) VALUES (%s, %s, %s, %s, %s, %s, NULL)
                       ON CONFLICT(user_id, game, product_url) DO NOTHING''',
                    (str(uuid.uuid4()), user['id'], body.game.value, body.product_url,
                     body.model_dump_json(), int(time.time())))
-        return record(db.execute('SELECT * FROM favorites WHERE user_id = ? AND game = ? AND product_url = ?',
+        return record(db.execute('SELECT * FROM favorites WHERE user_id = %s AND game = %s AND product_url = %s',
                                  (user['id'], body.game.value, body.product_url)).fetchone())
 
 
@@ -83,7 +83,7 @@ def add(body: CardSnapshot, request: Request, user=Depends(current_user)):
 def remove(favorite_id: str, request: Request, user=Depends(current_user)):
     with store(request).connect() as db:
         owned(db, user['id'], favorite_id)
-        db.execute('DELETE FROM favorites WHERE user_id = ? AND id = ?', (user['id'], favorite_id))
+        db.execute('DELETE FROM favorites WHERE user_id = %s AND id = %s', (user['id'], favorite_id))
 
 
 @router.post('/{favorite_id}/refresh', dependencies=[Depends(write_guard)])
@@ -106,6 +106,6 @@ def refresh(favorite_id: str, request: Request, user=Depends(current_user)):
     if match is None:
         raise HTTPException(404, detail='refresh_product_missing')
     with store(request).connect() as db:
-        db.execute('UPDATE favorites SET snapshot = ?, refreshed_at = ? WHERE user_id = ? AND id = ?',
+        db.execute('UPDATE favorites SET snapshot = %s, refreshed_at = %s WHERE user_id = %s AND id = %s',
                    (json.dumps(match.to_dict()), int(time.time()), user['id'], favorite_id))
         return record(owned(db, user['id'], favorite_id))

@@ -9,6 +9,7 @@ import smtplib
 import ssl
 import time
 
+from ..database import email_lock
 from email_validator import validate_email
 from fastapi import HTTPException
 
@@ -87,9 +88,14 @@ class EmailVerification:
         challenge_id, code = secrets.token_urlsafe(32), f"{secrets.randbelow(1000000):06d}"
         digest = self.digest(challenge_id, email, purpose, user_id, code)
         with self.store.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
+            # Lock account before mailbox, then challenge rows, throughout auth.
+            if user_id:
+                db.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (user_id,))
+            elif purpose == "password_reset":
+                db.execute("SELECT id FROM users WHERE email=%s FOR UPDATE", (email,))
+            email_lock(db, email)
             if purpose in ("password_change", "password_reset"):
-                user = db.execute("SELECT * FROM users WHERE email=? AND email_verified_at IS NOT NULL",
+                user = db.execute("SELECT * FROM users WHERE email=%s AND email_verified_at IS NOT NULL",
                                   (email,)).fetchone()
                 if not user or (user_id is not None and user["id"] != user_id):
                     if purpose == "password_change":
@@ -99,45 +105,47 @@ class EmailVerification:
                 user_id = user["id"]
                 digest = self.digest(challenge_id, email, purpose, user_id, code)
             elif user_id:
-                user = db.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()
+                user = db.execute("SELECT email FROM users WHERE id = %s", (user_id,)).fetchone()
                 if not user or user["email"] is not None:
                     raise AuthError("email_already_bound", 409)
-            if purpose in ("register", "bind") and db.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            if purpose in ("register", "bind") and db.execute("SELECT 1 FROM users WHERE email = %s", (email,)).fetchone():
                 raise AuthError("email_taken", 409)
             recent = db.execute("""SELECT created_at FROM email_challenges
-                WHERE email = ? AND created_at > ? ORDER BY created_at""", (email, now - 3600)).fetchall()
-            retry = max(0, recent[-1][0] + 60 - now) if recent else 0
+                WHERE email = %s AND created_at > %s ORDER BY created_at""", (email, now - 3600)).fetchall()
+            retry = max(0, recent[-1]["created_at"] + 60 - now) if recent else 0
             if len(recent) >= 5:
-                retry = max(retry, recent[-5][0] + 3600 - now)
+                retry = max(retry, recent[-5]["created_at"] + 3600 - now)
             if retry:
                 raise AuthError("rate_limited", 429, retry)
             # Reserving before SMTP enforces limits across concurrent requests/restarts.
             db.execute("""INSERT INTO email_challenges
                 (id,email,purpose,user_id,code_hash,created_at,expires_at,state)
-                VALUES (?,?,?,?,?,?,?,'pending')""",
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'pending')""",
                 (challenge_id, email, purpose, user_id, digest, now, now + 600))
-            db.execute("DELETE FROM email_challenges WHERE created_at < ?", (now - 86400,))
+            db.execute("DELETE FROM email_challenges WHERE email=%s AND created_at < %s", (email, now - 86400))
         try:
             self.mailer.send_code(email, code, language, purpose)
         except (OSError, smtplib.SMTPException, ValueError):
             with self.store.connect() as db:
-                db.execute("UPDATE email_challenges SET state='failed' WHERE id=?", (challenge_id,))
+                db.execute("UPDATE email_challenges SET state='failed' WHERE id=%s", (challenge_id,))
             raise AuthError("email_send_failed", 503) from None
         with self.store.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
+            if user_id:
+                db.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (user_id,))
+            email_lock(db, email)
             # A delayed delivery must not replace a newer, successfully sent code.
-            newer = db.execute("""SELECT 1 FROM email_challenges WHERE email=? AND purpose=?
-                AND user_id IS ? AND created_at>? AND state IN ('active','used')""",
+            newer = db.execute("""SELECT 1 FROM email_challenges WHERE email=%s AND purpose=%s
+                AND user_id IS NOT DISTINCT FROM %s AND created_at>%s AND state IN ('active','used')""",
                 (email, purpose, user_id, now)).fetchone()
-            pending = db.execute("SELECT state FROM email_challenges WHERE id=?", (challenge_id,)).fetchone()
+            pending = db.execute("SELECT state FROM email_challenges WHERE id=%s", (challenge_id,)).fetchone()
             cancelled = not pending or pending["state"] != "pending"
             if newer or int(time.time()) >= now + 600 or cancelled:
-                db.execute("UPDATE email_challenges SET state='failed' WHERE id=?", (challenge_id,))
+                db.execute("UPDATE email_challenges SET state='failed' WHERE id=%s", (challenge_id,))
             else:
                 db.execute("""UPDATE email_challenges SET state='superseded'
-                    WHERE email=? AND purpose=? AND user_id IS ? AND state='active'""",
+                    WHERE email=%s AND purpose=%s AND user_id IS NOT DISTINCT FROM %s AND state='active'""",
                     (email, purpose, user_id))
-                db.execute("UPDATE email_challenges SET state='active' WHERE id=?", (challenge_id,))
+                db.execute("UPDATE email_challenges SET state='active' WHERE id=%s", (challenge_id,))
         if newer or int(time.time()) >= now + 600 or cancelled:
             raise AuthError("email_send_failed", 503)
         return {"challenge_id": challenge_id, "expires_in": max(0, now + 600 - int(time.time())),
@@ -146,7 +154,7 @@ class EmailVerification:
     def check(self, db, challenge_id, code, purpose, email=None, user_id=None):
         """Return an error so callers can commit failed-attempt counters before raising."""
         self.require_configured()
-        row = db.execute("SELECT * FROM email_challenges WHERE id=?", (challenge_id,)).fetchone()
+        row = db.execute("SELECT * FROM email_challenges WHERE id=%s FOR UPDATE", (challenge_id,)).fetchone()
         if (not row or row["purpose"] != purpose or row["user_id"] != user_id
                 or (email is not None and row["email"] != email) or row["state"] != "active"):
             return row, AuthError("invalid_code")
@@ -156,6 +164,6 @@ class EmailVerification:
             return row, AuthError("code_attempts_exhausted")
         expected = self.digest(challenge_id, row["email"], purpose, user_id, code)
         if not hmac.compare_digest(row["code_hash"], expected):
-            db.execute("UPDATE email_challenges SET attempts=attempts+1 WHERE id=?", (challenge_id,))
+            db.execute("UPDATE email_challenges SET attempts=attempts+1 WHERE id=%s", (challenge_id,))
             return row, AuthError("code_attempts_exhausted" if row["attempts"] == 4 else "invalid_code")
         return row, None

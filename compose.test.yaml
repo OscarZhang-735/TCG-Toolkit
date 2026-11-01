@@ -1,0 +1,24 @@
+name: tcg-pg-tests
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: tcg_test
+      POSTGRES_PASSWORD: local-test-only
+      POSTGRES_DB: tcg_test
+    ports:
+      - "127.0.0.1:15433:5432"
+    volumes:
+      - test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U tcg_test -d tcg_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  test-data:
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: "${TCG_TEST_SUBNET:-10.204.0.0/24}"

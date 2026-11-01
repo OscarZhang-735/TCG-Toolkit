@@ -12,7 +12,6 @@ BODY = {"username": "Alice", "password": "a long password!"}
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
-    monkeypatch.setenv("TCG_USER_DB", str(tmp_path / "users.sqlite3"))
     monkeypatch.setenv("TCG_TRUSTED_ORIGINS", ORIGIN)
     monkeypatch.setenv("TCG_COOKIE_SECURE", "true")
     with TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN}) as client:
@@ -31,12 +30,12 @@ def test_register_session_logout_login(client):
     assert client.get("/api/auth/me").json() == user
     store = app.state.auth.store
     with store.connect() as db:
-        encoded = db.execute("SELECT password_hash FROM users").fetchone()[0]
-        digest = db.execute("SELECT token_hash FROM sessions").fetchone()[0]
+        encoded = db.execute("SELECT password_hash FROM users").fetchone()['password_hash']
+        digest = db.execute("SELECT token_hash FROM sessions").fetchone()['token_hash']
         assert encoded.startswith("$argon2id$") and BODY["password"] not in encoded
         assert digest == token_hash(token) and token != digest
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 8
-    assert AuthService(UserStore(store.path)).current_user(token) == user
+        assert db.execute("SELECT max(version) AS version FROM schema_migrations").fetchone()["version"] == 1
+    assert AuthService(UserStore(store.conninfo)).current_user(token) == user
     assert client.post("/api/auth/logout", json={}).status_code == 204
     assert app.state.auth.current_user(token) is None
     assert client.get("/api/auth/me").status_code == 401

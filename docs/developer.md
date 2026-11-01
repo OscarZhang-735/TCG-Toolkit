@@ -16,25 +16,27 @@ docker compose start           # 再次启动
 docker compose up -d --build   # 更新代码后重建
 ```
 
-用户、收藏、个人卡牌、购物车幂等记录和汇率数据保存在 `currency-data` 数据卷中，重建镜像不会丢失。备份时先 `docker compose stop web`，
-复制数据卷内容后再 `docker compose start web`；不要删除该数据卷。
+用户、会话、收藏、卡牌、验证码、购物车幂等记录和汇率缓存统一保存在 PostgreSQL 的 `postgres-data` 数据卷。
+`db → migrate → web` 依次启动，迁移失败时 Web 不启动。Web 不再挂载 SQLite 卷。备份使用 `pg_dump`，恢复流程见[部署手册](../deploy/README.md)。
+升级现有本地安装时，先停止旧 Web、复制 `/app/data` 备份并保留旧卷，再配置 PostgreSQL 密码和启动新版本。此次切换不导入旧数据。
 
 如果 Windows 占用了 8000 端口，在 `.env` 中设置 `TCG_PORT=18080`，并同步把 `TCG_TRUSTED_ORIGINS`
 改为 `http://localhost:18080`，然后访问 http://localhost:18080 。
 
 ### 直接运行 Python
 
-需要 Python 3.11 或更新版本。
+需要 Python 3.11 或更新版本，以及可连接的 PostgreSQL 17。先在进程环境设置 `PGHOST`、`PGPORT`、`PGDATABASE`、`PGUSER`、`PGPASSWORD`；直接运行时 `PGHOST` 应为实际数据库地址。
 
 ```powershell
 python -m venv venv
 venv\Scripts\activate
 python -m pip install -e ".[web]"
 Copy-Item .env.example .env
+python -m tcg_toolkit.db_cli migrate
 uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 ```
 
-打开 http://localhost:8000 。数据默认保存在项目目录的 `data/` 下。
+打开 http://localhost:8000 。应用启动只检查 schema，不会自动建表；迁移命令从进程环境读取 PostgreSQL 连接信息。`uvicorn --env-file` 仅影响 Web 进程。
 
 ### 配置项
 
@@ -44,8 +46,11 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
 | `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/proxy` |
-| `TCG_USER_DB` | 用户、收藏、个人卡牌与购物车幂等记录数据库路径（直接运行时） | `data/users.sqlite3` |
-| `TCG_CURRENCY_CACHE` | 汇率缓存路径（直接运行时） | `data/currency.sqlite3` |
+| `PGHOST` / `PGPORT` | PostgreSQL 地址；Compose 内使用服务名 | `db` / `5432`（Compose） |
+| `PGDATABASE` / `PGUSER` / `PGPASSWORD` | 应用数据库、非超级用户角色及密码 | Compose 默认库和角色为 `tcg`；密码必填 |
+| `TCG_PG_ADMIN_PASSWORD` | PostgreSQL 初始化管理员密码，仅传给 db | 必填 |
+| `TCG_POSTGRES_IMAGE` | 随后端一起发布的 PostgreSQL 镜像 | 固定 PostgreSQL 17 digest |
+| `TCG_DB_SUBNET` | 内部数据库网络 | `10.205.0.0/24` |
 | `TCG_PROXY_IPS` | 受信任的反向代理来源 IP，不要设为 `*` | `127.0.0.1` |
 | `TCG_SUBNET` | Docker 网络子网，与本地网络冲突时修改 | `10.203.0.0/24` |
 
@@ -54,9 +59,18 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 ### 测试
 
 ```powershell
+docker compose -f compose.test.yaml up -d --wait
+$env:PGHOST="127.0.0.1"
+$env:PGPORT="15433"
+$env:PGDATABASE="tcg_test"
+$env:PGUSER="tcg_test"
+$env:PGPASSWORD="local-test-only"
 python -m pytest -q tests
-node --test tests/*.test.mjs
+node --test (Get-ChildItem tests/*.test.mjs).FullName
 ```
+
+测试使用真实 PostgreSQL 和每项独立 schema，要求库名以 `_test` 结尾。测试结束释放连接并清理自己创建的 schema；数据库卷不自动删除。
+GitHub Actions 在现有 test job 内启动 PostgreSQL service，不增加数据库发布工作流。
 
 ## 邮箱注册与验证
 
@@ -116,7 +130,7 @@ IP 限制为各发送接口每分钟 5 次、注册／绑定验证及登录接�
 改密事务同时更新 Argon2id 摘要、消费验证码、撤销全部会话，并作废该用户其余待发送或有效验证码。
 登录的密码校验和会话创建也在写事务内完成，避免并发登录在改密后留下旧密码会话。
 验证码邮件晚到时不会重新激活已作废记录。前端改密成功清除本地会话，返回登录页，并提示使用新密码登录。
-本次沿用 schema v8 和现有 SMTP 配置，无需数据库迁移或新增环境变量。
+当前使用 PostgreSQL schema 1。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
 
 自动化测试注入内存发信器，仍经过真实验证码校验；没有生产环境绕过开关。
 真实投递验收：配置 SMTP 后，向自己的测试邮箱发送验证码，确认邮件语言、到达时间、验证码注册和邮箱登录，再确认重发旧码失效。
@@ -249,7 +263,7 @@ Idempotency-Key: <为本次加购生成的唯一标识，例如 UUID>
 建议每次独立加购生成一个 `Idempotency-Key`，重试同一次操作时复用它。允许 1–128 位字母、数字及 `_.:-`。
 此请求头可选以兼容已有调用；不提供时，每次调用均视为独立加购，不受重复提交保护。
 
-- 键按本站登录用户隔离；服务端在接触上游前将占用记录提交到 SQLite，原子地防止同键并发执行。
+- 键按本站登录用户隔离；服务端在接触上游前将占用记录提交到 PostgreSQL，原子地防止同键并发执行。
 - 同键、相同规范化参数（包含默认值）返回已保存的 HTTP 状态和响应体，并附 `Idempotency-Replayed: true`；不会再次访问上游。
 - 同键不同参数返回 409 `idempotency_key_conflict`；处理中返回 409 `cart_operation_pending`、`outcome: unknown`。
 - 成功、业务拒绝、超时、核验结果未知均保存并重放。重放是该次操作的历史结果，不是购物车当前状态。
@@ -304,7 +318,7 @@ Content-Type: application/json
 该锁不跨进程或服务实例，也无法约束游游亭网页上的操作；执行删除期间应避免同时在其他客户端修改同一购物车。
 如改为多进程或多实例部署，需要共享的会话锁。上游没有提供已验证的原子条件删除接口，本地锁不能消除外部修改的竞态。
 
-用户数据库自动升级至版本 7：删除旧 `yuyutei_credentials` 表，并使用 SQLite secure_delete 和 VACUUM 清理现有及空闲页中的旧凭据。
+新 PostgreSQL schema 不创建 `yuyutei_credentials` 表，不持久化第三方 Cookie 或 CSRF token。此次使用空库，不复制 SQLite 数据或执行旧版凭据清理。
 保留账户、会话、收藏、个人卡牌和 `cart_operations` 幂等记录。新数据库不创建凭据表。
 历史外部备份、数据库副本不会被自动修改，已泄露或曾存入不受信任备份的游游亭会话需要自行作废。
 

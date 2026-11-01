@@ -1,6 +1,5 @@
 from auth_helpers import register_user
 import json
-import sqlite3
 from dataclasses import replace
 
 import httpx
@@ -23,7 +22,6 @@ def card(game=Game.WSR):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv('TCG_USER_DB', str(tmp_path / 'users.sqlite3'))
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
         login(client, 'alice')
@@ -47,9 +45,9 @@ def test_persistence_idempotency_and_isolation(client):
     saved = add(client)
     assert add(client, replace(card(), price=999)) == saved
     assert client.get('/api/favorites').json()['items'] == [saved]
-    reopened = UserStore(app.state.auth.store.path)
+    reopened = UserStore(app.state.auth.store.conninfo)
     with reopened.connect() as db:
-        assert json.loads(db.execute('SELECT snapshot FROM favorites').fetchone()[0])['price'] == 100
+        assert json.loads(db.execute('SELECT snapshot FROM favorites').fetchone()['snapshot'])['price'] == 100
     login(client, 'bob')
     assert client.get('/api/favorites').json() == {'items': []}
     for method, path in [('delete', ''), ('post', '/refresh')]:
@@ -102,7 +100,7 @@ def test_refresh_failures_preserve_snapshot(client, monkeypatch, failure, status
         def iter_pages(self, keyword):
             if failure == 'removed':
                 with app.state.auth.store.connect() as db:
-                    db.execute('DELETE FROM favorites WHERE id = ?', (saved['id'],))
+                    db.execute('DELETE FROM favorites WHERE id = %s', (saved['id'],))
                 yield SearchPage([card()], keyword, 1, None)
             elif failure == 'missing':
                 yield SearchPage([], keyword, 1, None)
@@ -112,18 +110,3 @@ def test_refresh_failures_preserve_snapshot(client, monkeypatch, failure, status
     monkeypatch.setitem(SEARCHERS, Game.WSR, Fake)
     assert client.post(f"/api/favorites/{saved['id']}/refresh", json={}).status_code == status
     assert client.get('/api/favorites').json()['items'] == ([] if failure == 'removed' else [saved])
-
-
-def test_v1_migration_preserves_existing_data(tmp_path):
-    path = tmp_path / 'old.sqlite3'
-    with sqlite3.connect(path) as db:
-        db.executescript('''CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, password_hash TEXT, created_at INTEGER);
-            CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT, expires_at INTEGER);
-            INSERT INTO users VALUES ('u', 'alice', 'hash', 1);
-            INSERT INTO sessions VALUES ('token', 'u', 9999999999);
-            PRAGMA user_version = 1;''')
-    with UserStore(path).connect() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
-        assert db.execute('SELECT username FROM users').fetchone()[0] == 'alice'
-        assert db.execute('SELECT token_hash FROM sessions').fetchone()[0] == 'token'
-        assert db.execute('SELECT count(*) FROM favorites').fetchone()[0] == 0

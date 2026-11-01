@@ -1,6 +1,6 @@
+from tcg_toolkit.database import Database
 import httpx
 import pytest
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from fastapi.testclient import TestClient
@@ -18,9 +18,6 @@ def authenticated_business_api():
     app.dependency_overrides.pop(current_user, None)
 
 
-@pytest.fixture(autouse=True)
-def isolated_cache(monkeypatch, tmp_path):
-    monkeypatch.setenv("TCG_CURRENCY_CACHE", str(tmp_path / "currency.sqlite3"))
 
 
 @pytest.mark.parametrize("target", list(TargetCurrency))
@@ -122,8 +119,8 @@ def test_cache_refresh_and_restart(monkeypatch, tmp_path):
         with CurrencyClient(api_key="test", client=http) as currency:
             assert currency.convert_jpy(100, "CNY")["result"] == 6
         assert calls == ["CNY", "CAD", "CNY", "CAD"]
-    with sqlite3.connect(tmp_path / "currency.sqlite3") as db:
-        assert db.execute("SELECT fetched_at FROM rates").fetchall() == [(now[0],), (now[0],)]
+    with Database() as store, store.connect() as db:
+        assert db.execute("SELECT fetched_at FROM rates").fetchall() == [{"fetched_at": now[0]}, {"fetched_at": now[0]}]
 
 
 def test_failures_consume_budget_and_preserve_success(monkeypatch):

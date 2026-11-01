@@ -137,7 +137,7 @@ def test_inflight_email_cannot_reactivate_after_password_change(client):
     app.state.auth.verification.mailer.send_code = delivery
     assert client.post('/api/auth/password/reset/email-code', json={'email':'alice@example.com'}).status_code == 503
     with app.state.auth.store.connect() as db:
-        assert db.execute("SELECT count(*) FROM email_challenges WHERE state='active'").fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM email_challenges WHERE state='active'").fetchone()['count'] == 0
 
 
 def test_concurrent_reset_succeeds_once(client):

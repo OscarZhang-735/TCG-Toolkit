@@ -1,7 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import json
-import sqlite3
 
 import httpx
 import pytest
@@ -108,7 +107,7 @@ def test_replay_normalized_request_after_restart_with_changed_credentials(client
     assert replay.headers['idempotency-replayed'] == 'true'
     assert replay.headers['cache-control'] == 'no-store'
     assert sum(r.method == 'POST' for r in upstream[0]) == 1
-    with app.state.auth.store.connect() as db:
+    with UserStore(app.state.auth.store.conninfo) as store, store.connect() as db:
         row = db.execute('SELECT * FROM cart_operations').fetchone()
         assert row['state'] == 'complete'
         assert SECRETS['cookie'] not in row['response_json'] and SECRETS['csrf_token'] not in row['response_json']
@@ -167,7 +166,7 @@ def test_crash_after_post_does_not_reissue_on_restart(client, upstream, monkeypa
 
 def test_durable_reservation_survives_restart_before_post(client, upstream):
     user = client.get('/api/auth/me').json()
-    store = UserStore(app.state.auth.store.path)
+    store = UserStore(app.state.auth.store.conninfo)
     assert cart_operations.reserve(store, user['id'], KEY['Idempotency-Key'], CartInput(**CARD).model_dump()) is None
     with TestClient(app, base_url=ORIGIN, headers=dict(client.headers)) as restarted:
         assert restarted.post(BASE + '/cart', json={**CARD, 'credentials': SECRETS}, headers=KEY).status_code == 409
@@ -198,18 +197,3 @@ def test_cors_allows_idempotency_header(client):
         'Access-Control-Request-Headers': 'authorization,content-type,idempotency-key'})
     assert response.status_code == 200
     assert 'idempotency-key' in response.headers['access-control-allow-headers'].lower()
-
-
-def test_v5_migration_removes_credentials(tmp_path):
-    path = tmp_path / 'v5.sqlite3'
-    with sqlite3.connect(path) as db:
-        db.executescript('''CREATE TABLE users (id TEXT PRIMARY KEY);
-            INSERT INTO users VALUES ('alice');
-            CREATE TABLE yuyutei_credentials (user_id TEXT, session_cookie TEXT, csrf_token TEXT, updated_at INTEGER);
-            INSERT INTO yuyutei_credentials VALUES ('alice','saved-cookie','saved-token',1);
-            PRAGMA user_version=5;''')
-    for _ in range(2):
-        with UserStore(path).connect() as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 8
-            assert not db.execute("SELECT name FROM sqlite_master WHERE name='yuyutei_credentials'").fetchone()
-            assert db.execute('SELECT count(*) FROM cart_operations').fetchone()[0] == 0

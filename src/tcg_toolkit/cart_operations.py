@@ -13,8 +13,15 @@ def reserve(store, user_id, key, parameters):
         raise HTTPException(422, detail='invalid_idempotency_key')
     digest = sha256(json.dumps(parameters, sort_keys=True).encode()).hexdigest()
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
-        row = db.execute('SELECT * FROM cart_operations WHERE user_id=? AND operation_key=?',
+        now = int(time.time())
+        inserted = db.execute('''INSERT INTO cart_operations
+            (user_id,operation_key,request_hash,state,status_code,response_json,created_at,updated_at)
+            VALUES (%s,%s,%s,'processing',NULL,NULL,%s,%s)
+            ON CONFLICT(user_id,operation_key) DO NOTHING RETURNING operation_key''',
+            (user_id, key, digest, now, now)).fetchone()
+        if inserted:
+            return None
+        row = db.execute('SELECT * FROM cart_operations WHERE user_id=%s AND operation_key=%s',
                          (user_id, key)).fetchone()
         if row:
             if row['request_hash'] != digest:
@@ -25,13 +32,10 @@ def reserve(store, user_id, key, parameters):
                 raise HTTPException(409, detail={'type': 'cart_operation_pending', 'outcome': 'unknown'})
             return JSONResponse(json.loads(row['response_json']), status_code=row['status_code'],
                                 headers={'Idempotency-Replayed': 'true'})
-        now = int(time.time())
-        db.execute('INSERT INTO cart_operations VALUES (?, ?, ?, ?, NULL, NULL, ?, ?)',
-                   (user_id, key, digest, 'processing', now, now))
 
 
 def finish(store, user_id, key, status_code, result):
     with store.connect() as db:
-        db.execute('''UPDATE cart_operations SET state='complete', status_code=?, response_json=?,
-            updated_at=? WHERE user_id=? AND operation_key=?''',
+        db.execute('''UPDATE cart_operations SET state='complete', status_code=%s, response_json=%s,
+            updated_at=%s WHERE user_id=%s AND operation_key=%s''',
                    (status_code, json.dumps(result), int(time.time()), user_id, key))
