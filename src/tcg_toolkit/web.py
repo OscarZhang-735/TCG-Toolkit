@@ -7,7 +7,9 @@ from starlette.middleware.cors import CORSMiddleware
 from typing import Annotated
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
+from sqlalchemy.exc import SQLAlchemyError
+from .db_cli import require_schema
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -32,7 +34,11 @@ from .product_details import router as product_router
 @asynccontextmanager
 async def lifespan(app):
     initialize_auth(app)
-    yield
+    store = app.state.auth.store
+    try:
+        yield
+    finally:
+        store.close()
 
 
 class BrowserCORS:
@@ -108,7 +114,12 @@ def version():
 
 
 @app.get("/api/health")
-def health():
+def health(request: Request):
+    try:
+        with request.app.state.auth.store.connect() as db:
+            require_schema(db)
+    except (SQLAlchemyError, RuntimeError):
+        raise HTTPException(503, detail="database_unavailable") from None
     return {"status": "ok"}
 
 
@@ -133,9 +144,9 @@ def search(game: Game, keyword: Annotated[str, Query(min_length=1)],
 
 
 @app.get("/api/currency/convert", dependencies=[Depends(current_user)])
-def convert_currency(to: TargetCurrency, amount: Annotated[float, Query(ge=0, allow_inf_nan=False)] = 1):
+def convert_currency(request: Request, to: TargetCurrency, amount: Annotated[float, Query(ge=0, allow_inf_nan=False)] = 1):
     try:
-        with CurrencyClient() as currency:
+        with CurrencyClient(store=request.app.state.auth.store) as currency:
             return currency.convert_jpy(amount, to)
     except CurrencyConfigError as exc:
         raise HTTPException(503, detail={"type": type(exc).__name__, "message": str(exc)}) from exc

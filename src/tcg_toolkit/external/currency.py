@@ -2,11 +2,15 @@
 
 import math
 import os
-import sqlite3
 import time
-from contextlib import closing
 from enum import Enum
 from pathlib import Path
+
+from sqlalchemy import and_, or_, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
+from ..db_models import CurrencyRate
+from ..database import Database
 
 import httpx
 from dotenv import dotenv_values
@@ -29,14 +33,15 @@ class CurrencyClient:
     host = "currency-conversion-and-exchange-rates.p.rapidapi.com"
 
     def __init__(self, *, api_key: str | None = None, client: httpx.Client | None = None,
-                 timeout: float = 30.0, cache_path: str | Path | None = None):
+                 timeout: float = 30.0, store: Database | None = None):
         # Read the working directory's .env without modifying process variables.
         if api_key is None:
             api_key = os.environ.get("RAPIDAPI_KEY")
             if api_key is None:
                 api_key = dotenv_values(Path.cwd() / ".env").get("RAPIDAPI_KEY")
         self._api_key = (api_key or "").strip()
-        self.cache_path = Path(cache_path or os.environ.get("TCG_CURRENCY_CACHE", "data/currency.sqlite3"))
+        self._store = store
+        self._owns_store = store is None
         self.timeout = timeout
         self._owns_client = client is None
         self._client = client if client is not None else httpx.Client()
@@ -48,6 +53,8 @@ class CurrencyClient:
         self.close()
 
     def close(self):
+        if self._owns_store and self._store is not None:
+            self._store.close()
         if self._owns_client:
             self._client.close()
 
@@ -58,47 +65,44 @@ class CurrencyClient:
             raise ValueError("amount must be a finite, non-negative number")
         errors = {}
         try:
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with closing(sqlite3.connect(self.cache_path)) as db:
-                db.execute("""CREATE TABLE IF NOT EXISTS rates (
-                    currency TEXT PRIMARY KEY, rate REAL, fetched_at REAL, attempted_at REAL
-                )""")
-                for currency in TargetCurrency:
-                    # Reserve and persist an attempt before doing network I/O. This
-                    # survives failure/restart and serializes competing processes.
-                    db.execute("BEGIN IMMEDIATE")
+            if self._store is None:
+                self._store = Database()
+            for currency in TargetCurrency:
+                with self._store.session() as db:
                     now = time.time()
-                    row = db.execute("SELECT rate, fetched_at, attempted_at FROM rates WHERE currency = ?",
-                                     (currency.value,)).fetchone()
-                    if row and ((row[1] is not None and now - row[1] <= 86400)
-                                or (row[2] is not None and now - row[2] <= 86400)):
-                        db.commit()
-                        continue
                     if not self._api_key:
-                        db.commit()
                         errors[currency] = CurrencyConfigError("RAPIDAPI_KEY is not configured.")
                         continue
-                    db.execute("""INSERT INTO rates (currency, attempted_at) VALUES (?, ?)
-                        ON CONFLICT(currency) DO UPDATE SET attempted_at = excluded.attempted_at""",
-                               (currency.value, now))
-                    db.commit()
-                    try:
-                        rate = self._fetch_rate(currency)
-                    except CurrencyRequestError as exc:
-                        errors[currency] = exc
-                        continue
-                    db.execute("UPDATE rates SET rate = ?, fetched_at = ? WHERE currency = ?",
-                               (rate, time.time(), currency.value))
-                    db.commit()
-                row = db.execute("SELECT rate, fetched_at FROM rates WHERE currency = ?",
-                                 (target.value,)).fetchone()
-        except (sqlite3.Error, OSError) as exc:
-            raise CurrencyRequestError("Could not access the local currency cache.") from exc
-        if row is None or row[1] is None or time.time() - row[1] > 86400:
+                    # Commit the reservation before network I/O, including failed
+                    # attempts. ON CONFLICT also serializes an initially empty cache.
+                    statement = insert(CurrencyRate).values(currency=currency.value, attempted_at=now)
+                    reserved = db.scalar(statement.on_conflict_do_update(
+                        index_elements=[CurrencyRate.currency],
+                        set_={CurrencyRate.attempted_at: statement.excluded.attempted_at},
+                        where=and_(
+                            or_(CurrencyRate.fetched_at.is_(None), CurrencyRate.fetched_at < now - 86400),
+                            or_(CurrencyRate.attempted_at.is_(None), CurrencyRate.attempted_at < now - 86400),
+                        ),
+                    ).returning(CurrencyRate.currency))
+                if not reserved:
+                    continue
+                try:
+                    rate = self._fetch_rate(currency)
+                except CurrencyRequestError as exc:
+                    errors[currency] = exc
+                    continue
+                with self._store.session() as db:
+                    db.execute(update(CurrencyRate).where(CurrencyRate.currency == currency.value)
+                               .values(rate=rate, fetched_at=time.time()))
+            with self._store.session() as db:
+                row = db.get(CurrencyRate, target.value)
+        except SQLAlchemyError as exc:
+            raise CurrencyRequestError("Could not access the currency cache.") from exc
+        if row is None or row.fetched_at is None or time.time() - row.fetched_at > 86400:
             if target in errors:
                 raise errors[target]
             raise CurrencyRequestError("No fresh rate available; the next attempt is allowed after 24 hours.")
-        return {"from": "JPY", "to": target.value, "amount": amount, "result": amount * row[0], "fetched_at": row[1]}
+        return {"from": "JPY", "to": target.value, "amount": amount, "result": amount * row.rate, "fetched_at": row.fetched_at}
 
     def _fetch_rate(self, target: TargetCurrency) -> float:
         try:

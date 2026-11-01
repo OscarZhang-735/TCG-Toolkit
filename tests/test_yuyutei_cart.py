@@ -1,7 +1,8 @@
+from sqlalchemy import inspect
+from auth_helpers import persisted_data
 from auth_helpers import register_user
 from datetime import datetime
 import json
-import sqlite3
 from urllib.parse import parse_qs
 
 import httpx
@@ -62,7 +63,6 @@ def upstream(monkeypatch):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch, upstream):
-    monkeypatch.setenv('TCG_USER_DB', str(tmp_path / 'users.sqlite3'))
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
         login(client, 'alice')
@@ -79,9 +79,9 @@ def test_credentials_are_request_scoped_and_never_stored(client, upstream):
     calls = len(upstream[0])
     assert client.post(BASE + '/cart', json=CARD).status_code == 422
     assert len(upstream[0]) == calls
-    with UserStore(app.state.auth.store.path).connect() as db:
-        assert not db.execute("SELECT name FROM sqlite_master WHERE name='yuyutei_credentials'").fetchone()
-    raw = app.state.auth.store.path.read_bytes()
+    with UserStore(app.state.auth.store.conninfo).session() as db:
+        assert not inspect(db.connection()).has_table('yuyutei_credentials')
+    raw = persisted_data(app.state.auth.store)
     for secret in SECRETS.values():
         assert secret.encode() not in raw
 
@@ -200,26 +200,6 @@ def test_uncertain_transport_outcome_not_retried(client, upstream, exception, st
     assert sum(r.method == 'POST' for r in upstream[0]) == 1
 
 
-def test_v4_migration_preserves_existing_tables(tmp_path):
-    path = tmp_path / 'v4.sqlite3'
-    with sqlite3.connect(path) as db:
-        db.executescript('''CREATE TABLE users (id TEXT PRIMARY KEY);
-            INSERT INTO users VALUES ('alice');
-            CREATE TABLE sessions (token_hash TEXT);
-            INSERT INTO sessions VALUES ('existing-session');
-            CREATE TABLE favorites (id TEXT);
-            INSERT INTO favorites VALUES ('existing-favorite');
-            CREATE TABLE owned_cards (id TEXT, image_url TEXT);
-            INSERT INTO owned_cards VALUES ('existing-card', 'https://example.com/card.jpg');
-            PRAGMA user_version=4;''')
-    for _ in range(2):
-        with UserStore(path).connect() as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 8
-            assert db.execute('SELECT id FROM users').fetchone()[0] == 'alice'
-            assert db.execute('SELECT token_hash FROM sessions').fetchone()[0] == 'existing-session'
-            assert db.execute('SELECT id FROM favorites').fetchone()[0] == 'existing-favorite'
-            assert tuple(db.execute('SELECT * FROM owned_cards').fetchone()) == ('existing-card', 'https://example.com/card.jpg')
-            assert not db.execute("SELECT name FROM sqlite_master WHERE name='yuyutei_credentials'").fetchone()
 
 
 CART_META = '<meta name="csrf-token" content="alice-csrf">'

@@ -1,7 +1,15 @@
+x-database-env: &database-env
+  PGHOST: db
+  PGPORT: "5432"
+  PGDATABASE: ${PGDATABASE:-tcg}
+  PGUSER: ${PGUSER:-tcg}
+  PGPASSWORD: ${PGPASSWORD:?Set application database password}
 services:
   web:
     build: .
+    image: ${TCG_IMAGE:-tcg-toolkit:local}
     environment:
+      <<: *database-env
       TCG_SMTP_HOST: "${TCG_SMTP_HOST:-}"
       TCG_SMTP_PORT: "${TCG_SMTP_PORT:-}"
       TCG_SMTP_USERNAME: "${TCG_SMTP_USERNAME:-}"
@@ -12,14 +20,19 @@ services:
       TCG_ALLOW_PROXY_SWITCH: "${TCG_ALLOW_PROXY_SWITCH:-true}"
       RAPIDAPI_KEY: "${RAPIDAPI_KEY:-}"
       TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/proxy}"
-      TCG_CURRENCY_CACHE: /app/data/currency.sqlite3
-      TCG_USER_DB: /app/data/users.sqlite3
       TCG_TRUSTED_ORIGINS: "${TCG_TRUSTED_ORIGINS:-}"
       FORWARDED_ALLOW_IPS: "${TCG_PROXY_IPS:-127.0.0.1}"
-    volumes:
-      - currency-data:/app/data
     ports:
       - "127.0.0.1:${TCG_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      default:
+        gw_priority: 1
+      database: {}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
@@ -28,10 +41,47 @@ services:
       start_period: 10s
       retries: 3
 
+  migrate:
+    build: .
+    image: ${TCG_IMAGE:-tcg-toolkit:local}
+    command: [tcg-db, migrate]
+    environment: *database-env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [database]
+    restart: "no"
+  db:
+    image: ${TCG_POSTGRES_IMAGE:-postgres:17-bookworm@sha256:839fbb5a4942a7758dd93e18b42ea5649807491a0545b5eeeb8f0b8bb11857a5}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${TCG_PG_ADMIN_PASSWORD:?Set database initialization password}
+      APP_DB_USER: ${PGUSER:-tcg}
+      APP_DB_NAME: ${PGDATABASE:-tcg}
+      APP_DB_PASSWORD: ${PGPASSWORD:?Set application database password}
+    command: [postgres, -c, shared_buffers=32MB, -c, max_connections=20, -c, work_mem=2MB, -c, maintenance_work_mem=32MB]
+    mem_limit: 192m
+    shm_size: 64m
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/init-db.sh:/docker-entrypoint-initdb.d/10-app.sh:ro
+    networks: [database]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$APP_DB_USER" -d "$$APP_DB_NAME"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 volumes:
-  currency-data:
-
+  postgres-data:
 networks:
+  database:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${TCG_DB_SUBNET:-10.205.0.0/24}"
   default:
     ipam:
       config:

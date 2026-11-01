@@ -1,12 +1,13 @@
+from sqlalchemy import select, func, update
+from tcg_toolkit.db_models import EmailChallenge, LoginSession, User
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import smtplib
-import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
 
-from auth_helpers import (Mailbox, TEST_SECRET, create_v6_database, install_mailbox,
+from auth_helpers import (Mailbox, TEST_SECRET, install_mailbox,
                           registration_body, register_user)
 from tcg_toolkit.auth.email_verification import AuthError, EmailVerification, SMTPMailer, normalize_email
 from tcg_toolkit.auth.passwords import hasher
@@ -19,7 +20,6 @@ ORIGIN = 'https://testserver'
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv('TCG_USER_DB', str(tmp_path / 'users.sqlite3'))
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
         install_mailbox()
@@ -27,9 +27,8 @@ def client(tmp_path, monkeypatch):
 
 
 def legacy_user(username='legacy'):
-    with app.state.auth.store.connect() as db:
-        db.execute('INSERT INTO users (id,username,password_hash,created_at) VALUES (?,?,?,?)',
-                   (username, username, hasher.hash('password123'), 1))
+    with app.state.auth.store.session() as db:
+        db.add(User(id=username, username=username, password_hash=hasher.hash('password123'), created_at=1))
     return app.state.auth.login(username, 'password123')[1]
 
 
@@ -49,10 +48,10 @@ def advance(monkeypatch, seconds):
 
 def test_verified_registration_normalizes_email_and_both_logins(client):
     body = registration_body(client, email=' Alice+Cards@EXAMPLE.COM ')
-    with app.state.auth.store.connect() as db:
-        assert db.execute('SELECT count(*) FROM users').fetchone()[0] == 0
-        row = db.execute('SELECT * FROM email_challenges').fetchone()
-        assert len(row['code_hash']) == 64 and row['code_hash'] != body['code']
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(User)) == 0
+        row = db.scalar(select(EmailChallenge))
+        assert len(row.code_hash) == 64 and row.code_hash != body['code']
     result = client.post('/api/auth/register', json=body)
     assert result.status_code == 201
     assert result.json()['user']['email'] == 'alice+cards@example.com'
@@ -73,9 +72,9 @@ def test_bad_attempts_are_persisted_and_exhaustion_blocks_correct_code(client):
         response = client.post('/api/auth/register', json={**body, 'code': wrong})
         assert response.json()['detail'] == ('code_attempts_exhausted' if i == 4 else 'invalid_code')
     assert client.post('/api/auth/register', json=body).json()['detail'] == 'code_attempts_exhausted'
-    with app.state.auth.store.connect() as db:
-        assert db.execute('SELECT attempts FROM email_challenges').fetchone()[0] == 5
-        assert db.execute('SELECT count(*) FROM users').fetchone()[0] == 0
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(EmailChallenge.attempts)) == 5
+        assert db.scalar(select(func.count()).select_from(User)) == 0
 
 
 def test_expiration_and_resend(client, monkeypatch):
@@ -93,7 +92,7 @@ def test_email_cooldown_hourly_quota_and_restart(client, monkeypatch):
     response = client.post('/api/auth/register/email-code', json={'email': body['email']})
     assert response.status_code == 429 and int(response.headers['Retry-After']) == 60
     verification = app.state.auth.verification
-    app.state.auth = AuthService(UserStore(app.state.auth.store.path),
+    app.state.auth = AuthService(UserStore(app.state.auth.store.conninfo),
                                 EmailVerification(app.state.auth.store, verification.mailer, TEST_SECRET))
     with pytest.raises(AuthError) as failure:
         app.state.auth.verification.send(body['email'])
@@ -111,7 +110,7 @@ def test_email_cooldown_hourly_quota_and_restart(client, monkeypatch):
 
 def test_code_survives_service_restart(client):
     body = registration_body(client)
-    app.state.auth = AuthService(UserStore(app.state.auth.store.path),
+    app.state.auth = AuthService(UserStore(app.state.auth.store.conninfo),
                                 EmailVerification(app.state.auth.store, Mailbox(), TEST_SECRET))
     assert client.post('/api/auth/register', json=body).status_code == 201
 
@@ -147,8 +146,8 @@ def test_concurrent_verification_consumes_once(client):
         results = list(pool.map(lambda _: register(), range(2)))
     assert sum(isinstance(result, tuple) for result in results) == 1
     assert 'invalid_code' in results
-    with app.state.auth.store.connect() as db:
-        assert db.execute('SELECT count(*) FROM sessions').fetchone()[0] == 1
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(LoginSession)) == 1
 
 
 def test_concurrent_send_reserves_quota_once(client):
@@ -203,14 +202,14 @@ def test_email_conflict_between_binding_and_registration_keeps_code(client):
     body = registration_body(client)
     client.headers['Authorization'] = 'Bearer ' + legacy_user()
     # Separate purposes can compete for the same address after the shared cooldown.
-    with app.state.auth.store.connect() as db:
-        db.execute('UPDATE email_challenges SET created_at=created_at-60')
+    with app.state.auth.store.session() as db:
+        db.execute(update(EmailChallenge).values(created_at=EmailChallenge.created_at-60))
     binding = binding_body(client, body['email'])
     assert client.post('/api/auth/email/bind', json=binding).status_code == 200
     response = client.post('/api/auth/register', json=body)
     assert response.status_code == 409 and response.json()['detail'] == 'email_taken'
-    with app.state.auth.store.connect() as db:
-        assert db.execute('SELECT state FROM email_challenges WHERE id=?', (body['challenge_id'],)).fetchone()[0] == 'active'
+    with app.state.auth.store.session() as db:
+        assert db.get(EmailChallenge, body['challenge_id']).state == 'active'
 
 
 @pytest.mark.parametrize('path', ['register/email-code', 'email/bind-code', 'email/bind', 'register'])
@@ -234,43 +233,8 @@ def test_configuration_missing_only_disables_email(client):
     assert client.get('/api/auth/me', headers={'Authorization': 'Bearer ' + token}).status_code == 200
 
 
-def test_v7_upgrade_preserves_old_accounts_and_sessions(tmp_path):
-    path = tmp_path / 'v7.sqlite3'
-    create_v6_database(path)
-    with sqlite3.connect(path) as db:
-        # v7 has the same account schema as v6 and no saved upstream credentials.
-        db.execute('PRAGMA user_version=7')
-        db.execute('INSERT INTO users VALUES (?,?,?,?)', ('old', 'olduser', hasher.hash('password123'), 1))
-        db.execute('INSERT INTO sessions VALUES (?,?,?)', (token_hash('oldtoken'), 'old', 9999999999))
-    service = AuthService(UserStore(path))
-    assert service.current_user('oldtoken')['email'] is None
-    assert service.login('OLDUSER', 'password123')[0]['email_verified'] is False
-    with UserStore(path).connect() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
 
 
-def test_overlapping_startup_cannot_reset_v8_to_v7(tmp_path):
-    path = tmp_path / 'overlapping.sqlite3'
-    create_v6_database(path)
-
-    class OverlappingStore(UserStore):
-        @contextmanager
-        def connect(self):
-            with super().connect() as db:
-                class Connection:
-                    def execute(self, sql, *args):
-                        result = db.execute(sql, *args)
-                        if sql == 'VACUUM':
-                            # Another startup finishes while this one is between
-                            # secret cleanup and the final schema-version write.
-                            UserStore(path)
-                        return result
-                yield Connection()
-
-    store = OverlappingStore(path)
-    with store.connect() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
-        assert db.execute('SELECT count(*) FROM email_challenges').fetchone()[0] == 0
 
 
 @pytest.mark.parametrize('mode,port', [('starttls', 587), ('ssl', 465)])

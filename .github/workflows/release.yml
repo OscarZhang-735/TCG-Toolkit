@@ -12,6 +12,23 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: tcg_test
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: tcg_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tcg_test -d tcg_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGDATABASE: tcg_test
+      PGUSER: tcg_test
+      PGPASSWORD: ci-test-only
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

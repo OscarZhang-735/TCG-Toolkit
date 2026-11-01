@@ -49,7 +49,7 @@
 
 1. 安装并打开 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
 2. 下载本项目，在项目文件夹里把 `.env.example` 复制一份并改名为 `.env`。
-3. 用记事本打开 `.env`，确认 `TCG_TRUSTED_ORIGINS=http://localhost:8000`（这是你打开网页时用的地址），并按 [邮箱配置说明](docs/developer.md#邮箱注册与验证) 填写 SMTP 和验证码密钥。未配置邮件服务时，老账户可以登录，新账户无法注册。
+3. 用记事本打开 `.env`，设置两个不同的随机密码 `PGPASSWORD` 和 `TCG_PG_ADMIN_PASSWORD`，确认 `TCG_TRUSTED_ORIGINS=http://localhost:8000`，并按 [邮箱配置说明](docs/developer.md#邮箱注册与验证) 填写 SMTP 和验证码密钥。首次使用的是空 PostgreSQL 数据库，注册需要邮件服务。
 4. 在项目文件夹里打开终端，运行：
 
    ```powershell

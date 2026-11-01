@@ -1,3 +1,9 @@
+x-database-env: &database-env
+  PGHOST: db
+  PGPORT: "5432"
+  PGDATABASE: ${PGDATABASE:-tcg}
+  PGUSER: ${PGUSER:-tcg}
+  PGPASSWORD: ${PGPASSWORD:?Set application database password}
 name: tcg-http
 services:
   web:
@@ -6,6 +12,7 @@ services:
     ports:
       - "18080:8000"
     environment:
+      <<: *database-env
       TCG_SMTP_HOST: "${TCG_SMTP_HOST:-}"
       TCG_SMTP_PORT: "${TCG_SMTP_PORT:-}"
       TCG_SMTP_USERNAME: "${TCG_SMTP_USERNAME:-}"
@@ -16,17 +23,62 @@ services:
       RAPIDAPI_KEY: ${RAPIDAPI_KEY:-}
       TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/proxy}"
       TCG_TRUSTED_ORIGINS: http://99.79.33.22:18080,https://oscarzhang-735.github.io
-      TCG_USER_DB: /app/data/users.sqlite3
-      TCG_CURRENCY_CACHE: /app/data/currency.sqlite3
       FORWARDED_ALLOW_IPS: ""
-    volumes:
-      - data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      default:
+        gw_priority: 1
+      database: {}
     restart: unless-stopped
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 6
+  migrate:
+    build:
+      context: ${TCG_SOURCE_DIR:-..}
+    command: [tcg-db, migrate]
+    environment: *database-env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [database]
+    restart: "no"
+  db:
+    image: ${TCG_POSTGRES_IMAGE:-postgres:17-bookworm@sha256:839fbb5a4942a7758dd93e18b42ea5649807491a0545b5eeeb8f0b8bb11857a5}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${TCG_PG_ADMIN_PASSWORD:?Set database initialization password}
+      APP_DB_USER: ${PGUSER:-tcg}
+      APP_DB_NAME: ${PGDATABASE:-tcg}
+      APP_DB_PASSWORD: ${PGPASSWORD:?Set application database password}
+    command: [postgres, -c, shared_buffers=32MB, -c, max_connections=20, -c, work_mem=2MB, -c, maintenance_work_mem=32MB]
+    mem_limit: 192m
+    shm_size: 64m
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/10-app.sh:ro
+    networks: [database]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$APP_DB_USER" -d "$$APP_DB_NAME"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 volumes:
-  data:
-    name: tcg-http-data
+  postgres-data:
+    name: tcg-http-postgres-data
+networks:
+  database:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${TCG_DB_SUBNET:-10.205.0.0/24}"
+  default:

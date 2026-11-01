@@ -1,5 +1,9 @@
 """Private, manually maintained card inventory."""
-import sqlite3
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+from .database import is_unique_violation
+from .db_models import OwnedCard
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -47,68 +51,75 @@ class CardInput(BaseModel):
         return GAMES.get(value.casefold(), value) if info.field_name == 'game' else value
 
 
-def record(row):
-    return {key: row[key] for key in ('id', 'game', 'card_number', 'rarity', 'name',
-                                    'quantity', 'notes', 'image_url', 'created_at', 'updated_at')}
+def record(row: OwnedCard):
+    return {key: getattr(row, key) for key in ('id', 'game', 'card_number', 'rarity', 'name',
+                                              'quantity', 'notes', 'image_url', 'created_at', 'updated_at')}
 
 
-def owned(db, user_id, card_id):
-    row = db.execute('SELECT * FROM owned_cards WHERE user_id = ? AND id = ?',
-                     (user_id, card_id)).fetchone()
+def owned(db: Session, user_id, card_id, *, lock=False):
+    query = select(OwnedCard).where(OwnedCard.user_id == user_id, OwnedCard.id == card_id)
+    row = db.scalar(query.with_for_update() if lock else query)
     if row is None:
         raise HTTPException(404, detail='card_not_found')
     return row
 
 
 def values(body):
-    return (body.game, body.card_number, body.rarity, body.name, body.quantity,
-            body.notes, body.game.casefold(), body.card_number.casefold(), body.rarity.casefold())
+    return dict(game=body.game, card_number=body.card_number, rarity=body.rarity, name=body.name,
+                quantity=body.quantity, notes=body.notes, image_url=body.image_url,
+                game_key=body.game.casefold(), number_key=body.card_number.casefold(), rarity_key=body.rarity.casefold())
 
 
-def conflict(db, user_id, body):
-    row = db.execute('''SELECT id FROM owned_cards WHERE user_id = ?
-        AND game_key = ? AND number_key = ? AND rarity_key = ?''',
-        (user_id, body.game.casefold(), body.card_number.casefold(), body.rarity.casefold())).fetchone()
-    if row:
-        raise HTTPException(409, detail={'type': 'card_duplicate', 'id': row['id']})
+def conflict(db: Session, user_id, body):
+    card_id = db.scalar(select(OwnedCard.id).where(
+        OwnedCard.user_id == user_id, OwnedCard.game_key == body.game.casefold(),
+        OwnedCard.number_key == body.card_number.casefold(), OwnedCard.rarity_key == body.rarity.casefold()))
+    if card_id:
+        raise HTTPException(409, detail={'type': 'card_duplicate', 'id': card_id})
 
 
 @router.get('')
 def listing(request: Request, user=Depends(current_user)):
-    with request.app.state.auth.store.connect() as db:
-        return {'items': [record(row) for row in db.execute(
-            'SELECT * FROM owned_cards WHERE user_id = ? ORDER BY created_at DESC, rowid DESC', (user['id'],))]}
+    with request.app.state.auth.store.session() as db:
+        rows = db.scalars(select(OwnedCard).where(OwnedCard.user_id == user['id']).order_by(
+            OwnedCard.created_at.desc(), OwnedCard.sort_id.desc()))
+        return {'items': [record(row) for row in rows]}
 
 
 @router.post('', status_code=201, dependencies=[Depends(write_guard)])
 def add(body: CardInput, request: Request, user=Depends(current_user)):
-    card_id, now = str(uuid.uuid4()), int(time.time())
-    with request.app.state.auth.store.connect() as db:
+    now = int(time.time())
+    with request.app.state.auth.store.session() as db:
+        row = OwnedCard(id=str(uuid.uuid4()), user_id=user['id'], created_at=now, updated_at=now, **values(body))
         try:
-            db.execute('INSERT INTO owned_cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                       (card_id, user['id'], *values(body), now, now, body.image_url))
-        except sqlite3.IntegrityError:
-            conflict(db, user['id'], body)
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+        except IntegrityError as exc:
+            if is_unique_violation(exc):
+                conflict(db, user['id'], body)
             raise
-        return record(owned(db, user['id'], card_id))
+        return record(row)
 
 
 @router.put('/{card_id}', dependencies=[Depends(write_guard)])
 def update(card_id: str, body: CardInput, request: Request, user=Depends(current_user)):
-    with request.app.state.auth.store.connect() as db:
-        owned(db, user['id'], card_id)
+    with request.app.state.auth.store.session() as db:
+        row = owned(db, user['id'], card_id, lock=True)
         try:
-            db.execute('''UPDATE owned_cards SET game=?, card_number=?, rarity=?, name=?, quantity=?,
-                notes=?, game_key=?, number_key=?, rarity_key=?, image_url=?, updated_at=? WHERE user_id=? AND id=?''',
-                (*values(body), body.image_url, int(time.time()), user['id'], card_id))
-        except sqlite3.IntegrityError:
-            conflict(db, user['id'], body)
+            with db.begin_nested():
+                for key, value in values(body).items():
+                    setattr(row, key, value)
+                row.updated_at = int(time.time())
+                db.flush()
+        except IntegrityError as exc:
+            if is_unique_violation(exc):
+                conflict(db, user['id'], body)
             raise
-        return record(owned(db, user['id'], card_id))
+        return record(row)
 
 
 @router.delete('/{card_id}', status_code=204, dependencies=[Depends(write_guard)])
 def remove(card_id: str, request: Request, user=Depends(current_user)):
-    with request.app.state.auth.store.connect() as db:
-        owned(db, user['id'], card_id)
-        db.execute('DELETE FROM owned_cards WHERE user_id = ? AND id = ?', (user['id'], card_id))
+    with request.app.state.auth.store.session() as db:
+        db.delete(owned(db, user['id'], card_id, lock=True))

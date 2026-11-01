@@ -1,5 +1,5 @@
+from tcg_toolkit.db_models import OwnedCard
 from auth_helpers import register_user
-import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,7 +19,6 @@ def login(client, name):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv('TCG_USER_DB', str(tmp_path / 'users.sqlite3'))
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
         login(client, 'alice')
@@ -38,8 +37,8 @@ def test_crud_duplicates_persistence(client):
     edited = client.put('/api/cards/' + row['id'], json={**CARD, 'quantity': 0, 'notes': ''}).json()
     assert edited['quantity'] == 0 and edited['notes'] == ''
     assert [r['id'] for r in client.get('/api/cards').json()['items']] == [other['id'], row['id']]
-    with UserStore(app.state.auth.store.path).connect() as db:
-        assert db.execute('SELECT quantity FROM owned_cards WHERE id=?', (row['id'],)).fetchone()[0] == 0
+    with UserStore(app.state.auth.store.conninfo).session() as db:
+        assert db.get(OwnedCard, row['id']).quantity == 0
     assert client.request('DELETE', '/api/cards/' + row['id'], json={}).status_code == 204
     assert client.request('DELETE', '/api/cards/' + row['id'], json={}).status_code == 404
 
@@ -91,23 +90,6 @@ def test_unicode_keys_defaults_and_cors(client):
     assert 'PUT' in response.headers['access-control-allow-methods']
 
 
-def test_v2_migration_preserves_data(tmp_path):
-    path = tmp_path / 'v2.sqlite3'
-    with sqlite3.connect(path) as db:
-        db.executescript('''CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, password_hash TEXT, created_at INTEGER);
-            CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT, expires_at INTEGER);
-            CREATE TABLE favorites (id TEXT PRIMARY KEY, user_id TEXT, game TEXT, product_url TEXT, snapshot TEXT, created_at INTEGER, refreshed_at INTEGER);
-            INSERT INTO users VALUES ('u', 'alice', 'hash', 1);
-            INSERT INTO sessions VALUES ('token', 'u', 9999999999);
-            INSERT INTO favorites VALUES ('f', 'u', 'ws', 'url', '{}', 1, NULL);
-            PRAGMA user_version = 2;''')
-    for _ in range(2):
-        with UserStore(path).connect() as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 8
-            assert db.execute('SELECT username FROM users').fetchone()[0] == 'alice'
-            assert db.execute('SELECT token_hash FROM sessions').fetchone()[0] == 'token'
-            assert db.execute('SELECT id FROM favorites').fetchone()[0] == 'f'
-            assert db.execute('SELECT count(*) FROM owned_cards').fetchone()[0] == 0
 
 
 def test_image_persistence_update_and_clear(client):
@@ -115,25 +97,14 @@ def test_image_persistence_update_and_clear(client):
     saved = client.post('/api/cards', json={**CARD, 'image_url': image}).json()
     assert saved['image_url'] == image
     assert client.get('/api/cards').json()['items'][0]['image_url'] == image
-    with UserStore(app.state.auth.store.path).connect() as db:
-        assert db.execute('SELECT image_url FROM owned_cards WHERE id=?', (saved['id'],)).fetchone()[0] == image
+    with UserStore(app.state.auth.store.conninfo).session() as db:
+        assert db.get(OwnedCard, saved['id']).image_url == image
     response = client.put('/api/cards/' + saved['id'], json={**CARD, 'image_url': None})
     assert response.status_code == 200 and response.json()['image_url'] == ''
     for invalid in ['javascript:alert(1)', 'data:image/png;base64,test', '/relative.png']:
         assert client.put('/api/cards/' + saved['id'], json={**CARD, 'image_url': invalid}).status_code == 422
 
 
-def test_v3_image_migration_preserves_cards(tmp_path):
-    path = tmp_path / 'v3.sqlite3'
-    with sqlite3.connect(path) as db:
-        db.executescript("""CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, password_hash TEXT, created_at INTEGER);
-            CREATE TABLE owned_cards (id TEXT PRIMARY KEY, name TEXT, quantity INTEGER);
-            INSERT INTO owned_cards VALUES ('existing', 'Saved card', 7);
-            PRAGMA user_version = 3;""")
-    with UserStore(path).connect() as db:
-        row = db.execute('SELECT * FROM owned_cards').fetchone()
-        assert row['id'] == 'existing' and row['quantity'] == 7 and row['image_url'] == ''
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
 
 
 def test_ws_en_is_separate_inventory_brand(client):

@@ -28,7 +28,6 @@ class FakeClient:
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv('TCG_USER_DB', str(tmp_path / 'users.sqlite3'))
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
     monkeypatch.setattr(module, 'SearchProxyClient', FakeClient)
     monkeypatch.setattr(module, '_cache', {})

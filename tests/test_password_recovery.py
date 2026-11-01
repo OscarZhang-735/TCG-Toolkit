@@ -1,3 +1,5 @@
+from sqlalchemy import select, func, update
+from tcg_toolkit.db_models import EmailChallenge, User
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import smtplib
@@ -17,8 +19,8 @@ def account(client, name='alice'):
     result = register_user(client, name).json()
     client.headers['Authorization'] = 'Bearer ' + result['token']
     # Registration and password recovery intentionally share the email quota.
-    with app.state.auth.store.connect() as db:
-        db.execute('UPDATE email_challenges SET created_at=created_at-61')
+    with app.state.auth.store.session() as db:
+        db.execute(update(EmailChallenge).values(created_at=EmailChallenge.created_at-61))
     return result
 
 
@@ -64,8 +66,8 @@ def test_email_password_flow_persists_and_consumes_code(client, mode):
 
 def test_unknown_and_unverified_email_use_generic_success_without_mail(client):
     legacy_user()
-    with app.state.auth.store.connect() as db:
-        db.execute("UPDATE users SET email='unverified@example.com'")
+    with app.state.auth.store.session() as db:
+        db.execute(update(User).values(email="unverified@example.com"))
     for email in ['unknown@example.com', 'unverified@example.com']:
         response = client.post('/api/auth/password/reset/email-code', json={'email': email})
         assert response.status_code == 200
@@ -136,8 +138,8 @@ def test_inflight_email_cannot_reactivate_after_password_change(client):
                                        'password', 'password123')
     app.state.auth.verification.mailer.send_code = delivery
     assert client.post('/api/auth/password/reset/email-code', json={'email':'alice@example.com'}).status_code == 503
-    with app.state.auth.store.connect() as db:
-        assert db.execute("SELECT count(*) FROM email_challenges WHERE state='active'").fetchone()[0] == 0
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(EmailChallenge).where(EmailChallenge.state == "active")) == 0
 
 
 def test_concurrent_reset_succeeds_once(client):
