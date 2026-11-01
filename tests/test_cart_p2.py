@@ -1,3 +1,5 @@
+from sqlalchemy import select
+from tcg_toolkit.db_models import CartOperation
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import json
@@ -107,10 +109,10 @@ def test_replay_normalized_request_after_restart_with_changed_credentials(client
     assert replay.headers['idempotency-replayed'] == 'true'
     assert replay.headers['cache-control'] == 'no-store'
     assert sum(r.method == 'POST' for r in upstream[0]) == 1
-    with UserStore(app.state.auth.store.conninfo) as store, store.connect() as db:
-        row = db.execute('SELECT * FROM cart_operations').fetchone()
-        assert row['state'] == 'complete'
-        assert SECRETS['cookie'] not in row['response_json'] and SECRETS['csrf_token'] not in row['response_json']
+    with UserStore(app.state.auth.store.conninfo) as store, store.session() as db:
+        row = db.scalar(select(CartOperation))
+        assert row.state == 'complete'
+        assert SECRETS['cookie'] not in row.response_json and SECRETS['csrf_token'] not in row.response_json
 
 
 def test_key_conflict_and_user_isolation(client, upstream):

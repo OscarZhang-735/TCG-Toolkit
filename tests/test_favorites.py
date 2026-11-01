@@ -1,3 +1,5 @@
+from sqlalchemy import select, delete
+from tcg_toolkit.db_models import Favorite
 from auth_helpers import register_user
 import json
 from dataclasses import replace
@@ -46,8 +48,8 @@ def test_persistence_idempotency_and_isolation(client):
     assert add(client, replace(card(), price=999)) == saved
     assert client.get('/api/favorites').json()['items'] == [saved]
     reopened = UserStore(app.state.auth.store.conninfo)
-    with reopened.connect() as db:
-        assert json.loads(db.execute('SELECT snapshot FROM favorites').fetchone()['snapshot'])['price'] == 100
+    with reopened.session() as db:
+        assert json.loads(db.scalar(select(Favorite.snapshot)))['price'] == 100
     login(client, 'bob')
     assert client.get('/api/favorites').json() == {'items': []}
     for method, path in [('delete', ''), ('post', '/refresh')]:
@@ -99,8 +101,8 @@ def test_refresh_failures_preserve_snapshot(client, monkeypatch, failure, status
         def __exit__(self, *args): pass
         def iter_pages(self, keyword):
             if failure == 'removed':
-                with app.state.auth.store.connect() as db:
-                    db.execute('DELETE FROM favorites WHERE id = %s', (saved['id'],))
+                with app.state.auth.store.session() as db:
+                    db.execute(delete(Favorite).where(Favorite.id == saved['id']))
                 yield SearchPage([card()], keyword, 1, None)
             elif failure == 'missing':
                 yield SearchPage([], keyword, 1, None)

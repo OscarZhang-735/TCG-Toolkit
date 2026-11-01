@@ -8,8 +8,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
-from psycopg import Error as DatabaseError
-from psycopg_pool import PoolTimeout
+from sqlalchemy.exc import SQLAlchemyError
 from .db_cli import require_schema
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
@@ -119,7 +118,7 @@ def health(request: Request):
     try:
         with request.app.state.auth.store.connect() as db:
             require_schema(db)
-    except (DatabaseError, PoolTimeout, RuntimeError):
+    except (SQLAlchemyError, RuntimeError):
         raise HTTPException(503, detail="database_unavailable") from None
     return {"status": "ok"}
 

@@ -93,14 +93,9 @@ def main():
                    str(Path(release["directory"]) / "compose.yaml"), *commands, env=env, output=output)
 
     def pg_schema(release):
-        # Local socket access stays inside the database container. No password in argv.
-        query = "SELECT COALESCE(max(version),0) FROM schema_migrations"
-        exists = compose(release, "exec", "-T", "db", "sh", "-ec",
-                         'psql -U "$POSTGRES_USER" -d "$APP_DB_NAME" -Atc "SELECT to_regclass(\'public.schema_migrations\')"')
-        if not exists:
-            return 0
-        return int(compose(release, "exec", "-T", "db", "sh", "-ec",
-                           'psql -U "$POSTGRES_USER" -d "$APP_DB_NAME" -Atc "' + query + '"'))
+        # The image owns schema inspection, including legacy PostgreSQL releases.
+        state = json.loads(compose(release, "run", "--no-deps", "-T", "migrate", "tcg-db", "status"))
+        return int(state["schema"])
 
     config = json.loads(compose(target, "config", "--format", "json"))
     domain = config["services"]["web"]["environment"]["API_DOMAIN"]

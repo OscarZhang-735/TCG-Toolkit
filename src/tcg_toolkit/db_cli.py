@@ -1,54 +1,71 @@
-"""Explicit, transactional schema migrations: tcg-db migrate | status."""
+"""Explicit Alembic migrations: tcg-db migrate | status | check."""
 import argparse
 from importlib.resources import files
 import json
 
-import psycopg
-from psycopg.rows import dict_row
+from alembic import command
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import func, inspect, select
 
-from .database import connection_info
+from .database import Database
+from .db_models import SchemaMigration
 
 SCHEMA_VERSION = 1
 
 
+def alembic_config(connection):
+    config = Config()
+    config.set_main_option("script_location", str(files("tcg_toolkit").joinpath("migrations")))
+    config.attributes["connection"] = connection
+    return config
+
+
 def version(db):
-    if db.execute("SELECT to_regclass('schema_migrations') AS name").fetchone()["name"] is None:
+    if not inspect(db).has_table(SchemaMigration.__tablename__):
         return 0
-    return db.execute("SELECT COALESCE(max(version), 0) AS version FROM schema_migrations").fetchone()["version"]
+    return db.scalar(select(func.coalesce(func.max(SchemaMigration.version), 0)))
 
 
 def require_schema(db):
-    if version(db) != SCHEMA_VERSION:
+    current = MigrationContext.configure(db).get_current_revision()
+    head = ScriptDirectory.from_config(alembic_config(db)).get_current_head()
+    if version(db) != SCHEMA_VERSION or current != head:
         raise RuntimeError("Database schema does not match this application; run tcg-db migrate with the matching release.")
 
 
 def migrate(conninfo=None):
-    with psycopg.connect(conninfo if conninfo is not None else connection_info(), row_factory=dict_row) as db:
-        db.execute("SELECT pg_advisory_xact_lock(894210611)")
+    with Database(conninfo) as database, database.connect() as db:
+        db.execute(select(func.pg_advisory_xact_lock(894210611)))
         current = version(db)
         if current > SCHEMA_VERSION:
             raise RuntimeError("Database schema is newer than this application.")
-        db.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
-            version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())""")
-        for number in range(current + 1, SCHEMA_VERSION + 1):
-            scripts = sorted(p for p in files("tcg_toolkit").joinpath("migrations").iterdir()
-                             if p.name.startswith(f"{number:03}_") and p.name.endswith(".sql"))
-            if len(scripts) != 1:
-                raise RuntimeError(f"Expected exactly one migration for version {number}.")
-            db.execute(scripts[0].read_text(encoding="utf-8"))
-            db.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (number,))
+        config = alembic_config(db)
+        revision = MigrationContext.configure(db).get_current_revision()
+        if revision is None and current == 1:
+            # Existing PostgreSQL schema 1 already contains the baseline tables.
+            # Stamp in the same transaction; never recreate or overwrite data.
+            command.stamp(config, "0001")
+        elif revision is None and current != 0:
+            raise RuntimeError("Unrecognized legacy schema; migration requires a matching release.")
+        command.upgrade(config, "head")
+        require_schema(db)
     return SCHEMA_VERSION
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("migrate", "status"))
+    parser.add_argument("command", choices=("migrate", "status", "check"))
     args = parser.parse_args(argv)
     if args.command == "migrate":
         current = migrate()
     else:
-        with psycopg.connect(connection_info(), row_factory=dict_row) as db:
+        with Database() as database, database.connect() as db:
             current = version(db)
+            if args.command == "check":
+                require_schema(db)
+                command.check(alembic_config(db))
     print(json.dumps({"engine": "postgresql", "schema": current}))
 
 

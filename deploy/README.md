@@ -1,78 +1,83 @@
-# 当前生产部署：GitHub Pages + 1Panel HTTPS
+# PostgreSQL 与后端共同发布
 
-后端：https://tcgtoolkit.rinne.love
+生产地址：https://tcgtoolkit.rinne.love
 前端：https://oscarzhang-735.github.io/TCG-Toolkit/
 服务器：ubuntu@99.79.33.22，部署目录 `/opt/tcg-http`。
 
-## 已配置
+## 编排
 
-1Panel/OpenResty 管理域名、证书和 HTTPS，代理到 `http://127.0.0.1:18080`。
-生产 compose.yaml 只管理后端，不启动 Caddy，不接管 80/443。
-后端端口仅绑定本机；沿用 `tcg-http-data` 卷，用户、收藏和汇率数据保留。
-允许的 Origin 为后端 HTTPS 域名和 GitHub Pages Origin（不含仓库路径）。
-.env 保存 API_DOMAIN、TCG_PROXY_IPS 和 RAPIDAPI_KEY；代理信任目前为容器网桥网关 172.19.0.1。
-若重建网络导致网关变化，应同步更新 TCG_PROXY_IPS，不能使用 *。
-bootstrap 镜像及 current.json 已记录，首次 Actions 发布可以备份并回退到当前版本。
-旧 compose.http.yaml 仅用于历史 HTTP 直连部署；Caddyfile 保留但不参与当前部署。
+同一份 Compose 管理 `db`、一次性 `migrate` 和 `web`。PostgreSQL 使用固定的 17 系列镜像 digest，数据库卷为 `tcg-http-postgres-data`。数据库只连接内部网络，不发布 5432 端口；Web 经原网络访问外部服务，继续绑定 `127.0.0.1:18080`。1Panel/OpenResty 继续管理域名、证书及 HTTPS。
 
-## GitHub 设置
+首次初始化创建非超级用户角色和应用数据库。管理员密码仅传给 db，应用与迁移使用 `PGPASSWORD`。镜像初始化脚本仅在空数据卷上执行；修改 .env 不会修改已有角色密码。
 
-仓库 Settings → Pages → Source：GitHub Actions。
-Settings → Environments：创建 production。
-Settings → Secrets and variables → Actions → Variables，添加：
+现有 `.github/workflows/release.yml` 继续负责测试、构建、后端发布和 Pages。PostgreSQL 测试服务加入原 test job；没有数据库专用工作流或独立发布 job。后端发布脚本统一执行数据库备份、数据库启动、schema 迁移和应用验收。
 
-| 名称 | 值 |
-| --- | --- |
-| API_BASE_URL | https://tcgtoolkit.rinne.love |
-| DEPLOY_HOST | 99.79.33.22 |
-| DEPLOY_USER | ubuntu |
-| DEPLOY_PATH | /opt/tcg-http |
+## 配置
 
-production environment Secrets：
-- DEPLOY_SSH_KEY：允许 ubuntu 登录服务器的 SSH 私钥全文；建议后续使用专用部署密钥。
-- DEPLOY_KNOWN_HOSTS：已验证的 99.79.33.22 host key 条目；可以从本机已信任的 known_hosts 提取。
+参考 `env.example`，在服务器 `/opt/tcg-http/.env` 设置：
 
-工作流通过 sudo -n python3 执行服务器部署脚本，使用当前 ubuntu 已有的免密码 sudo 权限。
-backend job 使用 packages:read 的临时 GITHUB_TOKEN，经 SSH 标准输入执行服务器端 `sudo docker login ghcr.io`，每次部署刷新认证，无需长期 PAT 或公开镜像。
-令牌随工作流结束失效；如包未继承仓库权限，应在包设置的 Manage Actions access 中给本仓库 Read 权限。不要将 RapidAPI Key 放入前端或 GitHub Variables。
-如果此前禁用了 Test and release，设置完成后重新启用。推送 main 自动运行，也可在 main 手动运行。
-提交与推送由用户执行，本次未自动推送。
+- `PGDATABASE=tcg`、`PGUSER=tcg`、随机 `PGPASSWORD` 和另一个随机 `TCG_PG_ADMIN_PASSWORD`。
+- `TCG_POSTGRES_IMAGE`：与本次发布匹配的 PostgreSQL 17 digest；大版本升级必须另行安排。
+- `TCG_DB_SUBNET=10.205.0.0/24`：数据库内部网络，可按宿主机网络调整。
+- 保留 `API_DOMAIN`、`TCG_PROXY_IPS`、RapidAPI、搜索代理、SMTP 参数及稳定的 `TCG_EMAIL_CODE_SECRET`。
 
-## 发布、备份与回滚
+`.env` 保持权限 600，不提交到 Git。当前代理网关为 `172.19.0.1`；保留现有 default 网络，若改变网关应同步更新信任 IP。
 
-PR 仅测试；main 测试 → 同 SHA 静态产物和 GHCR 镜像 → 后端 → Pages。
-后端通过不可变 digest 部署，生产流程串行且不取消执行中的部署。
-服务器先拉取镜像，再停 web 写入并复制 /app/data 至 backups，最后更新并验证健康、HTTPS、版本、匿名拒绝及 CORS。
-验收成功才部署 Pages；前端发布失败保留健康后端，可重跑失败 job。
+## 首次通过 SSH 部署
 
-同数据库 schema 的更新失败会自动恢复上一镜像；schema 发生变化时停止 web，报告备份位置供人工处理。
-手动回滚：
+本次使用全新空库，不导入 SQLite。旧账户、会话、收藏和卡牌不会出现在新库中。先准备有效 SMTP 配置，用户重新注册后使用。
+
+1. 本地完成测试，并将当前源码构建成 Linux amd64 镜像。将源码指纹作为 `BUILD_SHA`，bootstrap 的指纹不是 Git commit。
+2. 用 `docker save` 导出镜像，通过已验证 host key 的 SSH/SCP 传到服务器，再执行 `sudo docker load -i 镜像归档`。
+3. 将 deploy 目录的文件复制到新的 `/opt/tcg-http/releases/源码指纹/`。复制本地 SMTP 参数及验证码密钥到服务器 .env，保留其余生产参数，保存修改前的配置备份。
+4. 查询加载后的完整镜像 ID，调用：
 
 ```sh
-sudo python3 /opt/tcg-http/releases/当前SHA/deploy.py /opt/tcg-http --rollback
+sudo python3 /opt/tcg-http/releases/源码指纹/deploy.py /opt/tcg-http sha256:完整镜像ID 源码指纹 --local-image
 ```
 
-跨 schema 回滚须先停服、另存失败后的数据库，再经运维确认恢复匹配的旧备份，保持文件权限。
-不要删除数据卷。限制部署目录权限并将数据库备份另存到服务器外；备份保留期限由运维管理。
-当前数据库不自动与本地同步；首次迁移需停本地 web，`docker compose cp web:/app/data ./backup-data`，
-安全传输后在远端停服、备份原卷，再恢复数据。浏览器历史和偏好不在数据库中。
+脚本先停止旧 Web 并复制 `/app/data` 到带时间戳的 backups，再启动独立数据库、运行迁移和启动 Web。旧 `tcg-http-data` 卷保留，不再挂载到新 Web。首次切换发现目标 PostgreSQL 已有 schema 时会中止，防止把已有库当作空库。
 
-## 认证与测试边界
+备份失败会恢复旧 Web；新 Web 尚未启动时的首次迁移失败也可恢复旧 Web。新 Web 启动后的跨引擎失败保持停服并报告备份位置，避免静默丢失新写入。
 
-邮箱注册版本使用用户数据库 schema v8。发布前在服务器 `/opt/tcg-http/.env` 配置
-`TCG_SMTP_HOST`、`TCG_SMTP_PORT`（可留空）、`TCG_SMTP_TLS`（默认 `starttls`）、
-`TCG_SMTP_USERNAME`、`TCG_SMTP_PASSWORD`、`TCG_SMTP_FROM` 和 `TCG_EMAIL_CODE_SECRET`。
-参数说明和密钥生成见 [开发文档](../docs/developer.md#邮箱注册与验证)。SMTP 及验证码密钥只保存在服务端。
-未配置时老账户继续可用，邮件注册和绑定返回 503，不视为健康检查失败。
+## 后续共同发布
 
-部署沿用备份 → 后端 → Pages 顺序。v8 在 v7 凭据清理成功后迁移，保留用户、会话、收藏和卡牌数据。
-老账户无需立即补绑；旧页面的无邮箱注册请求会返回 422，刷新后使用新表单。
-v8 升级后不能直接运行只支持 v7 的镜像；跨 schema 回滚须使用上面的人工恢复流程。
-上线后用受控测试邮箱验收真实 SMTP 投递、验证码注册、邮箱登录及老账户补绑；自动化测试仅模拟邮件传输。
+保留原 GitHub 配置：production 环境、DEPLOY_SSH_KEY、DEPLOY_KNOWN_HOSTS，以及 DEPLOY_HOST、DEPLOY_USER、DEPLOY_PATH、API_BASE_URL Variables。GHCR 使用工作流临时令牌登录；提交和推送由用户执行。
 
-Bearer 令牌存 localStorage，服务端保存摘要，7 天过期，退出撤销并同步其他标签页。
-旧 Cookie 不再认证，更新后的旧页面需刷新并重新登录。
-同一 GitHub 用户下的 Pages 仓库共享 Origin；仓库路径不能隔离 localStorage。
-CORS 支持 GET/POST/DELETE/OPTIONS 和 Authorization、Content-Type，不使用跨站 Cookie。
-后续 API 更新应先扩展后端，再发布前端，最后移除旧接口，以兼容缓存中的旧页面。
-当前 HTTPS 和两个 Origin 已验证；GHCR 拉取和完整 Actions/Pages 发布需要完成上述 GitHub 配置后验收。
+每次后端发布：
+
+1. 拉取目标应用镜像和同一 Compose 中指定的 PostgreSQL 镜像。
+2. 停止 Web 写入，使用当前数据库容器的 `pg_dump -Fc` 生成备份，并保存原 release 元数据。
+3. 启动/更新 db，重新运行一次性 migrate；不复用先前已完成的迁移结果。
+4. 启动 Web，检查 HTTPS、版本、数据库健康、匿名拒绝及 CORS。
+5. 成功后更新 current.json/previous.json，随后由原工作流发布 Pages。
+
+发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 1。ORM 版本首次部署时通过 `tcg-db migrate` 为现有 schema 1 登记基线，保留原有数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
+
+## 备份和恢复
+
+发布备份位于 `/opt/tcg-http/backups/<时间戳>-<源码版本>/`，包含 `database.dump` 和 `release.json`。首次 SQLite 切换备份为 `data/` 目录。备份不自动删除；应另行保存到服务器外。
+
+人工备份时，设置 current.json 中的 TCG_IMAGE，并用对应 release 的 Compose：
+
+```sh
+docker compose --env-file /opt/tcg-http/.env -f /opt/tcg-http/releases/版本/compose.yaml stop web
+docker compose --env-file /opt/tcg-http/.env -f /opt/tcg-http/releases/版本/compose.yaml exec -T db sh -ec 'exec pg_dump -U "$POSTGRES_USER" -d "$APP_DB_NAME" -Fc --no-owner --no-acl' > database.dump
+docker compose --env-file /opt/tcg-http/.env -f /opt/tcg-http/releases/版本/compose.yaml start web
+```
+
+不要复制运行中的 PostgreSQL 数据目录。恢复时先停止 Web，并另存当前数据库，再创建新的恢复数据库。使用 `pg_restore --exit-on-error --no-owner --no-acl --role 应用角色` 将备份恢复到新库；更改 PGDATABASE，使用匹配的应用镜像检查 schema 和健康后再开放访问。保留原库，避免覆盖尚需核对的数据。
+
+同数据库引擎、同 schema 可运行：
+
+```sh
+sudo python3 /opt/tcg-http/releases/当前版本/deploy.py /opt/tcg-http --rollback
+```
+
+跨 schema 或 PostgreSQL → SQLite 回退必须人工选择匹配备份和旧 release。切回旧 SQLite 将不包含 PostgreSQL 阶段新增的数据；先保存 PostgreSQL 备份，再恢复旧 Compose 和发布状态。脚本拒绝自动执行这种回退。
+
+## 验收
+
+`/api/health` 只有在 PostgreSQL 可连接且 schema 匹配时才返回 200。SMTP 不参与数据库健康检查；首次部署另行检查邮件配置及 TLS 认证。真实投递应使用受控邮箱验收。
+
+验证重建后的会话、收藏及卡牌持久化、验证码限额、购物车幂等和汇率刷新预算。旧 SQLite 文件、数据卷及备份的清理均须人工批准。

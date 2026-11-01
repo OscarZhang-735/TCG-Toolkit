@@ -1,3 +1,5 @@
+from sqlalchemy import select
+from tcg_toolkit.db_models import CurrencyRate
 from tcg_toolkit.database import Database
 import httpx
 import pytest
@@ -119,8 +121,8 @@ def test_cache_refresh_and_restart(monkeypatch, tmp_path):
         with CurrencyClient(api_key="test", client=http) as currency:
             assert currency.convert_jpy(100, "CNY")["result"] == 6
         assert calls == ["CNY", "CAD", "CNY", "CAD"]
-    with Database() as store, store.connect() as db:
-        assert db.execute("SELECT fetched_at FROM rates").fetchall() == [{"fetched_at": now[0]}, {"fetched_at": now[0]}]
+    with Database() as store, store.session() as db:
+        assert db.scalars(select(CurrencyRate.fetched_at)).all() == [now[0], now[0]]
 
 
 def test_failures_consume_budget_and_preserve_success(monkeypatch):

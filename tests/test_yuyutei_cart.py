@@ -1,3 +1,4 @@
+from sqlalchemy import inspect
 from auth_helpers import persisted_data
 from auth_helpers import register_user
 from datetime import datetime
@@ -78,8 +79,8 @@ def test_credentials_are_request_scoped_and_never_stored(client, upstream):
     calls = len(upstream[0])
     assert client.post(BASE + '/cart', json=CARD).status_code == 422
     assert len(upstream[0]) == calls
-    with UserStore(app.state.auth.store.conninfo).connect() as db:
-        assert not db.execute("SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND tablename='yuyutei_credentials'").fetchone()
+    with UserStore(app.state.auth.store.conninfo).session() as db:
+        assert not inspect(db.connection()).has_table('yuyutei_credentials')
     raw = persisted_data(app.state.auth.store)
     for secret in SECRETS.values():
         assert secret.encode() not in raw

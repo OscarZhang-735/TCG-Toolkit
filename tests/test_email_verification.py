@@ -1,3 +1,5 @@
+from sqlalchemy import select, func, update
+from tcg_toolkit.db_models import EmailChallenge, LoginSession, User
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import smtplib
@@ -25,9 +27,8 @@ def client(tmp_path, monkeypatch):
 
 
 def legacy_user(username='legacy'):
-    with app.state.auth.store.connect() as db:
-        db.execute('INSERT INTO users (id,username,password_hash,created_at) VALUES (%s,%s,%s,%s)',
-                   (username, username, hasher.hash('password123'), 1))
+    with app.state.auth.store.session() as db:
+        db.add(User(id=username, username=username, password_hash=hasher.hash('password123'), created_at=1))
     return app.state.auth.login(username, 'password123')[1]
 
 
@@ -47,10 +48,10 @@ def advance(monkeypatch, seconds):
 
 def test_verified_registration_normalizes_email_and_both_logins(client):
     body = registration_body(client, email=' Alice+Cards@EXAMPLE.COM ')
-    with app.state.auth.store.connect() as db:
-        assert db.execute('SELECT count(*) FROM users').fetchone()['count'] == 0
-        row = db.execute('SELECT * FROM email_challenges').fetchone()
-        assert len(row['code_hash']) == 64 and row['code_hash'] != body['code']
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(User)) == 0
+        row = db.scalar(select(EmailChallenge))
+        assert len(row.code_hash) == 64 and row.code_hash != body['code']
     result = client.post('/api/auth/register', json=body)
     assert result.status_code == 201
     assert result.json()['user']['email'] == 'alice+cards@example.com'
@@ -71,9 +72,9 @@ def test_bad_attempts_are_persisted_and_exhaustion_blocks_correct_code(client):
         response = client.post('/api/auth/register', json={**body, 'code': wrong})
         assert response.json()['detail'] == ('code_attempts_exhausted' if i == 4 else 'invalid_code')
     assert client.post('/api/auth/register', json=body).json()['detail'] == 'code_attempts_exhausted'
-    with app.state.auth.store.connect() as db:
-        assert db.execute('SELECT attempts FROM email_challenges').fetchone()['attempts'] == 5
-        assert db.execute('SELECT count(*) FROM users').fetchone()['count'] == 0
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(EmailChallenge.attempts)) == 5
+        assert db.scalar(select(func.count()).select_from(User)) == 0
 
 
 def test_expiration_and_resend(client, monkeypatch):
@@ -145,8 +146,8 @@ def test_concurrent_verification_consumes_once(client):
         results = list(pool.map(lambda _: register(), range(2)))
     assert sum(isinstance(result, tuple) for result in results) == 1
     assert 'invalid_code' in results
-    with app.state.auth.store.connect() as db:
-        assert db.execute('SELECT count(*) FROM sessions').fetchone()['count'] == 1
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(LoginSession)) == 1
 
 
 def test_concurrent_send_reserves_quota_once(client):
@@ -201,14 +202,14 @@ def test_email_conflict_between_binding_and_registration_keeps_code(client):
     body = registration_body(client)
     client.headers['Authorization'] = 'Bearer ' + legacy_user()
     # Separate purposes can compete for the same address after the shared cooldown.
-    with app.state.auth.store.connect() as db:
-        db.execute('UPDATE email_challenges SET created_at=created_at-60')
+    with app.state.auth.store.session() as db:
+        db.execute(update(EmailChallenge).values(created_at=EmailChallenge.created_at-60))
     binding = binding_body(client, body['email'])
     assert client.post('/api/auth/email/bind', json=binding).status_code == 200
     response = client.post('/api/auth/register', json=body)
     assert response.status_code == 409 and response.json()['detail'] == 'email_taken'
-    with app.state.auth.store.connect() as db:
-        assert db.execute('SELECT state FROM email_challenges WHERE id=%s', (body['challenge_id'],)).fetchone()['state'] == 'active'
+    with app.state.auth.store.session() as db:
+        assert db.get(EmailChallenge, body['challenge_id']).state == 'active'
 
 
 @pytest.mark.parametrize('path', ['register/email-code', 'email/bind-code', 'email/bind', 'register'])

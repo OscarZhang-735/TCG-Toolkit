@@ -6,8 +6,10 @@ import time
 from enum import Enum
 from pathlib import Path
 
-from psycopg import Error as DatabaseError
-from psycopg_pool import PoolTimeout
+from sqlalchemy import and_, or_, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
+from ..db_models import CurrencyRate
 from ..database import Database
 
 import httpx
@@ -66,18 +68,22 @@ class CurrencyClient:
             if self._store is None:
                 self._store = Database()
             for currency in TargetCurrency:
-                with self._store.connect() as db:
+                with self._store.session() as db:
                     now = time.time()
                     if not self._api_key:
                         errors[currency] = CurrencyConfigError("RAPIDAPI_KEY is not configured.")
                         continue
                     # Commit the reservation before network I/O, including failed
                     # attempts. ON CONFLICT also serializes an initially empty cache.
-                    reserved = db.execute("""INSERT INTO rates (currency, attempted_at) VALUES (%s, %s)
-                        ON CONFLICT(currency) DO UPDATE SET attempted_at = excluded.attempted_at
-                        WHERE (rates.fetched_at IS NULL OR rates.fetched_at < %s)
-                          AND (rates.attempted_at IS NULL OR rates.attempted_at < %s)
-                        RETURNING currency""", (currency.value, now, now - 86400, now - 86400)).fetchone()
+                    statement = insert(CurrencyRate).values(currency=currency.value, attempted_at=now)
+                    reserved = db.scalar(statement.on_conflict_do_update(
+                        index_elements=[CurrencyRate.currency],
+                        set_={CurrencyRate.attempted_at: statement.excluded.attempted_at},
+                        where=and_(
+                            or_(CurrencyRate.fetched_at.is_(None), CurrencyRate.fetched_at < now - 86400),
+                            or_(CurrencyRate.attempted_at.is_(None), CurrencyRate.attempted_at < now - 86400),
+                        ),
+                    ).returning(CurrencyRate.currency))
                 if not reserved:
                     continue
                 try:
@@ -85,19 +91,18 @@ class CurrencyClient:
                 except CurrencyRequestError as exc:
                     errors[currency] = exc
                     continue
-                with self._store.connect() as db:
-                    db.execute("UPDATE rates SET rate=%s, fetched_at=%s WHERE currency=%s",
-                               (rate, time.time(), currency.value))
-            with self._store.connect() as db:
-                row = db.execute("SELECT rate, fetched_at FROM rates WHERE currency=%s",
-                                 (target.value,)).fetchone()
-        except (DatabaseError, PoolTimeout) as exc:
+                with self._store.session() as db:
+                    db.execute(update(CurrencyRate).where(CurrencyRate.currency == currency.value)
+                               .values(rate=rate, fetched_at=time.time()))
+            with self._store.session() as db:
+                row = db.get(CurrencyRate, target.value)
+        except SQLAlchemyError as exc:
             raise CurrencyRequestError("Could not access the currency cache.") from exc
-        if row is None or row["fetched_at"] is None or time.time() - row["fetched_at"] > 86400:
+        if row is None or row.fetched_at is None or time.time() - row.fetched_at > 86400:
             if target in errors:
                 raise errors[target]
             raise CurrencyRequestError("No fresh rate available; the next attempt is allowed after 24 hours.")
-        return {"from": "JPY", "to": target.value, "amount": amount, "result": amount * row["rate"], "fetched_at": row["fetched_at"]}
+        return {"from": "JPY", "to": target.value, "amount": amount, "result": amount * row.rate, "fetched_at": row.fetched_at}
 
     def _fetch_rate(self, target: TargetCurrency) -> float:
         try:

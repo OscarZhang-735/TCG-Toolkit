@@ -1,10 +1,10 @@
-"""PostgreSQL connections shared by account storage and currency caching."""
+"""SQLAlchemy engine and transaction-scoped ORM sessions."""
 from contextlib import contextmanager
 import os
 
-from psycopg.conninfo import make_conninfo
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import Session, sessionmaker
 
 
 def connection_info():
@@ -19,17 +19,27 @@ def connection_info():
 class Database:
     def __init__(self, conninfo=None):
         self.conninfo = conninfo if conninfo is not None else connection_info()
-        self.pool = ConnectionPool(self.conninfo, min_size=0, max_size=4, timeout=5,
-                                   kwargs={"row_factory": dict_row},
-                                   check=ConnectionPool.check_connection, open=True)
+        self.engine = create_engine(
+            "postgresql+psycopg://", connect_args=conninfo_to_dict(self.conninfo),
+            pool_size=4, max_overflow=0, pool_timeout=5, pool_pre_ping=True,
+            hide_parameters=True,
+        )
+        self._sessions = sessionmaker(self.engine, expire_on_commit=False)
+
+    @contextmanager
+    def session(self):
+        """A new session per operation: commit on success, rollback on exception."""
+        with self._sessions.begin() as session:
+            yield session
 
     @contextmanager
     def connect(self):
-        with self.pool.connection() as db:
+        """SQLAlchemy connection for schema management; business code uses session()."""
+        with self.engine.begin() as db:
             yield db
 
     def close(self):
-        self.pool.close()
+        self.engine.dispose()
 
     def __enter__(self):
         return self
@@ -38,7 +48,13 @@ class Database:
         self.close()
 
 
-def email_lock(db, email):
+def email_lock(db: Session, email: str):
     # A mailbox may not have a user/challenge row yet. Transaction locks cover
     # that absent-row case as well as quota reservation and SMTP completion.
-    db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ("email:" + email,))
+    db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended("email:" + email, 0))))
+
+
+def is_unique_violation(error, constraint=None):
+    """Only translate expected unique conflicts; preserve other integrity errors."""
+    return (getattr(error.orig, "sqlstate", None) == "23505"
+            and (constraint is None or error.orig.diag.constraint_name == constraint))

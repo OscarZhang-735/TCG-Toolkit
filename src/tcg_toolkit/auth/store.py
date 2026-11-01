@@ -1,4 +1,4 @@
-"""Account storage backed by the shared PostgreSQL connection pool."""
+"""ORM session factory with startup validation for account persistence."""
 from ..database import Database
 from ..db_cli import require_schema
 

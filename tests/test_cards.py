@@ -1,3 +1,4 @@
+from tcg_toolkit.db_models import OwnedCard
 from auth_helpers import register_user
 
 import pytest
@@ -36,8 +37,8 @@ def test_crud_duplicates_persistence(client):
     edited = client.put('/api/cards/' + row['id'], json={**CARD, 'quantity': 0, 'notes': ''}).json()
     assert edited['quantity'] == 0 and edited['notes'] == ''
     assert [r['id'] for r in client.get('/api/cards').json()['items']] == [other['id'], row['id']]
-    with UserStore(app.state.auth.store.conninfo).connect() as db:
-        assert db.execute('SELECT quantity FROM owned_cards WHERE id=%s', (row['id'],)).fetchone()['quantity'] == 0
+    with UserStore(app.state.auth.store.conninfo).session() as db:
+        assert db.get(OwnedCard, row['id']).quantity == 0
     assert client.request('DELETE', '/api/cards/' + row['id'], json={}).status_code == 204
     assert client.request('DELETE', '/api/cards/' + row['id'], json={}).status_code == 404
 
@@ -96,8 +97,8 @@ def test_image_persistence_update_and_clear(client):
     saved = client.post('/api/cards', json={**CARD, 'image_url': image}).json()
     assert saved['image_url'] == image
     assert client.get('/api/cards').json()['items'][0]['image_url'] == image
-    with UserStore(app.state.auth.store.conninfo).connect() as db:
-        assert db.execute('SELECT image_url FROM owned_cards WHERE id=%s', (saved['id'],)).fetchone()['image_url'] == image
+    with UserStore(app.state.auth.store.conninfo).session() as db:
+        assert db.get(OwnedCard, saved['id']).image_url == image
     response = client.put('/api/cards/' + saved['id'], json={**CARD, 'image_url': None})
     assert response.status_code == 200 and response.json()['image_url'] == ''
     for invalid in ['javascript:alert(1)', 'data:image/png;base64,test', '/relative.png']:

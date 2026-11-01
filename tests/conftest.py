@@ -2,8 +2,7 @@
 import os
 import uuid
 
-import psycopg
-from psycopg import sql
+from sqlalchemy.schema import CreateSchema, DropSchema
 import pytest
 
 from tcg_toolkit.database import Database, connection_info
@@ -16,8 +15,8 @@ def postgres_schema(monkeypatch):
         pytest.fail("Set PGDATABASE to a dedicated *_test database (see compose.test.yaml).")
     schema = "test_" + uuid.uuid4().hex
     conninfo = connection_info()
-    with psycopg.connect(conninfo, autocommit=True) as db:
-        db.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    with Database(conninfo) as database, database.connect() as db:
+        db.execute(CreateSchema(schema))
     monkeypatch.setenv("PGOPTIONS", f"-c search_path={schema}")
     migrate(conninfo)
     stores = []
@@ -37,5 +36,5 @@ def postgres_schema(monkeypatch):
     finally:
         for store in stores:
             store.close()
-        with psycopg.connect(conninfo, autocommit=True) as db:
-            db.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+        with Database(conninfo) as database, database.connect() as db:
+            db.execute(DropSchema(schema, cascade=True))

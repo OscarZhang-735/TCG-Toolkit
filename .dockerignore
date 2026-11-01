@@ -13,3 +13,7 @@
 !src/tcg_toolkit/auth/*.py
 !src/tcg_toolkit/migrations/
 !src/tcg_toolkit/migrations/*.sql
+!src/tcg_toolkit/migrations/*.py
+!src/tcg_toolkit/migrations/*.mako
+!src/tcg_toolkit/migrations/versions/
+!src/tcg_toolkit/migrations/versions/*.py

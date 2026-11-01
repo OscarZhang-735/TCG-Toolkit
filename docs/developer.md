@@ -72,6 +72,52 @@ node --test (Get-ChildItem tests/*.test.mjs).FullName
 测试使用真实 PostgreSQL 和每项独立 schema，要求库名以 `_test` 结尾。测试结束释放连接并清理自己创建的 schema；数据库卷不自动删除。
 GitHub Actions 在现有 test job 内启动 PostgreSQL service，不增加数据库发布工作流。
 
+### ORM 与事务
+
+持久化实体统一定义在 `src/tcg_toolkit/db_models.py`，与搜索结果及 API 输入模型分开。
+业务代码使用 SQLAlchemy 2 的 `select()`、实体属性和 PostgreSQL upsert 表达式，不拼接 SQL，也不使用 `text()` 接收用户输入。
+
+`Database.session()` 为每次操作创建独立 Session：正常退出提交，异常退出回滚并释放连接。Session 不跨线程共享。
+连接池最多 4 个连接、不额外溢出，并在取连接时检查可用性；数据库错误隐藏 SQL 参数。
+
+```python
+from sqlalchemy import select
+from tcg_toolkit.db_models import OwnedCard
+
+with store.session() as session:
+    card = session.scalar(select(OwnedCard).where(
+        OwnedCard.id == card_id, OwnedCard.user_id == user_id
+    ).with_for_update())
+    if card is not None:
+        card.notes = notes
+```
+
+用户数据查询必须包含用户范围。锁定后的实体在同一事务内修改；唯一冲突使用 `begin_nested()` 保存点及显式 `flush()`，
+使冲突查询可以继续执行。注册用户名/邮箱冲突映射为原有 409，其他约束错误继续抛出并回滚。
+验证码失败次数需要提交后再返回错误；SMTP 和上游 HTTP 请求在事务之外进行。
+购物车幂等预占和汇率刷新预算使用原子 upsert，不能替换为先查后插。
+API 响应继续显式选择公开字段，不直接序列化 ORM 实体，避免带出密码或令牌摘要。
+
+### Alembic 迁移
+
+`tcg-db migrate` 使用 Alembic，并在同一个 PostgreSQL 事务锁和事务内执行接管、升级及版本校验。
+已有 PostgreSQL schema 1 首次运行时仅登记 Alembic 基线 `0001`，保留用户、会话和业务数据；本次 ORM 改造不重建数据库。
+新空库通过基线迁移初始化。原 `001_initial.sql` 保持不可变，仅供基线使用；业务代码不再执行 SQL 字符串。
+`schema_migrations` 保留为发布版本兼容标记，现有 JSON 状态接口和回退判断继续可用。
+
+修改实体后，在开发数据库上生成、审阅迁移：
+
+```powershell
+alembic revision --autogenerate -m "describe schema change"
+python -m tcg_toolkit.db_cli migrate
+python -m tcg_toolkit.db_cli check
+```
+
+新迁移使用 Alembic `op` 和 SQLAlchemy 类型/表达式；审阅自动生成结果，尤其是约束及数据转换。
+实际 schema 变化时同步增加 `db_cli.SCHEMA_VERSION`，在迁移中写入对应 `SchemaMigration` 兼容标记。
+部署仍通过 `tcg-db migrate` 执行，不能用 `Base.metadata.create_all()` 或直接 `alembic upgrade` 绕过发布锁和兼容校验。
+`tcg-db check` 检查已应用版本及 ORM 元数据差异；Web 启动只检查版本，不自动建表。
+
 ## 邮箱注册与验证
 
 新用户必须验证邮箱才能创建账户；用户名和密码规则保持不变。注册成功仍返回 `{user, token}` 并自动登录。

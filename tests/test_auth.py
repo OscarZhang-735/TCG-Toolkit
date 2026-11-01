@@ -1,3 +1,5 @@
+from sqlalchemy import select, func, update
+from tcg_toolkit.db_models import LoginSession, SchemaMigration, User
 from auth_helpers import registration_body, register_user
 from concurrent.futures import ThreadPoolExecutor
 import pytest
@@ -29,19 +31,19 @@ def test_register_session_logout_login(client):
     client.headers["Authorization"] = "Bearer " + token
     assert client.get("/api/auth/me").json() == user
     store = app.state.auth.store
-    with store.connect() as db:
-        encoded = db.execute("SELECT password_hash FROM users").fetchone()['password_hash']
-        digest = db.execute("SELECT token_hash FROM sessions").fetchone()['token_hash']
+    with store.session() as db:
+        encoded = db.scalar(select(User.password_hash))
+        digest = db.scalar(select(LoginSession.token_hash))
         assert encoded.startswith("$argon2id$") and BODY["password"] not in encoded
         assert digest == token_hash(token) and token != digest
-        assert db.execute("SELECT max(version) AS version FROM schema_migrations").fetchone()["version"] == 1
+        assert db.scalar(select(func.max(SchemaMigration.version))) == 1
     assert AuthService(UserStore(store.conninfo)).current_user(token) == user
     assert client.post("/api/auth/logout", json={}).status_code == 204
     assert app.state.auth.current_user(token) is None
     assert client.get("/api/auth/me").status_code == 401
     assert client.post("/api/auth/login", json={**BODY, "confirm_password": BODY["password"], "username": "ALICE"}).status_code == 200
-    with store.connect() as db:
-        db.execute("UPDATE sessions SET expires_at = 0")
+    with store.session() as db:
+        db.execute(update(LoginSession).values(expires_at=0))
     assert client.get("/api/auth/me").status_code == 401
 
 

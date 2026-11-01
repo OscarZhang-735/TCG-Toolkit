@@ -4,6 +4,11 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+from .db_models import Favorite
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
@@ -47,14 +52,14 @@ def store(request):
     return request.app.state.auth.store
 
 
-def record(row):
-    return {'id': row['id'], 'item': json.loads(row['snapshot']),
-            'created_at': row['created_at'], 'refreshed_at': row['refreshed_at']}
+def record(row: Favorite):
+    return {'id': row.id, 'item': json.loads(row.snapshot),
+            'created_at': row.created_at, 'refreshed_at': row.refreshed_at}
 
 
-def owned(db, user_id, favorite_id):
-    row = db.execute('SELECT * FROM favorites WHERE user_id = %s AND id = %s',
-                     (user_id, favorite_id)).fetchone()
+def owned(db: Session, user_id, favorite_id, *, lock=False):
+    query = select(Favorite).where(Favorite.user_id == user_id, Favorite.id == favorite_id)
+    row = db.scalar(query.with_for_update() if lock else query)
     if row is None:
         raise HTTPException(404, detail='favorite_not_found')
     return row
@@ -62,34 +67,34 @@ def owned(db, user_id, favorite_id):
 
 @router.get('')
 def listing(request: Request, user=Depends(current_user)):
-    with store(request).connect() as db:
-        return {'items': [record(row) for row in db.execute(
-            'SELECT * FROM favorites WHERE user_id = %s ORDER BY created_at DESC, sort_id DESC',
-            (user['id'],))]}
+    with store(request).session() as db:
+        rows = db.scalars(select(Favorite).where(Favorite.user_id == user['id']).order_by(
+            Favorite.created_at.desc(), Favorite.sort_id.desc()))
+        return {'items': [record(row) for row in rows]}
 
 
 @router.post('', dependencies=[Depends(write_guard)])
 def add(body: CardSnapshot, request: Request, user=Depends(current_user)):
-    with store(request).connect() as db:
-        db.execute('''INSERT INTO favorites (id,user_id,game,product_url,snapshot,created_at,refreshed_at) VALUES (%s, %s, %s, %s, %s, %s, NULL)
-                      ON CONFLICT(user_id, game, product_url) DO NOTHING''',
-                   (str(uuid.uuid4()), user['id'], body.game.value, body.product_url,
-                    body.model_dump_json(), int(time.time())))
-        return record(db.execute('SELECT * FROM favorites WHERE user_id = %s AND game = %s AND product_url = %s',
-                                 (user['id'], body.game.value, body.product_url)).fetchone())
+    with store(request).session() as db:
+        db.execute(insert(Favorite).values(
+            id=str(uuid.uuid4()), user_id=user['id'], game=body.game.value,
+            product_url=body.product_url, snapshot=body.model_dump_json(), created_at=int(time.time())
+        ).on_conflict_do_nothing(index_elements=[Favorite.user_id, Favorite.game, Favorite.product_url]))
+        row = db.scalar(select(Favorite).where(Favorite.user_id == user['id'],
+                        Favorite.game == body.game.value, Favorite.product_url == body.product_url))
+        return record(row)
 
 
 @router.delete('/{favorite_id}', status_code=204, dependencies=[Depends(write_guard)])
 def remove(favorite_id: str, request: Request, user=Depends(current_user)):
-    with store(request).connect() as db:
-        owned(db, user['id'], favorite_id)
-        db.execute('DELETE FROM favorites WHERE user_id = %s AND id = %s', (user['id'], favorite_id))
+    with store(request).session() as db:
+        db.delete(owned(db, user['id'], favorite_id, lock=True))
 
 
 @router.post('/{favorite_id}/refresh', dependencies=[Depends(write_guard)])
 def refresh(favorite_id: str, request: Request, user=Depends(current_user)):
     from .web import SEARCHERS
-    with store(request).connect() as db:
+    with store(request).session() as db:
         saved = record(owned(db, user['id'], favorite_id))['item']
     match = None
     try:
@@ -105,7 +110,7 @@ def refresh(favorite_id: str, request: Request, user=Depends(current_user)):
         raise HTTPException(502, detail='refresh_parse_error') from exc
     if match is None:
         raise HTTPException(404, detail='refresh_product_missing')
-    with store(request).connect() as db:
-        db.execute('UPDATE favorites SET snapshot = %s, refreshed_at = %s WHERE user_id = %s AND id = %s',
-                   (json.dumps(match.to_dict()), int(time.time()), user['id'], favorite_id))
-        return record(owned(db, user['id'], favorite_id))
+    with store(request).session() as db:
+        row = owned(db, user['id'], favorite_id, lock=True)
+        row.snapshot, row.refreshed_at = json.dumps(match.to_dict()), int(time.time())
+        return record(row)

@@ -37,12 +37,11 @@ def test_postgres_release_backup_and_recovery(tmp_path, monkeypatch, deploy_modu
         if output:
             if failure == "backup": raise RuntimeError("backup failed")
             Path(output).write_bytes(b"PGDMP test dump")
-        if "migrate" in args and "run" in args:
+        if "run" in args and args[-1] == "status":
+            return json.dumps({"engine":"postgresql", "schema":new_schema if migrated[0] else 1})
+        if "run" in args and args[-1] == "migrate":
             if failure == "migration": raise RuntimeError("migration failed")
             migrated[0] = True
-        if "exec" in args:
-            if "to_regclass" in args[-1]: return "schema_migrations"
-            if "max(version)" in args[-1]: return str(new_schema if migrated[0] else 1)
         return ""
 
     def probe(api, sha):
@@ -65,9 +64,9 @@ def test_postgres_release_backup_and_recovery(tmp_path, monkeypatch, deploy_modu
     assert all("down" not in call and "rm" not in call for call in calls)
     if failure == "backup":
         assert any("start" in call for call in calls)
-        assert not any("run" in call for call in calls)
+        assert not any("run" in call and call[-1] == "migrate" for call in calls)
     if not failure:
-        migration_index = next(i for i,c in enumerate(calls) if "run" in c)
+        migration_index = next(i for i,c in enumerate(calls) if "run" in c and c[-1] == "migrate")
         start_index = next(i for i,c in enumerate(calls) if "up" in c and c[-1] == "web")
         assert migration_index < start_index
 
@@ -83,8 +82,8 @@ def test_cross_engine_rollback_is_rejected_before_changes(tmp_path, monkeypatch,
     def fake_run(*args, output=None, **kwargs):
         calls.append(args)
         if "config" in args: return json.dumps({"services":{"web":{"environment":{"API_DOMAIN":"api.example.com"}}}})
-        if "to_regclass" in args[-1]: return "schema_migrations"
-        if "max(version)" in args[-1]: return "1"
+        if "run" in args and args[-1] == "status":
+            return json.dumps({"engine":"postgresql", "schema":1})
         if output: Path(output).write_bytes(b"PGDMP backup")
         return ""
     monkeypatch.setattr(deploy_module, "run", fake_run)
@@ -92,7 +91,7 @@ def test_cross_engine_rollback_is_rejected_before_changes(tmp_path, monkeypatch,
     with pytest.raises(RuntimeError, match="engine/schema"):
         deploy_module.main()
     assert any("start" in c for c in calls)
-    assert not any("up" in c or "run" in c for c in calls)
+    assert not any("up" in c or ("run" in c and c[-1] == "migrate") for c in calls)
 
 
 @pytest.mark.parametrize('failure,recover', [(None,False), ('migration',True), ('health',False)])
@@ -110,9 +109,9 @@ def test_first_ssh_cutover_backs_up_sqlite_and_keeps_cross_engine_boundary(
         if 'config' in args:
             return json.dumps({'services':{'web':{'environment':{'API_DOMAIN':'api.example.com'}},
                                            'db':{'image':'postgres:17'}}})
-        if 'to_regclass' in args[-1]: return 'schema_migrations' if migrated[0] else ''
-        if 'max(version)' in args[-1]: return '1'
-        if 'run' in args:
+        if 'run' in args and args[-1] == 'status':
+            return json.dumps({'engine':'postgresql', 'schema':1 if migrated[0] else 0})
+        if 'run' in args and args[-1] == 'migrate':
             if failure == 'migration': raise RuntimeError('migration failed')
             migrated[0] = True
         return ''

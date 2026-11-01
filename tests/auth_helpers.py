@@ -43,13 +43,12 @@ def register_user(client, username='alice', password='password123', email=None):
 
 
 def persisted_data(store):
-    """Inspect all persisted application columns for request-scoped secrets."""
-    from psycopg import sql
+    """Inspect mapped application columns for request-scoped secrets."""
+    import json
+    from sqlalchemy import select
+    from tcg_toolkit.db_models import Base
     contents = []
-    with store.connect() as db:
-        tables = db.execute("SELECT tablename FROM pg_tables WHERE schemaname=current_schema()").fetchall()
-        for table in tables:
-            rows = db.execute(sql.SQL("SELECT row_to_json(t)::text AS value FROM {} t").format(
-                sql.Identifier(table["tablename"])))
-            contents.extend(row["value"] for row in rows)
-    return "\n".join(contents).encode()
+    with store.session() as db:
+        for table in Base.metadata.sorted_tables:
+            contents.extend(dict(row) for row in db.execute(select(table)).mappings())
+    return json.dumps(contents, default=str).encode()
