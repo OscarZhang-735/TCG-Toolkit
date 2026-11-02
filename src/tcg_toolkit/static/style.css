@@ -117,6 +117,7 @@ button:disabled:hover { background: var(--color-primary); border-color: var(--co
 .filter-top { display: flex; justify-content: space-between; align-items: center; }
 .filter-search input { height: 40px; font-size: 14px; }
 .filter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.6fr); gap: 16px; align-items: end; }
+.filter-grid.with-subscription { grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.6fr); }
 .field > span, .price-head > span { display: block; font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
 .field select { margin-top: 6px; }
 .filters .chips { margin-top: 0; padding-top: 16px; border-top: 1px solid var(--color-divider); }
@@ -222,7 +223,7 @@ td a:hover, .card-name:hover { text-decoration: underline; }
 
 @media (max-width: 1050px) {
   main { padding: 28px 24px; }
-  .filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filter-grid, .filter-grid.with-subscription { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .price-field { grid-column: 1 / -1; }
 }
 @media (max-width: 700px) {
@@ -443,15 +444,16 @@ th.action-col, td.action-col { width: 1%; text-align: right; }
 .favorite-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .fav-actions { display: flex; gap: 4px; }
 /* Star and refresh share one look; [aria-pressed] must not pick up the view-toggle style. */
-button.fav-toggle, button.fav-refresh, button.fav-toggle[aria-pressed=true] {
+button.fav-toggle, button.fav-refresh, button.fav-subscribe, button.fav-toggle[aria-pressed=true], button.fav-subscribe[aria-pressed=true] {
   width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%;
   background: transparent; box-shadow: none; color: var(--color-text-muted); font-size: 16px;
 }
-button.fav-toggle:hover, button.fav-refresh:hover { background: var(--color-hover); color: var(--color-text); }
+button.fav-toggle:hover, button.fav-refresh:hover, button.fav-subscribe:hover { background: var(--color-hover); color: var(--color-text); }
+button.fav-subscribe[aria-pressed=true] .bi-bell-fill { color: var(--color-primary); }
 button.fav-toggle:hover .bi-star { color: var(--color-favorite); }
 button.fav-toggle[aria-pressed=true] .bi-star-fill { color: var(--color-favorite); }
 button.fav-toggle[aria-pressed=true]:hover .bi-star-fill { color: var(--color-favorite-hover); }
-button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover { background: transparent; }
+button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-subscribe:disabled:hover { background: transparent; }
 .card-image button.fav-toggle, .card-image button.fav-toggle[aria-pressed=true] {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   background: var(--color-surface); box-shadow: var(--shadow-sm);
@@ -463,11 +465,13 @@ button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover { background
 .favorite-controls .fav-meta { flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; }
 .card .fav-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; margin-top: -2px; }
 .card .fav-meta > span { grid-column: 1; }
-.card .fav-meta .fav-refresh { grid-column: 2; grid-row: 1; width: 28px; height: 28px; font-size: 14px; }
+.card .fav-meta .fav-actions { grid-column: 2; grid-row: 1; gap: 2px; }
+.card .fav-meta .fav-actions button { width: 28px; height: 28px; font-size: 14px; }
 /* Always level with the update time; a status note, if any, goes on the line below. */
 .fav-time, .fav-note { display: inline-flex; align-items: center; gap: 5px; }
 .fav-note { color: var(--color-text); font-weight: 500; }
 #favorites-retry { margin-bottom: 14px; }
+.subscription-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -4px 0 14px; font-size: 12px; color: var(--color-text-muted); }
 /* Shared page skeleton: header, optional top panel, results heading, filters, list. */
 header + .results > .section-heading { margin-top: 0; }
 .heading-actions { display: flex; align-items: center; gap: 10px; }

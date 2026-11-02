@@ -120,7 +120,7 @@ async function signedIn(value) {
   // The cart client must know the account before the search app reads its cart.
   user = value; yuyuteiClient.activateUser(user.id, api.fetch);
   authGeneration++; resetEmails();
-  searchApp.activateUser(user.id, api.fetch);
+  searchApp.activateUser(user.id, api.fetch, Boolean(user.email_verified));
   $('account-status').textContent = '';
   $('current-username').textContent = user.username;
   $('account-username').textContent = user.username; setAvatar(user.username);
@@ -191,7 +191,7 @@ $('bind-email-form').addEventListener('submit', async event => {
     const result = await response.json();
     if (started !== authGeneration) return;
     if (!response.ok) bindError = authError(result.detail, response.status);
-    else {user = result; resetEmails();}
+    else {user = result; resetEmails(); searchApp?.setEmailVerified(Boolean(user.email_verified));}
   } catch (error) {
     if (started === authGeneration && error.name !== 'AbortError') bindError = 'auth_unavailable';
   } finally { $('bind-email-submit').disabled = false; refreshEmails(); }

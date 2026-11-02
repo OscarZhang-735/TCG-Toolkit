@@ -3,6 +3,7 @@ export function selectItems(items, filters) {
   const result = items.filter(item => filters.games.includes(item.game)
     && (!filters.stock || item.stock_status === filters.stock)
     && (!filters.rarity || (filters.rarity === '__unknown__' ? !item.rarity : item.rarity === filters.rarity))
+    && (!filters.subscription || filters.isSubscribed(item) === (filters.subscription === 'subscribed'))
     && (filters.min === null || item.price >= filters.min)
     && (filters.max === null || item.price <= filters.max)
     && (!text || `${item.name} ${item.card_number}`.toLocaleLowerCase().includes(text)));

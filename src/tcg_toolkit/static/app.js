@@ -1,6 +1,7 @@
 import {createProxySettings} from './proxy-settings.js';
 import {clearCards, activateCards, ownedQuantity} from './cards-ui.js';
 import {createFavorites, cardKey} from './favorites.js';
+import {createSubscriptions, subscriptionKey} from './subscriptions.js';
 import {t, applyLanguage, setLanguage, getLanguage} from './i18n.js';
 import {loadResults} from './logic.js';
 import {rarityBadge, cardImage} from './card-view.js';
@@ -36,7 +37,8 @@ function amountDisplay(amount) {
 const priceDisplay = item => amountDisplay(item.price);
 const money = price => formatPrice(price, displayCurrency, exchangeRate, getLanguage());
 const searchFilters = createFilterPanel($('search-filters'), {onChange: () => {limit = 100; render();}, formatPrice: money});
-const favoriteFilters = createFilterPanel($('favorites-filters'), {onChange: () => renderFavorites(), formatPrice: money});
+const favoriteFilters = createFilterPanel($('favorites-filters'), {onChange: () => renderFavorites(), formatPrice: money,
+  isSubscribed: item => Boolean(subscriptions.find(item))});
 function renderCurrencyStatus() { $('currency-status').hidden = !currencyStatus; $('currency-status').textContent = t('currency_fetched_at', {time: currencyStatus ? new Date(currencyStatus * 1000).toLocaleString(getLanguage()) : '—'}); }
 $('currency').addEventListener('change', async () => {
   const target = $('currency').value, request = ++currencyRequest;
@@ -56,9 +58,10 @@ $('currency').addEventListener('change', async () => {
   renderCurrencyStatus(); render(); renderFavorites(); cartPage.render();
 });
 const proxySettings = createProxySettings();
-let userId = null, requestAPI = fetch;
+let userId = null, requestAPI = fetch, emailVerified = false;
 let history = [];
 const favorites = createFavorites(() => {render(); renderFavorites();});
+const subscriptions = createSubscriptions(() => {render(); renderFavorites();});
 let cartPage = null;
 const cartStock = createCartStock(() => cartPage?.render());
 const productDetails = createProductDetails(() => cartPage?.render());
@@ -185,14 +188,36 @@ function stockBadge(item) {
   return badge;
 }
 function favoriteToggle(item) {
-  const saved = favorites.find(item), busy = favorites.state.busy.has(cardKey(item));
+  const saved = favorites.find(item), subscribed = saved && subscriptions.find(item);
+  const busy = favorites.state.busy.has(cardKey(item)) || subscriptions.state.busy.has(subscriptionKey(item));
   const button = el('button', 'icon-button fav-toggle'); button.type = 'button';
   button.append(icon(busy ? 'bi-arrow-repeat spin' : saved ? 'bi-star-fill' : 'bi-star'));
   button.setAttribute('aria-pressed', String(Boolean(saved)));
-  button.setAttribute('aria-label', t(saved ? 'favorite_remove' : 'favorite_add')); button.title = button.getAttribute('aria-label');
+  button.setAttribute('aria-label', t(subscribed ? 'favorite_remove_subscribed' : saved ? 'favorite_remove' : 'favorite_add')); button.title = button.getAttribute('aria-label');
   button.disabled = !favorites.state.ready || busy;
-  button.addEventListener('click', () => favorites.toggle(item));
+  // Subscriptions are only reachable from favorites, so unfavoriting must not leave one behind.
+  button.addEventListener('click', async () => {
+    if (subscribed && !await subscriptions.remove(item)) return;
+    favorites.toggle(item);
+  });
   return button;
+}
+function subscriptionToggle(item) {
+  const saved = subscriptions.find(item), busy = subscriptions.state.busy.has(subscriptionKey(item));
+  const button = el('button', 'icon-button fav-subscribe'); button.type = 'button';
+  button.append(icon(busy ? 'bi-arrow-repeat spin' : saved ? 'bi-bell-fill' : 'bi-bell'));
+  button.setAttribute('aria-pressed', String(Boolean(saved)));
+  const label = busy ? (saved ? 'subscription_removing' : 'subscription_adding') : saved ? 'subscription_remove'
+    : emailVerified ? 'subscription_add' : 'subscription_email_required';
+  button.setAttribute('aria-label', t(label)); button.title = button.getAttribute('aria-label');
+  button.disabled = !subscriptions.state.ready || busy || favorites.state.busy.has(cardKey(item)) || (!saved && !emailVerified);
+  button.addEventListener('click', () => subscriptions.toggle(item));
+  return button;
+}
+// Refresh and subscribe act on saved cards, so they only appear on the favorites page.
+function favoritePageActions(item) {
+  if (!favorites.find(item) || location.hash !== '#favorites') return [];
+  return [favoriteRefresh(item), subscriptionToggle(item)];
 }
 function favoriteRefresh(item) {
   const busy = favorites.state.busy.has(cardKey(item));
@@ -208,17 +233,24 @@ function favoriteMeta(item) {
   const saved = favorites.find(item);
   // A successful refresh shows through the new update time; only problems get a note.
   const reported = favorites.state.messages.get(cardKey(item));
-  const message = reported === 'favorite_updated' ? '' : reported;
   const onPage = saved && location.hash === '#favorites';
-  if (!onPage && !message) return null;
+  const subscribed = onPage && subscriptions.find(item);
+  const messages = [reported === 'favorite_updated' ? '' : reported,
+    onPage && subscriptions.state.messages.get(subscriptionKey(item)),
+    subscribed?.last_error && 'subscription_check_failed'].filter(Boolean);
+  if (!onPage && !messages.length) return null;
   const box = el('div', 'fav-meta');
+  const when = seconds => new Date(seconds * 1000).toLocaleString(getLanguage(), {dateStyle: 'short', timeStyle: 'short'});
   if (onPage) {
-    const time = saved.refreshed_at
-      ? new Date(saved.refreshed_at * 1000).toLocaleString(getLanguage(), {dateStyle: 'short', timeStyle: 'short'}) : t('favorite_never');
+    const time = saved.refreshed_at ? when(saved.refreshed_at) : t('favorite_never');
     const stamp = el('span', 'fav-time'); stamp.append(icon('bi-clock'), t('favorite_time', {time}));
     box.append(stamp);
   }
-  if (message) {
+  if (subscribed) {
+    const stamp = el('span', 'fav-time'); stamp.append(icon('bi-bell'), t('subscription_checked', {time: when(subscribed.checked_at)}));
+    box.append(stamp);
+  }
+  for (const message of messages) {
     const note = el('span', 'fav-note'); note.setAttribute('role', 'status');
     note.append(icon('bi-exclamation-circle'), t(message));
     box.append(note);
@@ -227,8 +259,7 @@ function favoriteMeta(item) {
 }
 function favoriteCell(item) {
   const box = el('div', 'favorite-controls'), actions = el('div', 'fav-actions');
-  actions.append(favoriteToggle(item));
-  if (favorites.find(item) && location.hash === '#favorites') actions.append(favoriteRefresh(item));
+  actions.append(favoriteToggle(item), ...favoritePageActions(item));
   box.append(actions);
   const meta = favoriteMeta(item); if (meta) box.append(meta);
   return box;
@@ -245,8 +276,12 @@ function renderFavorites() {
   $('favorites-empty').hidden = !state.ready || matches.length > 0;
   $('favorites-empty').querySelector('h3').textContent = t(state.records.length ? 'no_matching_results' : 'favorite_empty');
   $('favorites-refresh').disabled = !state.ready || !state.records.length || state.running || state.busy.size > 0;
-  $('favorites-retry').hidden = !state.error;
-  $('favorites-status').textContent = state.error ? t(state.error) : !state.ready ? t('favorite_loading') : state.total ? t('favorite_progress', {done: state.done, total: state.total}) : '';
+  const error = state.error || subscriptions.state.error;
+  $('favorites-retry').hidden = !error;
+  $('favorites-status').textContent = error ? t(error) : !state.ready ? t('favorite_loading') : state.total ? t('favorite_progress', {done: state.done, total: state.total}) : '';
+  $('subscription-hint').hidden = !state.records.length;
+  $('subscription-hint-text').textContent = t(emailVerified ? 'subscription_hint' : 'subscription_hint_verify');
+  $('subscription-hint-link').hidden = emailVerified;
   $('favorites-count').textContent = t('counts', {matching: matches.length.toLocaleString(getLanguage()), loaded: state.records.length.toLocaleString(getLanguage())});
   $('favorites-count').hidden = !state.ready;
   $('favorites-progress').hidden = !state.running;
@@ -254,7 +289,10 @@ function renderFavorites() {
   $('favorites-refresh').querySelector('.bi').classList.toggle('spin', state.running);
 }
 $('favorites-refresh').addEventListener('click', () => favorites.refreshAll());
-$('favorites-retry').addEventListener('click', () => favorites.load());
+$('favorites-retry').addEventListener('click', () => {
+  if (favorites.state.error) favorites.load();
+  if (subscriptions.state.error) subscriptions.load();
+});
 window.addEventListener('hashchange', () => {
   render(); renderFavorites();
   // Each visit reads the shop again: the cart may have changed on YuYu-Tei itself.
@@ -285,7 +323,8 @@ function gridCard(item, withCart = false) {
   if (withCart) { const row = el('div', 'card-cart'); row.append(el('span', 'card-cart-label', t('cart_column')), cartControls(item)); card.append(row); }
   const meta = favoriteMeta(item);
   if (meta) {
-    if (favorites.find(item) && location.hash === '#favorites') meta.append(favoriteRefresh(item));
+    const actions = favoritePageActions(item);
+    if (actions.length) { const box = el('div', 'fav-actions'); box.append(...actions); meta.append(box); }
     card.append(meta);
   }
   return card;
@@ -364,8 +403,8 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favorites.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
-  userId = null; items = []; history = []; started = false; errors = [];
+  proxySettings.clear(); favorites.clear(); subscriptions.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  userId = null; emailVerified = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;
   $('search').inert = true;
@@ -374,9 +413,13 @@ export function clearUser() {
   $('detail-confirm').removeAttribute('href');
   setStatus(''); renderErrors(); renderCurrencyStatus(); searchFilters.reset(); favoriteFilters.reset(); validateSearch();
 }
-export function activateUser(id, request) {
-  clearUser(); userId = id; requestAPI = request;
+export function activateUser(id, request, verified = false) {
+  clearUser(); userId = id; requestAPI = request; emailVerified = verified;
   history = readHistory(localStorage, userId); $('search').inert = false;
-  proxySettings.activate(); favorites.activate(requestAPI); activateCards(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
+  proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
   refreshLanguage();
+}
+// Binding an email on the account page unlocks subscribing without signing in again.
+export function setEmailVerified(value) {
+  emailVerified = value; renderFavorites();
 }

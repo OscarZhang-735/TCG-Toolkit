@@ -2,12 +2,15 @@ import {t} from './i18n.js';
 import {selectItems, priceSteps, sliderIndex, sliderBound} from './logic.js';
 
 // Filter/sort panel shared by search results and favorites. Markup comes from
-// <template id="filter-panel">; each instance keeps its own state.
-export function createFilterPanel(placeholder, {onChange, formatPrice}) {
+// <template id="filter-panel">; each instance keeps its own state. Passing
+// isSubscribed adds the subscription filter (favorites only for now).
+export function createFilterPanel(placeholder, {onChange, formatPrice, isSubscribed = null}) {
   const root = document.getElementById('filter-panel').content.firstElementChild.cloneNode(true);
   placeholder.replaceWith(root);
   const part = role => root.querySelector(`[data-role="${role}"]`);
-  const text = part('text'), stock = part('stock'), rarity = part('rarity'), sort = part('sort');
+  const text = part('text'), stock = part('stock'), rarity = part('rarity'), sort = part('sort'), subscription = part('subscription');
+  part('subscription-field').hidden = !isSubscribed;
+  part('subscription-field').parentElement.classList.toggle('with-subscription', Boolean(isSubscribed));
   const lo = part('price-min'), hi = part('price-max'), fill = part('price-fill'), label = part('price-label'), range = part('price-range');
   const games = () => [...root.querySelectorAll('[data-role="game"]:checked')].map(input => input.value);
   let steps = [], priceMin = null, priceMax = null;
@@ -37,10 +40,11 @@ export function createFilterPanel(placeholder, {onChange, formatPrice}) {
   function apply(items) {
     syncRarity(items); syncSlider(items);
     return selectItems(items, {games: games(), stock: stock.value, rarity: rarity.value,
+      subscription: isSubscribed ? subscription.value : '', isSubscribed,
       min: priceMin, max: priceMax, text: text.value, sort: sort.value});
   }
   function reset() {
-    text.value = ''; stock.value = ''; rarity.value = ''; sort.value = 'original';
+    text.value = ''; stock.value = ''; rarity.value = ''; subscription.value = ''; sort.value = 'original';
     priceMin = priceMax = null;
     root.querySelectorAll('[data-role="game"]').forEach(input => { input.checked = true; });
     onChange();

@@ -271,6 +271,7 @@
 <div class="heading-actions"><button id="favorites-refresh" type="button" class="secondary compact"><i class="bi bi-arrow-clockwise"></i><span data-i18n="favorite_refresh_all"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
 <div class="progress" id="favorites-progress" hidden><div class="progress-bar" id="favorites-progress-bar"></div></div>
+<p id="subscription-hint" class="subscription-hint" hidden><i class="bi bi-bell"></i><span id="subscription-hint-text"></span><a id="subscription-hint-link" href="#account" data-i18n="subscription_hint_link"></a></p>
 <button id="favorites-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div id="favorites-filters"></div>
 <div class="panel table-panel" id="favorites-list">
@@ -293,6 +294,7 @@
 <div class="filter-grid">
 <label class="field"><span data-i18n="rarity"></span><select data-role="rarity"><option value="" data-i18n="all"></option></select></label>
 <label class="field"><span data-i18n="stock"></span><select data-role="stock"><option data-i18n="all" value=""></option><option data-i18n="in_stock" value="in_stock"></option><option data-i18n="out_of_stock" value="out_of_stock"></option><option data-i18n="unknown" value="unknown"></option></select></label>
+<label class="field" data-role="subscription-field" hidden><span data-i18n="subscription"></span><select data-role="subscription"><option data-i18n="all" value=""></option><option data-i18n="subscribed" value="subscribed"></option><option data-i18n="not_subscribed" value="unsubscribed"></option></select></label>
 <label class="field"><span data-i18n="sort"></span><select data-role="sort"><option data-i18n="default" value="original"></option><option data-i18n="price_ascending" value="price:asc"></option><option data-i18n="price_descending" value="price:desc"></option><option data-i18n="name_a_z" value="name:asc"></option><option data-i18n="name_z_a" value="name:desc"></option><option data-i18n="number_ascending" value="card_number:asc"></option><option data-i18n="number_descending" value="card_number:desc"></option><option data-i18n="quantity_ascending" value="stock_quantity:asc"></option><option data-i18n="quantity_descending" value="stock_quantity:desc"></option></select></label>
 <div class="field price-field" role="group" data-i18n-aria-label="price_range">
 <div class="price-head"><span data-i18n="price_range"></span><output data-role="price-label"></output></div>
