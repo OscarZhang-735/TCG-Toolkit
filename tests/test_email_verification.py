@@ -259,7 +259,11 @@ def test_smtp_transport_tls_and_templates(monkeypatch, mode, port, language):
             calls.append('login')
         def send_message(self, message):
             assert message['To'] == 'alice@example.com'
-            assert '012345' in message.get_content() and '10' in message.get_content()
+            assert message.get_content_type() == 'multipart/alternative'
+            html = message.get_body(preferencelist=('html',)).get_content()
+            assert '012345' in html and 'TCG Toolkit' in html
+            assert '<table' in html and '10' in html
+            assert '012345' in message.get_body(preferencelist=('plain',)).get_content() and '10' in message.get_body(preferencelist=('plain',)).get_content()
             assert ('验证码' in message['Subject']) == (language == 'zh-CN')
             calls.append('send')
             return {}

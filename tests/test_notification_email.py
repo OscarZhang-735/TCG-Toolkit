@@ -127,8 +127,8 @@ def test_notification_verification_template(monkeypatch, language, phrase):
     messages = []
     monkeypatch.setattr(SMTPMailer, 'send_message', lambda self, message: messages.append(message))
     SMTPMailer().send_code('alerts@example.com', '123456', language, 'notification_email')
-    assert phrase in messages[0].get_content()
-    assert '123456' in messages[0].get_content()
+    assert phrase in messages[0].get_body(preferencelist=('plain',)).get_content()
+    assert '123456' in messages[0].get_body(preferencelist=('plain',)).get_content()
 
 
 @pytest.mark.parametrize('method,path,body', [('get',PATH,None), ('post',PATH+'/code',{'email':'a@example.com'}),

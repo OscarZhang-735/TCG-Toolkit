@@ -3,7 +3,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from email.message import EmailMessage
-from html import escape
+from .email_templates import digest_html
 import json
 import logging
 import smtplib
@@ -40,7 +40,6 @@ def digest_message(recipient, email_id, run_date, changes):
     message['Subject'] = f'TCG Toolkit 卡牌更新 · {run_date}'
     message['Message-ID'] = f'<{email_id}@tcg-toolkit.local>'
     text = [f'{run_date} 卡牌订阅更新（普通品相）', '']
-    html = [f'<h1>{run_date} 卡牌订阅更新</h1><p>普通品相 · 价格单位：JPY</p>']
     for change in changes:
         before, after = change['before'], change['after']
         title = f"{after['name']} · {after['card_number']}"
@@ -51,10 +50,8 @@ def digest_message(recipient, email_id, run_date, changes):
         checked = '检查时间：' + datetime.fromtimestamp(change['checked_at']).astimezone().isoformat(timespec='seconds')
         url = after['product_url']
         text.extend([title, price, quantity, checked, url, ''])
-        html.append(f'<h2>{escape(title)}</h2><p>{escape(price)}<br>{escape(quantity)}'
-                    f'<br>{escape(checked)}</p><p><a href="{escape(url, quote=True)}">游游亭详情页</a></p>')
     message.set_content('\n'.join(text))
-    message.add_alternative('<html><body>' + ''.join(html) + '</body></html>', subtype='html')
+    message.add_alternative(digest_html(run_date, changes), subtype='html')
     return message
 
 

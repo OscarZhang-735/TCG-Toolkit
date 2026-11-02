@@ -13,6 +13,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 from ..database import email_lock
 from ..db_models import EmailChallenge, User
+from ..email_templates import verification_html
 from email_validator import validate_email
 from fastapi import HTTPException
 
@@ -59,6 +60,7 @@ class SMTPMailer:
                       "notification_email": "set your subscription notification email"}[purpose]
             message["Subject"] = "TCG Toolkit email verification code"
             message.set_content(f"You requested to {action}.\n\nYour code: {code}\n\nThis code expires in 10 minutes. Do not share it.\nIf you did not request this, ignore this email.")
+        message.add_alternative(verification_html(code, action, language), subtype='html')
         self.send_message(message)
 
     def send_message(self, message):
