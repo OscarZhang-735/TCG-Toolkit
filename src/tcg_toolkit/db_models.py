@@ -3,9 +3,9 @@
 API/search models live in models.py. These entities are internal persistence
 objects; response serializers explicitly select public fields.
 """
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Double, ForeignKey, Identity, Index, Integer, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Double, ForeignKey, Identity, Index, Integer, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -120,3 +120,48 @@ class SchemaMigration(Base):
 
     version: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    game: Mapped[str]
+    product_url: Mapped[str]
+    snapshot: Mapped[str]
+    created_at: Mapped[int]
+    checked_at: Mapped[int]
+    last_error: Mapped[str | None]
+    __table_args__ = (UniqueConstraint("user_id", "game", "product_url"),)
+
+
+class SubscriptionRun(Base):
+    __tablename__ = "subscription_runs"
+
+    local_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    started_at: Mapped[int]
+    finished_at: Mapped[int | None]
+    state: Mapped[str] = mapped_column()
+    last_error: Mapped[str | None]
+    __table_args__ = (CheckConstraint(state.in_(("running", "complete", "failed"))),)
+
+
+class SubscriptionEmail(Base):
+    __tablename__ = "subscription_emails"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    run_date: Mapped[date] = mapped_column(ForeignKey("subscription_runs.local_date"))
+    changes: Mapped[str]
+    state: Mapped[str] = mapped_column()
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[int]
+    created_at: Mapped[int]
+    sent_at: Mapped[int | None]
+    last_error: Mapped[str | None]
+    __table_args__ = (
+        UniqueConstraint("user_id", "run_date"),
+        CheckConstraint(state.in_(("pending", "sent", "failed", "cancelled"))),
+        Index("subscription_emails_due", "state", "next_attempt_at"),
+    )

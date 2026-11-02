@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from tcg_toolkit.auth.store import UserStore
 from tcg_toolkit.database import Database, connection_info
-from tcg_toolkit.db_models import Base, LoginSession, SchemaMigration, User
+from tcg_toolkit.db_models import Base, Favorite, LoginSession, OwnedCard, SchemaMigration, User
 from tcg_toolkit import db_cli
 from tcg_toolkit.web import app
 
@@ -39,10 +39,10 @@ def test_fresh_schema_is_explicit_and_concurrent_migrations_run_once(empty_datab
     with pytest.raises(RuntimeError, match="schema"):
         UserStore(empty_database)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        assert list(pool.map(db_cli.migrate, [empty_database] * 2)) == [1, 1]
+        assert list(pool.map(db_cli.migrate, [empty_database] * 2)) == [2, 2]
     with UserStore(empty_database) as store, store.session() as db:
         assert db.scalar(select(func.count()).select_from(User)) == 0
-        assert db.scalar(select(func.count()).select_from(SchemaMigration)) == 1
+        assert db.scalar(select(func.count()).select_from(SchemaMigration)) == 2
         assert not inspect(db.connection()).has_table('yuyutei_credentials')
 
 
@@ -64,11 +64,18 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
         db.execute(SchemaMigration.__table__.insert().values(version=1))
         db.execute(User.__table__.insert().values(id='legacy', username='alice', password_hash='hash', created_at=1))
         db.execute(LoginSession.__table__.insert().values(token_hash='legacy-token',user_id='legacy',expires_at=9999999999))
-    assert db_cli.migrate(empty_database) == 1
+        db.execute(Favorite.__table__.insert().values(id='favorite', user_id='legacy', game='wsr',
+                   product_url='https://yuyu-tei.jp/sell/wsr/card/OS01/1', snapshot='{}', created_at=1))
+        db.execute(OwnedCard.__table__.insert().values(id='card', user_id='legacy', game='wsr',
+                   card_number='A-001', rarity='R', name='Saved card', quantity=3, notes='keep',
+                   game_key='wsr', number_key='a-001', rarity_key='r', created_at=1, updated_at=1))
+    assert db_cli.migrate(empty_database) == 2
     with UserStore(empty_database) as store, store.session() as db:
         assert db.get(User, 'legacy').username == 'alice'
         assert db.get(LoginSession, 'legacy-token').user_id == 'legacy'
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0001'
+        assert db.get(Favorite, 'favorite').snapshot == '{}'
+        assert db.get(OwnedCard, 'card').quantity == 3
+        assert MigrationContext.configure(db.connection()).get_current_revision() == '0002'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
@@ -88,9 +95,9 @@ def test_newer_schema_is_rejected():
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0002_failure.py').write_text(
+    (scripts / 'versions' / '0003_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0002'\ndown_revision='0001'\n"
+        "revision='0003'\ndown_revision='0002'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = db_cli.alembic_config
@@ -106,7 +113,7 @@ def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path
         assert db_cli.version(db) == 0
         assert not inspect(db).has_table('partial')
         assert not inspect(db).has_table('alembic_version')
-    assert db_cli.migrate(empty_database) == 1
+    assert db_cli.migrate(empty_database) == 2
 
 
 def test_session_rolls_back_pending_and_flushed_changes():
@@ -175,5 +182,5 @@ def test_health_detects_database_failure_and_recovers(monkeypatch):
 
 def test_schema_check_cannot_pass_without_database_tables():
     with app.state.auth.store.session() as db:
-        db.execute(update(SchemaMigration).values(version=999))
+        db.execute(update(SchemaMigration).where(SchemaMigration.version == 2).values(version=999))
     assert TestClient(app).get('/api/health').status_code == 503

@@ -57,6 +57,13 @@ class SMTPMailer:
                       "password_change": "change your password", "password_reset": "reset your password"}[purpose]
             message["Subject"] = "TCG Toolkit email verification code"
             message.set_content(f"You requested to {action}.\n\nYour code: {code}\n\nThis code expires in 10 minutes. Do not share it.\nIf you did not request this, ignore this email.")
+        self.send_message(message)
+
+    def send_message(self, message):
+        if not self.configured:
+            raise ValueError("SMTP is not configured")
+        if "From" not in message:
+            message["From"] = self.sender
         context = ssl.create_default_context()
         if self.mode == "ssl":
             connection = smtplib.SMTP_SSL(self.host, self.port, timeout=10, context=context)

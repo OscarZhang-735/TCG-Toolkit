@@ -11,6 +11,7 @@ from tcg_toolkit.db_cli import migrate
 
 @pytest.fixture(autouse=True)
 def postgres_schema(monkeypatch):
+    monkeypatch.setenv('TCG_SUBSCRIPTIONS_ENABLED', 'false')
     if not os.environ.get("PGDATABASE", "").endswith("_test"):
         pytest.fail("Set PGDATABASE to a dedicated *_test database (see compose.test.yaml).")
     schema = "test_" + uuid.uuid4().hex
