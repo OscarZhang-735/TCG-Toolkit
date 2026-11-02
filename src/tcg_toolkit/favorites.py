@@ -4,14 +4,14 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
-from .db_models import Favorite
+from .db_models import Favorite, FavoriteGroup, User
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .auth.routes import current_user, write_guard
 from .models import Game, StockStatus
@@ -48,12 +48,29 @@ class CardSnapshot(BaseModel):
         return self
 
 
+class FavoriteInput(CardSnapshot):
+    group_id: str | None = Field(default=None, min_length=1)
+
+
+class GroupName(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+    @field_validator('name', mode='before')
+    @classmethod
+    def trim_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class GroupTarget(BaseModel):
+    group_id: str = Field(min_length=1)
+
+
 def store(request):
     return request.app.state.auth.store
 
 
 def record(row: Favorite):
-    return {'id': row.id, 'item': json.loads(row.snapshot),
+    return {'id': row.id, 'group_id': row.group_id, 'item': json.loads(row.snapshot),
             'created_at': row.created_at, 'refreshed_at': row.refreshed_at}
 
 
@@ -65,23 +82,117 @@ def owned(db: Session, user_id, favorite_id, *, lock=False):
     return row
 
 
-@router.get('')
-def listing(request: Request, user=Depends(current_user)):
+def lock_user(db: Session, user_id):
+    # Serialize membership writes with group deletion before taking favorite locks.
+    db.execute(select(User.id).where(User.id == user_id).with_for_update()).one()
+
+
+def owned_group(db: Session, user_id, group_id):
+    row = db.scalar(select(FavoriteGroup).where(
+        FavoriteGroup.user_id == user_id, FavoriteGroup.id == group_id))
+    if row is None:
+        raise HTTPException(404, detail='favorite_group_not_found')
+    return row
+
+
+def default_group(db: Session, user_id):
+    return db.scalars(select(FavoriteGroup).where(
+        FavoriteGroup.user_id == user_id, FavoriteGroup.is_default.is_(True))).one()
+
+
+def group_record(row: FavoriteGroup):
+    return {'id': row.id, 'name': row.name, 'is_default': row.is_default, 'created_at': row.created_at}
+
+
+def require_custom_group(row: FavoriteGroup):
+    if row.is_default:
+        raise HTTPException(409, detail='default_favorite_group_protected')
+
+
+def require_available_name(db: Session, user_id, name, group_id=None):
+    query = select(FavoriteGroup.id).where(FavoriteGroup.user_id == user_id, FavoriteGroup.name == name)
+    if group_id is not None:
+        query = query.where(FavoriteGroup.id != group_id)
+    if db.scalar(query) is not None:
+        raise HTTPException(409, detail='favorite_group_name_taken')
+
+
+@router.get('/groups')
+def groups(request: Request, user=Depends(current_user)):
     with store(request).session() as db:
-        rows = db.scalars(select(Favorite).where(Favorite.user_id == user['id']).order_by(
+        rows = db.scalars(select(FavoriteGroup).where(FavoriteGroup.user_id == user['id']).order_by(
+            FavoriteGroup.is_default.desc(), FavoriteGroup.created_at, FavoriteGroup.id))
+        return {'items': [group_record(row) for row in rows]}
+
+
+@router.post('/groups', status_code=201, dependencies=[Depends(write_guard)])
+def create_group(body: GroupName, request: Request, user=Depends(current_user)):
+    with store(request).session() as db:
+        lock_user(db, user['id'])
+        require_available_name(db, user['id'], body.name)
+        row = FavoriteGroup(id=str(uuid.uuid4()), user_id=user['id'], name=body.name,
+                            is_default=False, created_at=int(time.time()))
+        db.add(row)
+        return group_record(row)
+
+
+@router.put('/groups/{group_id}', dependencies=[Depends(write_guard)])
+def rename_group(group_id: str, body: GroupName, request: Request, user=Depends(current_user)):
+    with store(request).session() as db:
+        lock_user(db, user['id'])
+        row = owned_group(db, user['id'], group_id)
+        require_custom_group(row)
+        require_available_name(db, user['id'], body.name, row.id)
+        row.name = body.name
+        return group_record(row)
+
+
+@router.delete('/groups/{group_id}', status_code=204, dependencies=[Depends(write_guard)])
+def remove_group(group_id: str, request: Request, user=Depends(current_user)):
+    with store(request).session() as db:
+        lock_user(db, user['id'])
+        row = owned_group(db, user['id'], group_id)
+        require_custom_group(row)
+        target = default_group(db, user['id'])
+        db.execute(update(Favorite).where(Favorite.user_id == user['id'], Favorite.group_id == row.id)
+                   .values(group_id=target.id))
+        db.delete(row)
+
+
+@router.get('')
+def listing(request: Request, group_id: str | None = None, user=Depends(current_user)):
+    with store(request).session() as db:
+        query = select(Favorite).where(Favorite.user_id == user['id'])
+        if group_id is not None:
+            owned_group(db, user['id'], group_id)
+            query = query.where(Favorite.group_id == group_id)
+        rows = db.scalars(query.order_by(
             Favorite.created_at.desc(), Favorite.sort_id.desc()))
         return {'items': [record(row) for row in rows]}
 
 
 @router.post('', dependencies=[Depends(write_guard)])
-def add(body: CardSnapshot, request: Request, user=Depends(current_user)):
+def add(body: FavoriteInput, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
+        lock_user(db, user['id'])
+        group = (default_group(db, user['id']) if body.group_id is None
+                 else owned_group(db, user['id'], body.group_id))
         db.execute(insert(Favorite).values(
-            id=str(uuid.uuid4()), user_id=user['id'], game=body.game.value,
-            product_url=body.product_url, snapshot=body.model_dump_json(), created_at=int(time.time())
+            id=str(uuid.uuid4()), user_id=user['id'], group_id=group.id, game=body.game.value,
+            product_url=body.product_url, snapshot=body.model_dump_json(exclude={'group_id'}), created_at=int(time.time())
         ).on_conflict_do_nothing(index_elements=[Favorite.user_id, Favorite.game, Favorite.product_url]))
         row = db.scalar(select(Favorite).where(Favorite.user_id == user['id'],
                         Favorite.game == body.game.value, Favorite.product_url == body.product_url))
+        return record(row)
+
+
+@router.put('/{favorite_id}/group', dependencies=[Depends(write_guard)])
+def move(favorite_id: str, body: GroupTarget, request: Request, user=Depends(current_user)):
+    with store(request).session() as db:
+        lock_user(db, user['id'])
+        group = owned_group(db, user['id'], body.group_id)
+        row = owned(db, user['id'], favorite_id, lock=True)
+        row.group_id = group.id
         return record(row)
 
 

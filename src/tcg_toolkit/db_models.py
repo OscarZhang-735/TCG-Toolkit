@@ -5,7 +5,7 @@ objects; response serializers explicitly select public fields.
 """
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Double, ForeignKey, Identity, Index, Integer, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Double, ForeignKey, ForeignKeyConstraint, Identity, Index, Integer, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -36,18 +36,39 @@ class LoginSession(Base):
     __table_args__ = (Index("sessions_expiry", "expires_at"), Index("sessions_user", "user_id"))
 
 
+class FavoriteGroup(Base):
+    __tablename__ = "favorite_groups"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str]
+    is_default: Mapped[bool] = mapped_column()
+    created_at: Mapped[int]
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", name="favorite_groups_user_id_id_key"),
+        UniqueConstraint("user_id", "name", name="favorite_groups_user_name_key"),
+        Index("favorite_groups_one_default", "user_id", unique=True, postgresql_where=is_default),
+    )
+
+
 class Favorite(Base):
     __tablename__ = "favorites"
 
     id: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    group_id: Mapped[str]
     game: Mapped[str]
     product_url: Mapped[str]
     snapshot: Mapped[str]
     created_at: Mapped[int]
     refreshed_at: Mapped[int | None]
     sort_id: Mapped[int] = mapped_column(Identity(always=True))
-    __table_args__ = (UniqueConstraint("user_id", "game", "product_url"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "game", "product_url"),
+        ForeignKeyConstraint(["user_id", "group_id"], ["favorite_groups.user_id", "favorite_groups.id"],
+                             name="favorites_user_group_fkey"),
+        Index("favorites_user_group", "user_id", "group_id"),
+    )
 
 
 class OwnedCard(Base):
