@@ -13,7 +13,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 from ..database import email_lock
 from ..db_models import EmailChallenge, User
-from ..email_templates import verification_html
+from ..email_templates import VERIFICATION_SUBJECT, verification_html, verification_text
 from email_validator import validate_email
 from fastapi import HTTPException
 
@@ -48,19 +48,10 @@ class SMTPMailer:
         message = EmailMessage()
         message["From"] = self.sender
         message["To"] = email
-        if language == "zh-CN":
-            action = {"register": "注册账户", "bind": "绑定邮箱",
-                      "password_change": "修改密码", "password_reset": "重设密码",
-                      "notification_email": "设置订阅通知邮箱"}[purpose]
-            message["Subject"] = "TCG Toolkit 邮箱验证码"
-            message.set_content(f"你正在{action}。\n\n验证码：{code}\n\n验证码在 10 分钟内有效，请勿向他人透露。\n如果不是你本人操作，请忽略此邮件。")
-        else:
-            action = {"register": "create an account", "bind": "link your email",
-                      "password_change": "change your password", "password_reset": "reset your password",
-                      "notification_email": "set your subscription notification email"}[purpose]
-            message["Subject"] = "TCG Toolkit email verification code"
-            message.set_content(f"You requested to {action}.\n\nYour code: {code}\n\nThis code expires in 10 minutes. Do not share it.\nIf you did not request this, ignore this email.")
-        message.add_alternative(verification_html(code, action, language), subtype='html')
+        # Every code email is bilingual (Chinese, then English); language stays for the API contract.
+        message["Subject"] = VERIFICATION_SUBJECT
+        message.set_content(verification_text(code, purpose))
+        message.add_alternative(verification_html(code, purpose), subtype='html')
         self.send_message(message)
 
     def send_message(self, message):

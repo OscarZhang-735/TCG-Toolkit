@@ -19,6 +19,7 @@ services:
       TCG_SMTP_TLS: "${TCG_SMTP_TLS:-starttls}"
       TCG_EMAIL_CODE_SECRET: "${TCG_EMAIL_CODE_SECRET:-}"
       TCG_SUBSCRIPTIONS_ENABLED: "${TCG_SUBSCRIPTIONS_ENABLED:-true}"
+      TCG_SITE_URL: "${TCG_SITE_URL:-}"
       TZ: "${TZ:?Set TZ to the host IANA timezone, e.g. America/Toronto}"
       TCG_ALLOW_PROXY_SWITCH: "${TCG_ALLOW_PROXY_SWITCH:-true}"
       RAPIDAPI_KEY: "${RAPIDAPI_KEY:-}"

@@ -10,7 +10,7 @@ from tcg_toolkit.email_templates import verification_html, digest_html
 def main():
     output = Path(__file__).resolve().parents[1] / 'data' / 'email-preview'
     output.mkdir(parents=True, exist_ok=True)
-    (output / 'verification.html').write_text(verification_html('482916', '设置订阅通知邮箱', 'zh-CN'), encoding='utf-8')
+    (output / 'verification.html').write_text(verification_html('482916', 'notification_email'), encoding='utf-8')
     before = dict(name='大人のいい女 美羽（サイン入り）', card_number='OS01/R01-053SEC',
                   rarity='SEC', price=6980, stock_quantity=0, stock_status='out_of_stock',
                   product_url='https://yuyu-tei.jp/sell/wsr/card/OS01/10240')

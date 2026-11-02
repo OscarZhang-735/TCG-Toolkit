@@ -122,13 +122,15 @@ def test_reset_during_smtp_does_not_reactivate_challenge(client, monkeypatch):
         assert challenge.state != 'active'
 
 
-@pytest.mark.parametrize('language,phrase', [('zh-CN', '订阅通知邮箱'), ('en', 'subscription notification email')])
-def test_notification_verification_template(monkeypatch, language, phrase):
+@pytest.mark.parametrize('language', ['zh-CN', 'en'])
+def test_notification_verification_template(monkeypatch, language):
     messages = []
     monkeypatch.setattr(SMTPMailer, 'send_message', lambda self, message: messages.append(message))
     SMTPMailer().send_code('alerts@example.com', '123456', language, 'notification_email')
-    assert phrase in messages[0].get_body(preferencelist=('plain',)).get_content()
-    assert '123456' in messages[0].get_body(preferencelist=('plain',)).get_content()
+    # The requested language no longer matters: Chinese first, then English.
+    plain = messages[0].get_body(preferencelist=('plain',)).get_content()
+    assert plain.index('订阅通知邮箱') < plain.index('subscription notification email')
+    assert '123456' in plain
 
 
 @pytest.mark.parametrize('method,path,body', [('get',PATH,None), ('post',PATH+'/code',{'email':'a@example.com'}),

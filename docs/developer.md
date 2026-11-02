@@ -53,6 +53,9 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_DB_SUBNET` | 内部数据库网络 | `10.205.0.0/24` |
 | `TCG_PROXY_IPS` | 受信任的反向代理来源 IP，不要设为 `*` | `127.0.0.1` |
 | `TCG_SUBNET` | Docker 网络子网，与本地网络冲突时修改 | `10.203.0.0/24` |
+| `TCG_SUBSCRIPTIONS_ENABLED` | 启动卡牌订阅定时检查及邮件重试线程 | 直接运行关闭；Compose 开启 |
+| `TCG_SITE_URL` | 订阅邮件底部“前往 TCG Toolkit 查看”链接使用的网页地址（自动追加 `#favorites`）；须为 http(s) 地址，未设置或无效时使用公开站点 | `https://oscarzhang-735.github.io/TCG-Toolkit/` |
+| `TZ` | 根目录 Compose 必填，设为宿主机 IANA 时区，例如 `America/Toronto`；Linux 生产部署使用挂载的宿主机 `/etc/localtime` | `.env.example` 示例为 `America/Toronto` |
 
 `.env` 已被 Git 忽略，请勿提交密钥。公网部署请参阅 [部署手册](../deploy/README.md)。
 
@@ -101,7 +104,7 @@ API 响应继续显式选择公开字段，不直接序列化 ORM 实体，避�
 ### Alembic 迁移
 
 `tcg-db migrate` 使用 Alembic，并在同一个 PostgreSQL 事务锁和事务内执行接管、升级及版本校验。
-已有 PostgreSQL schema 1 首次运行时仅登记 Alembic 基线 `0001`，保留用户、会话和业务数据；本次 ORM 改造不重建数据库。
+已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，升级到 schema 3，保留用户、会话和业务数据。
 新空库通过基线迁移初始化。原 `001_initial.sql` 保持不可变，仅供基线使用；业务代码不再执行 SQL 字符串。
 `schema_migrations` 保留为发布版本兼容标记，现有 JSON 状态接口和回退判断继续可用。
 
@@ -176,7 +179,7 @@ IP 限制为各发送接口每分钟 5 次、注册／绑定验证及登录接�
 改密事务同时更新 Argon2id 摘要、消费验证码、撤销全部会话，并作废该用户其余待发送或有效验证码。
 登录的密码校验和会话创建也在写事务内完成，避免并发登录在改密后留下旧密码会话。
 验证码邮件晚到时不会重新激活已作废记录。前端改密成功清除本地会话，返回登录页，并提示使用新密码登录。
-当前使用 PostgreSQL schema 1。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
+当前使用 PostgreSQL schema 3。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
 
 自动化测试注入内存发信器，仍经过真实验证码校验；没有生产环境绕过开关。
 真实投递验收：配置 SMTP 后，向自己的测试邮箱发送验证码，确认邮件语言、到达时间、验证码注册和邮箱登录，再确认重发旧码失效。
@@ -394,6 +397,76 @@ Content-Type: application/json
 
 购物车页在“刷新购物车”左侧提供“获取库存”，列表和网格中的每张卡牌也可单独获取。通过 `/api/yuyutei/product?gid=…&ver=…&cid=…&stock=true&kizu=0` 重新读取详情页隐藏库存字段，不使用编号/稀有度的长期缓存。批量查询按商品和品相去重，最多并发三项；失败可重试，无法识别品相对应库存时显示未知，不视为零库存。库存仅为查询时的快照，不修改购物车数量。
 
+
+## 卡牌订阅后端
+
+### 邮件样式与本地预览
+
+邮件分为验证码和订阅通知两类（`email_templates.py`），共用品牌行、页脚及适配窄屏的表格布局，配色沿用网页的中性灰，使用内联样式，无外部字体、图片或脚本依赖。两类邮件的主题、HTML 与纯文本均为中英双语，中文在前、英文在后；验证码申请中的 `language` 参数仍被接受，但不再影响邮件语言。五种验证码用途共用验证码模板，正文只说明用途、有效期和验证码。订阅通知标题下只显示本批最近一次检查时间；每张卡显示名称（链接到详情页）、稀有度标签、编号及价格／库存的前后对比：变好为绿色、变差为琥珀色，未变化项只显示当前值；邮件底部（HTML 与纯文本）提供前往本站收藏夹的链接，地址由 `TCG_SITE_URL` 决定。两类邮件均发送 `multipart/alternative`，同时保留纯文本正文。
+
+运行 `python scripts/preview_emails.py` 生成示例预览（不会发送邮件），再运行 `python -m http.server 18765 --bind 127.0.0.1 --directory data/email-preview`，访问 `http://127.0.0.1:18765`。预览使用与实际邮件相同的模板；浏览器预览不等同于所有邮箱客户端的最终显示效果。
+
+### 通知邮箱设置
+
+默认使用账户的已验证注册邮箱，不复制邮箱值。可以设置独立的通知邮箱；验证成功前继续使用原来的收件地址。该设置只影响订阅邮件，不改变登录、密码恢复或账户邮箱。多个账户可以在各自完成验证后使用同一个通知邮箱。
+
+以下接口均需 Bearer 登录，写接口沿用可信 Origin 和 JSON 检查；响应不缓存。
+
+| 接口 | 请求与效果 |
+| --- | --- |
+| `GET /api/subscriptions/notification-email` | 查询当前生效邮箱与默认/自定义状态 |
+| `POST /api/subscriptions/notification-email/code` | `{"email":"alerts@example.com","language":"zh-CN"}`，向目标邮箱发送验证码；返回 `challenge_id`、`expires_in`、`retry_after` |
+| `PUT /api/subscriptions/notification-email` | `{"challenge_id":"…","code":"123456"}`，验证后启用该邮箱 |
+| `DELETE /api/subscriptions/notification-email` | JSON `{}`，恢复注册邮箱并使未完成的通知邮箱验证码失效 |
+
+查询、确认和恢复接口返回 `{"email":"实际收件邮箱","custom_email":null,"using_registration_email":true}`；启用自定义邮箱后 `custom_email` 为该地址，`using_registration_email` 为 `false`。没有可用的已验证邮箱时 `email` 为 `null`，不能新增订阅；已有待发邮件按原规则取消。
+
+验证码复用 `TCG_EMAIL_CODE_SECRET` 和现有 SMTP 配置，10 分钟有效、最多 5 次输错，目的绑定为 `notification_email` 并绑定当前用户，不能用于注册或密码操作。沿用每邮箱 60 秒冷却、每小时 5 次限制，新增每账户每分钟最多 5 次申请限制。错误沿用 `invalid_code`、`code_expired`、`code_attempts_exhausted`、`rate_limited` 和 `email_send_failed`。确认新地址或恢复默认地址会使同一账户其他未完成的通知邮箱验证失效。
+
+尚未发送或等待重试的汇总在实际投递时使用最新有效地址；已完成投递的邮件不会重发。
+
+网页入口位于用户中心的“订阅通知邮箱”卡片（`static/notification-email-ui.js`）：显示当前生效地址及来源（账户邮箱／自定义／未设置），展开后输入新地址、发送验证码并确认；使用自定义邮箱时可一键改用账户邮箱。登录、绑定账户邮箱或修改设置后，收藏夹的订阅按钮和提示按当前生效地址更新，无需重新登录。迁移 `0003` 将两个新字段初始化为空，现有用户继续使用注册邮箱。部署此版本前执行 `tcg-db migrate`，本次代码变更本身不修改运行中的 Docker 数据库。
+
+
+订阅独立于收藏夹，监控普通品相 `kizu=0`。所有接口需要 Bearer 登录；写入沿用可信 `Origin` 和 `Content-Type: application/json` 检查，响应均为 `Cache-Control: no-store`。
+
+网页目前只在收藏夹页面提供入口：每张已收藏卡牌的刷新按钮旁有铃铛按钮，前端状态由 `static/subscriptions.js` 管理，按游戏和去掉尾部 `/` 的链接与收藏匹配。没有有效通知邮箱时铃铛禁用，并在页面上提示前往用户中心；有效时提示中显示收件地址。绑定邮箱或设置通知邮箱后无需重新登录。已订阅卡牌显示最近检查时间，`last_error` 非空时提示上次检查失败。收藏夹筛选面板额外提供“订阅”筛选（全部／已订阅／未订阅）；共享筛选面板仅在传入 `isSubscribed` 时显示该项，搜索页不受影响。取消收藏已订阅卡牌时先取消订阅，取消订阅失败则保留收藏，避免留下网页无法管理的订阅。
+
+| 接口 | 请求与响应 |
+| --- | --- |
+| `POST /api/subscriptions` | `{"game":"wsr","product_url":"https://yuyu-tei.jp/sell/wsr/card/OS01/10240"}`；返回 200 和订阅记录 |
+| `GET /api/subscriptions` | 返回 `{"items":[订阅记录,…]}`，仅包含当前用户的订阅 |
+| `DELETE /api/subscriptions/{id}` | 发送 JSON `{}`；取消自己的订阅，成功返回 204，不存在或属于其他用户返回 404 |
+
+订阅记录为 `id`、`item`、`created_at`、`checked_at`、`last_error`。`item` 包含 `game`、`name`、`card_number`、`rarity`、`image_url`、`product_url`、`price`、`currency`、`stock_quantity`、`stock_status`、`stock_text`；时间均为 Unix 秒。`checked_at` 为最近检查尝试的时间，失败时仍保留上次有效 `item`，错误代码放入 `last_error`。
+
+创建时要求存在有效通知邮箱（已验证自定义邮箱或已验证注册邮箱），否则返回 403 `verified_email_required`。只接受六个受支持游戏的游游亭 HTTPS 详情 URL，游戏路径必须匹配（`lycee` 对应 `lo`）；去掉尾部 `/` 并统一主机名。查询参数、片段、其他域名、额外路径或编码路径不接受。名称、价格、库存由服务端获取，不采信客户端快照。
+
+相同用户、游戏、链接重复创建返回原记录，不再次抓取、不重置基准；初次读取失败不创建订阅。上游超时返回 504 `product_timeout`；HTTP 错误返回 502 `product_unavailable`；缺少或无法确定普通品相价格/库存返回 502 `product_unreadable`。
+
+设置 `TCG_SUBSCRIPTIONS_ENABLED=true` 后，FastAPI 启动后台线程，每天按进程本地时间 12:00 开始读取已订阅卡牌。每轮按链接去重，一张卡被多人订阅仍只读取一次。与上次成功检查（首次为订阅时）的日元价格、库存数量和有货/缺货状态比较，元数据或库存文案变化不会触发邮件。未知库存、404 和解析失败保留基准，其他卡牌继续处理。
+
+按用户事务保存新快照和邮件待发记录，每个检查日最多生成一封中英双语汇总，列出所有成功检测到的变化及详情链接；无变化不发。投递时读取当前有效通知邮箱发送纯文本及 HTML 邮件；发送前剔除已经取消的订阅，剔除后为空则标记 `cancelled`。SMTP 在数据库事务外执行，沿用 `TCG_SMTP_*`，无须游游亭登录凭据。
+
+首次投递失败后等待 60、300、1800 秒再重试，后台最多每 30 秒扫描到期邮件，累计 4 次失败转为 `failed`。重启恢复未耗尽的待发重试，不自动重发终态失败邮件。SMTP 已接收但成功状态尚未提交时进程崩溃，可能重复发送同一 Message-ID。邮件表中的变化记录不因取消订阅而移除，保留用于排查。
+
+调度启动时只安排下一个中午；下午启动等次日，不补查停机日。数据库会话锁与检查日期唯一记录防止多进程重复任务；多个后端实例须使用同一时区。停止时等待当前网络操作结束并退出线程，随后关闭数据库。每日任务中断不补跑；已提交的用户快照与邮件仍有效，未处理的卡牌下次继续比较。
+
+数据库状态可通过只读 SQL 查询：
+
+```sql
+SELECT local_date, state, started_at, finished_at, last_error
+FROM subscription_runs ORDER BY local_date DESC LIMIT 20;
+
+SELECT id, user_id, run_date, state, attempts, next_attempt_at, last_error
+FROM subscription_emails WHERE state IN ('pending', 'failed')
+ORDER BY created_at DESC LIMIT 100;
+
+SELECT id, user_id, product_url, checked_at, last_error
+FROM subscriptions WHERE last_error IS NOT NULL;
+```
+
+`subscription_runs.state` 为 `running/complete/failed`；`subscription_emails.state` 为 `pending/sent/failed/cancelled`。任务完成可以同时存在个别卡牌抓取错误，请结合订阅的 `last_error` 查看。日志包含有效时区、下一次执行时间、每轮唯一卡牌数、用户卡牌变化数、抓取失败数以及邮件投递状态，不输出 SMTP 密码。
 
 ## WS 英文版卡牌库
 

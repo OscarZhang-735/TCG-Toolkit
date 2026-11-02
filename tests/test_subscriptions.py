@@ -142,7 +142,8 @@ def test_changes_are_queued_once_and_sent_once(client, price, quantity):
     assert emails()[0].state == 'sent'
     message = service.mailer.messages[0]
     assert message['To'] == 'alice@example.com'
-    assert URL in message.get_body(preferencelist=('plain',)).get_content()
+    plain = message.get_body(preferencelist=('plain',)).get_content()
+    assert URL in plain and '<Card & name> · R · ABC-001' in plain and '/#favorites' in plain
     assert '&lt;Card &amp; name&gt;' in message.get_body(preferencelist=('html',)).get_content()
 
 
