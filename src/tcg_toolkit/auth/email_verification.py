@@ -49,12 +49,14 @@ class SMTPMailer:
         message["To"] = email
         if language == "zh-CN":
             action = {"register": "注册账户", "bind": "绑定邮箱",
-                      "password_change": "修改密码", "password_reset": "重设密码"}[purpose]
+                      "password_change": "修改密码", "password_reset": "重设密码",
+                      "notification_email": "设置订阅通知邮箱"}[purpose]
             message["Subject"] = "TCG Toolkit 邮箱验证码"
             message.set_content(f"你正在{action}。\n\n验证码：{code}\n\n验证码在 10 分钟内有效，请勿向他人透露。\n如果不是你本人操作，请忽略此邮件。")
         else:
             action = {"register": "create an account", "bind": "link your email",
-                      "password_change": "change your password", "password_reset": "reset your password"}[purpose]
+                      "password_change": "change your password", "password_reset": "reset your password",
+                      "notification_email": "set your subscription notification email"}[purpose]
             message["Subject"] = "TCG Toolkit email verification code"
             message.set_content(f"You requested to {action}.\n\nYour code: {code}\n\nThis code expires in 10 minutes. Do not share it.\nIf you did not request this, ignore this email.")
         self.send_message(message)
@@ -112,6 +114,9 @@ class EmailVerification:
                     return {"challenge_id": challenge_id, "expires_in": 600, "retry_after": 60}
                 user_id = user.id
                 digest = self.digest(challenge_id, email, purpose, user_id, code)
+            elif purpose == "notification_email":
+                if not user_id or not db.get(User, user_id):
+                    raise AuthError("authentication_required", 401)
             elif user_id:
                 user = db.get(User, user_id)
                 if not user or user.email is not None:

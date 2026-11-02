@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from .auth.email_verification import SMTPMailer
 from .db_models import Subscription, SubscriptionEmail, SubscriptionRun, User
 from .product_details import fetch_product_snapshot
+from .notification_email import notification_recipient
 
 logger = logging.getLogger('uvicorn.error.subscriptions')
 LOCK_KEY = 894210612
@@ -168,10 +169,10 @@ class SubscriptionWorker:
             user = db.get(User, email.user_id)
             active = set(db.scalars(select(Subscription.id).where(Subscription.user_id == email.user_id)))
             changes = [item for item in json.loads(email.changes) if item['subscription_id'] in active]
-            if not changes or not user or not user.email or user.email_verified_at is None:
+            recipient = notification_recipient(user)
+            if not changes or not recipient:
                 email.state = 'cancelled'
                 return
-            recipient = user.email
         message = digest_message(recipient, email.id, email.run_date, changes)
         error = None
         try:

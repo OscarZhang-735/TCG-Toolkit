@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from .auth.routes import current_user, write_guard
-from .db_models import Subscription
+from .db_models import Subscription, User
+from .notification_email import notification_recipient
 from .models import Game
 from .product_details import fetch_product_snapshot, normalize_product_url
 
@@ -41,9 +42,10 @@ def listing(request: Request, user=Depends(current_user)):
 
 @router.post('', dependencies=[Depends(write_guard)])
 def add(body: SubscribeInput, request: Request, user=Depends(current_user)):
-    if not user['email'] or not user['email_verified']:
-        raise HTTPException(403, detail='verified_email_required')
     store = request.app.state.auth.store
+    with store.session() as db:
+        if not notification_recipient(db.get(User, user['id'])):
+            raise HTTPException(403, detail='verified_email_required')
     query = select(Subscription).where(Subscription.user_id == user['id'],
                                       Subscription.game == body.game.value,
                                       Subscription.product_url == body.product_url)

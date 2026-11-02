@@ -58,7 +58,8 @@ $('currency').addEventListener('change', async () => {
   renderCurrencyStatus(); render(); renderFavorites(); cartPage.render();
 });
 const proxySettings = createProxySettings();
-let userId = null, requestAPI = fetch, emailVerified = false;
+// Effective subscription recipient (custom notification email or verified account email).
+let userId = null, requestAPI = fetch, notificationEmail = null;
 let history = [];
 const favorites = createFavorites(() => {render(); renderFavorites();});
 const subscriptions = createSubscriptions(() => {render(); renderFavorites();});
@@ -208,9 +209,9 @@ function subscriptionToggle(item) {
   button.append(icon(busy ? 'bi-arrow-repeat spin' : saved ? 'bi-bell-fill' : 'bi-bell'));
   button.setAttribute('aria-pressed', String(Boolean(saved)));
   const label = busy ? (saved ? 'subscription_removing' : 'subscription_adding') : saved ? 'subscription_remove'
-    : emailVerified ? 'subscription_add' : 'subscription_email_required';
+    : notificationEmail ? 'subscription_add' : 'subscription_email_required';
   button.setAttribute('aria-label', t(label)); button.title = button.getAttribute('aria-label');
-  button.disabled = !subscriptions.state.ready || busy || favorites.state.busy.has(cardKey(item)) || (!saved && !emailVerified);
+  button.disabled = !subscriptions.state.ready || busy || favorites.state.busy.has(cardKey(item)) || (!saved && !notificationEmail);
   button.addEventListener('click', () => subscriptions.toggle(item));
   return button;
 }
@@ -280,8 +281,8 @@ function renderFavorites() {
   $('favorites-retry').hidden = !error;
   $('favorites-status').textContent = error ? t(error) : !state.ready ? t('favorite_loading') : state.total ? t('favorite_progress', {done: state.done, total: state.total}) : '';
   $('subscription-hint').hidden = !state.records.length;
-  $('subscription-hint-text').textContent = t(emailVerified ? 'subscription_hint' : 'subscription_hint_verify');
-  $('subscription-hint-link').hidden = emailVerified;
+  $('subscription-hint-text').textContent = notificationEmail ? t('subscription_hint', {email: notificationEmail}) : t('subscription_hint_verify');
+  $('subscription-hint-link').hidden = Boolean(notificationEmail);
   $('favorites-count').textContent = t('counts', {matching: matches.length.toLocaleString(getLanguage()), loaded: state.records.length.toLocaleString(getLanguage())});
   $('favorites-count').hidden = !state.ready;
   $('favorites-progress').hidden = !state.running;
@@ -404,7 +405,7 @@ refreshLanguage(); setView(view);
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
   proxySettings.clear(); favorites.clear(); subscriptions.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
-  userId = null; emailVerified = false; items = []; history = []; started = false; errors = [];
+  userId = null; notificationEmail = null; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;
   $('search').inert = true;
@@ -413,13 +414,13 @@ export function clearUser() {
   $('detail-confirm').removeAttribute('href');
   setStatus(''); renderErrors(); renderCurrencyStatus(); searchFilters.reset(); favoriteFilters.reset(); validateSearch();
 }
-export function activateUser(id, request, verified = false) {
-  clearUser(); userId = id; requestAPI = request; emailVerified = verified;
+export function activateUser(id, request, email = null) {
+  clearUser(); userId = id; requestAPI = request; notificationEmail = email;
   history = readHistory(localStorage, userId); $('search').inert = false;
   proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
   refreshLanguage();
 }
-// Binding an email on the account page unlocks subscribing without signing in again.
-export function setEmailVerified(value) {
-  emailVerified = value; renderFavorites();
+// The account page reports the effective address after loading or changing it.
+export function setNotificationEmail(email) {
+  notificationEmail = email || null; renderFavorites();
 }

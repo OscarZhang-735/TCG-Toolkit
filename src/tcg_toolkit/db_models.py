@@ -22,6 +22,8 @@ class User(Base):
     created_at: Mapped[int]
     email: Mapped[str | None] = mapped_column(unique=True)
     email_verified_at: Mapped[int | None]
+    notification_email: Mapped[str | None]
+    notification_email_verified_at: Mapped[int | None]
     __table_args__ = (Index("users_username", func.lower(username), unique=True),)
 
 

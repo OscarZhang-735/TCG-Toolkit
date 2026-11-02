@@ -31,6 +31,7 @@ from .official import router as official_router
 from .yuyutei_cart import router as yuyutei_router
 from .product_details import router as product_router
 from .subscriptions import router as subscriptions_router
+from .notification_email import router as notification_email_router
 from .subscription_worker import SubscriptionWorker
 
 
@@ -68,7 +69,7 @@ app.add_middleware(BrowserCORS)
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request, exc):
-    if request.url.path.startswith('/api/auth/'):
+    if request.url.path.startswith(('/api/auth/', '/api/subscriptions/notification-email')):
         return JSONResponse({'detail': 'validation_error'}, status_code=422)
     return await request_validation_exception_handler(request, exc)
 
@@ -79,6 +80,7 @@ app.include_router(cards_router)
 app.include_router(official_router)
 app.include_router(yuyutei_router)
 app.include_router(product_router)
+app.include_router(notification_email_router)
 app.include_router(subscriptions_router)
 SEARCHERS = {Game.WSR: WSRSearcher, Game.LYCEE: LyceeSearcher, Game.CHAOS: ChaosTCGSearcher, Game.WS: WSSearcher, Game.PM: PMSearcher, Game.SEV: SEVSearcher}
 
