@@ -88,6 +88,23 @@
 <div class="bind-email-actions"><button id="bind-email-submit" type="submit"><i class="bi bi-link-45deg"></i><span data-i18n="email_bind"></span></button></div>
 </form>
 </section>
+<section id="notification-settings" class="panel email-settings notification-settings collapsed" aria-labelledby="notification-settings-title">
+<div class="email-settings-head"><span class="account-icon"><i class="bi bi-bell"></i></span>
+<div class="email-settings-text"><h2 id="notification-settings-title" data-i18n="notify_title"></h2><p id="notification-email"></p></div>
+<button id="notification-retry" type="button" class="secondary compact" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
+<span id="notification-state" class="email-state" hidden><i id="notification-state-icon" aria-hidden="true"></i><span id="notification-state-label"></span></span>
+<button type="button" id="notification-toggle" class="icon-button panel-toggle" aria-controls="notification-form" aria-expanded="false"><i id="notification-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div>
+<form id="notification-form" hidden>
+<p class="password-help" data-i18n="notify_intro"></p>
+<div class="bind-email-fields">
+<label class="field"><span data-i18n="notify_new_email"></span><input id="notification-new-email" type="email" autocomplete="email" maxlength="254" required/></label>
+<div class="email-code-row"><label class="field"><span data-i18n="email_code"></span><input id="notification-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required data-i18n-placeholder="email_code_placeholder" aria-describedby="notification-status"/></label><button id="notification-send-code" class="secondary" type="button"></button></div>
+</div>
+<p id="notification-status" class="email-status" role="status" aria-live="polite"></p>
+<p id="notification-error" role="alert"></p>
+<div class="bind-email-actions"><button id="notification-reset" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span id="notification-reset-label"></span></button><button id="notification-submit" type="submit"><i class="bi bi-check2"></i><span data-i18n="notify_save"></span></button></div>
+</form>
+</section>
 <section id="password-settings" class="panel password-settings collapsed" aria-labelledby="password-settings-title">
 <div class="email-settings-head"><span class="account-icon"><i class="bi bi-shield-lock"></i></span><div class="email-settings-text"><h2 id="password-settings-title" data-i18n="password_change_title"></h2><p class="password-help" data-i18n="password_change_intro"></p></div>
 <button type="button" id="password-settings-toggle" class="icon-button panel-toggle" aria-controls="password-change-form" aria-expanded="false"><i id="password-settings-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div>
@@ -271,6 +288,7 @@
 <div class="heading-actions"><button id="favorites-refresh" type="button" class="secondary compact"><i class="bi bi-arrow-clockwise"></i><span data-i18n="favorite_refresh_all"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
 <div class="progress" id="favorites-progress" hidden><div class="progress-bar" id="favorites-progress-bar"></div></div>
+<p id="subscription-hint" class="subscription-hint" hidden><i class="bi bi-bell"></i><span id="subscription-hint-text"></span><a id="subscription-hint-link" href="#account" data-i18n="subscription_hint_link"></a></p>
 <button id="favorites-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div id="favorites-filters"></div>
 <div class="panel table-panel" id="favorites-list">
@@ -293,6 +311,7 @@
 <div class="filter-grid">
 <label class="field"><span data-i18n="rarity"></span><select data-role="rarity"><option value="" data-i18n="all"></option></select></label>
 <label class="field"><span data-i18n="stock"></span><select data-role="stock"><option data-i18n="all" value=""></option><option data-i18n="in_stock" value="in_stock"></option><option data-i18n="out_of_stock" value="out_of_stock"></option><option data-i18n="unknown" value="unknown"></option></select></label>
+<label class="field" data-role="subscription-field" hidden><span data-i18n="subscription"></span><select data-role="subscription"><option data-i18n="all" value=""></option><option data-i18n="subscribed" value="subscribed"></option><option data-i18n="not_subscribed" value="unsubscribed"></option></select></label>
 <label class="field"><span data-i18n="sort"></span><select data-role="sort"><option data-i18n="default" value="original"></option><option data-i18n="price_ascending" value="price:asc"></option><option data-i18n="price_descending" value="price:desc"></option><option data-i18n="name_a_z" value="name:asc"></option><option data-i18n="name_z_a" value="name:desc"></option><option data-i18n="number_ascending" value="card_number:asc"></option><option data-i18n="number_descending" value="card_number:desc"></option><option data-i18n="quantity_ascending" value="stock_quantity:asc"></option><option data-i18n="quantity_descending" value="stock_quantity:desc"></option></select></label>
 <div class="field price-field" role="group" data-i18n-aria-label="price_range">
 <div class="price-head"><span data-i18n="price_range"></span><output data-role="price-label"></output></div>

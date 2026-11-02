@@ -61,3 +61,11 @@ test('large image URL swaps the thumbnail size and skips the placeholder', () =>
   assert.equal(largeImageUrl('https://card.yuyu-tei.jp/noimage_100_140.jpg'), null);
   assert.equal(largeImageUrl(null), null);
 });
+
+test('subscription filter uses the supplied predicate and combines with other filters', () => {
+ const isSubscribed = item => item.card_number !== 'A2';
+ assert.deepEqual(selectItems(items, {...base, subscription: 'subscribed', isSubscribed}), [items[0], items[2]]);
+ assert.deepEqual(selectItems(items, {...base, subscription: 'unsubscribed', isSubscribed}), [items[1]]);
+ assert.deepEqual(selectItems(items, {...base, subscription: 'subscribed', isSubscribed, text: 'other'}), [items[2]]);
+ assert.deepEqual(selectItems(items, {...base, subscription: ''}), items);
+});

@@ -259,8 +259,13 @@ def test_smtp_transport_tls_and_templates(monkeypatch, mode, port, language):
             calls.append('login')
         def send_message(self, message):
             assert message['To'] == 'alice@example.com'
-            assert '012345' in message.get_content() and '10' in message.get_content()
-            assert ('验证码' in message['Subject']) == (language == 'zh-CN')
+            assert message.get_content_type() == 'multipart/alternative'
+            html = message.get_body(preferencelist=('html',)).get_content()
+            assert '012345' in html and 'TCG Toolkit' in html
+            assert '<table' in html and '10' in html
+            assert '012345' in message.get_body(preferencelist=('plain',)).get_content() and '10' in message.get_body(preferencelist=('plain',)).get_content()
+            # Bilingual regardless of the requested language: Chinese first, then English.
+            assert message['Subject'].index('验证码') < message['Subject'].index('verification code')
             calls.append('send')
             return {}
     monkeypatch.setattr(smtplib, 'SMTP_SSL' if mode == 'ssl' else 'SMTP', SMTP)

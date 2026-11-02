@@ -1,5 +1,6 @@
 """Local browser API; the existing searchers own upstream parsing."""
 from contextlib import asynccontextmanager
+import asyncio
 from pathlib import Path
 import mimetypes
 import os
@@ -29,15 +30,24 @@ from .cards import router as cards_router
 from .official import router as official_router
 from .yuyutei_cart import router as yuyutei_router
 from .product_details import router as product_router
+from .subscriptions import router as subscriptions_router
+from .notification_email import router as notification_email_router
+from .subscription_worker import SubscriptionWorker
 
 
 @asynccontextmanager
 async def lifespan(app):
     initialize_auth(app)
     store = app.state.auth.store
+    worker = None
     try:
+        if os.getenv('TCG_SUBSCRIPTIONS_ENABLED', '').lower() == 'true':
+            worker = SubscriptionWorker(store)
+            worker.start()
         yield
     finally:
+        if worker is not None:
+            await asyncio.to_thread(worker.stop)
         store.close()
 
 
@@ -59,7 +69,7 @@ app.add_middleware(BrowserCORS)
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request, exc):
-    if request.url.path.startswith('/api/auth/'):
+    if request.url.path.startswith(('/api/auth/', '/api/subscriptions/notification-email')):
         return JSONResponse({'detail': 'validation_error'}, status_code=422)
     return await request_validation_exception_handler(request, exc)
 
@@ -70,6 +80,8 @@ app.include_router(cards_router)
 app.include_router(official_router)
 app.include_router(yuyutei_router)
 app.include_router(product_router)
+app.include_router(notification_email_router)
+app.include_router(subscriptions_router)
 SEARCHERS = {Game.WSR: WSRSearcher, Game.LYCEE: LyceeSearcher, Game.CHAOS: ChaosTCGSearcher, Game.WS: WSSearcher, Game.PM: PMSearcher, Game.SEV: SEVSearcher}
 
 
@@ -100,7 +112,7 @@ async def request_proxy_mode(request, call_next):
 async def browser_cache_policy(request, call_next):
     response = await call_next(request)
     if any(request.url.path == path or request.url.path.startswith(path + '/')
-           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei')):
+           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/subscriptions')):
         response.headers['Cache-Control'] = 'no-store'
     elif not request.url.path.startswith('/api/'):
         # Static filenames are stable across releases; validate cached modules.

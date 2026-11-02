@@ -126,3 +126,42 @@ def test_stock_failure_and_invalid_condition(client):
     FakeClient.calls.clear()
     assert client.get('/api/yuyutei/product', params={**params, 'kizu': 2}).status_code == 422
     assert FakeClient.calls == []
+
+
+def offer_html(price='1,280', quantity='5', kizu=0):
+    return (f'<div class="offer"><div class="lhs"><h4>{price} 円</h4></div>'
+            f'<div class="rhs"><div class="counter"><input class="cart_kizu" value="{kizu}">'
+            f'<input class="cart_active" value="{quantity}"></div></div></div>')
+
+
+def test_subscription_snapshot_price_stock_and_condition_isolation():
+    url = 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240'
+    html = FIXTURE + offer_html() + offer_html('580', '2', kizu=1)
+    result = module.parse_product_snapshot(html, 'wsr', url)
+    assert result['price'] == 1280 and result['stock_quantity'] == 5
+    assert result['stock_status'] == 'in_stock' and result['currency'] == 'JPY'
+    assert result['name'] == '大人のいい女 美羽(サイン入り)'
+    assert result['rarity'] == 'SEC' and result['product_url'] == url
+    result = module.parse_product_snapshot(FIXTURE + offer_html('0', '0'), 'wsr', url)
+    assert result['price'] == 0 and result['stock_status'] == 'out_of_stock'
+
+
+@pytest.mark.parametrize('offers', [
+    '', offer_html(kizu=1), offer_html('', '5'), offer_html('1,2', '5'),
+    offer_html('100', ''), offer_html('100', '-1'), offer_html('100', '10+'),
+    offer_html('100', '5') + offer_html('100', '3'),
+])
+def test_invalid_snapshot_never_turns_unknown_into_zero(offers):
+    with pytest.raises(ValueError):
+        module.parse_product_snapshot(FIXTURE + offers, 'wsr', 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240')
+
+
+def test_snapshot_fetch_bypasses_static_cache(client):
+    url = 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240'
+    for price, quantity in [('1,280', '5'), ('980', '0')]:
+        FakeClient.reply = FIXTURE + offer_html(price, quantity)
+        result = module.fetch_product_snapshot('wsr', url)
+        assert result['price'] == int(price.replace(',', ''))
+        assert result['stock_quantity'] == int(quantity)
+    assert len(FakeClient.calls) == 2
+    assert module._cache == {}

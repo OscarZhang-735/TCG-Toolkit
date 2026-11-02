@@ -5,6 +5,7 @@ import {yuyuteiClient} from './yuyutei-client.js';
 import {bindNavMenus, syncNavMenus} from './nav-menu.js';
 import {createEmailChallenge, authError} from './email-code.js';
 import {createPasswordUI} from './password-ui.js';
+import {createNotificationEmailUI} from './notification-email-ui.js';
 const $ = id => document.getElementById(id);
 let user = null, searchApp = null, registering = false, errorKey = '';
 let bindError = '', authGeneration = 0, forgotten = false;
@@ -13,6 +14,7 @@ const registrationEmail = createEmailChallenge({request: apiRequest});
 const bindingEmail = createEmailChallenge({request: api.fetch});
 const passwordUI = createPasswordUI({request: apiRequest, authenticatedRequest: api.fetch,
   getUser: () => user, onChanged: () => signedOut('password_changed')});
+const notificationUI = createNotificationEmailUI({request: api.fetch, getUser: () => user, onChange: email => searchApp?.setNotificationEmail(email)});
 function renderEmail(prefix, challenge) {
   const state = challenge.snapshot();
   const button = $(`${prefix}-send-code`);
@@ -22,7 +24,7 @@ function renderEmail(prefix, challenge) {
     : state.expired ? t('email_code_expired') : state.challengeId ? t('email_sent') : '';
 }
 function refreshEmails() {
-  passwordUI.refresh();
+  passwordUI.refresh(); notificationUI.refresh();
   renderEmail('auth', registrationEmail); renderEmail('bind', bindingEmail);
   const verified = Boolean(user?.email_verified);
   $('account-email').textContent = user?.email || t('email_bind_intro');
@@ -34,7 +36,7 @@ function refreshEmails() {
   $('bind-email-error').textContent = bindError ? t(bindError) : '';
 }
 function resetEmails() {
-  passwordUI.reset();
+  passwordUI.reset(); notificationUI.reset();
   registrationEmail.reset(); bindingEmail.reset(); bindError = '';
   for (const id of ['auth-email', 'auth-code', 'bind-email', 'bind-code', 'bind-password']) $(id).value = '';
 }
@@ -120,7 +122,8 @@ async function signedIn(value) {
   // The cart client must know the account before the search app reads its cart.
   user = value; yuyuteiClient.activateUser(user.id, api.fetch);
   authGeneration++; resetEmails();
-  searchApp.activateUser(user.id, api.fetch);
+  searchApp.activateUser(user.id, api.fetch, user.email_verified ? user.email : null);
+  notificationUI.load();
   $('account-status').textContent = '';
   $('current-username').textContent = user.username;
   $('account-username').textContent = user.username; setAvatar(user.username);
@@ -191,7 +194,7 @@ $('bind-email-form').addEventListener('submit', async event => {
     const result = await response.json();
     if (started !== authGeneration) return;
     if (!response.ok) bindError = authError(result.detail, response.status);
-    else {user = result; resetEmails();}
+    else {user = result; resetEmails(); notificationUI.load();}
   } catch (error) {
     if (started === authGeneration && error.name !== 'AbortError') bindError = 'auth_unavailable';
   } finally { $('bind-email-submit').disabled = false; refreshEmails(); }

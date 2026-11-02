@@ -52,7 +52,17 @@ sudo python3 /opt/tcg-http/releases/源码指纹/deploy.py /opt/tcg-http sha256:
 4. 启动 Web，检查 HTTPS、版本、数据库健康、匿名拒绝及 CORS。
 5. 成功后更新 current.json/previous.json，随后由原工作流发布 Pages。
 
-发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 1。ORM 版本首次部署时通过 `tcg-db migrate` 为现有 schema 1 登记基线，保留原有数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
+发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 3。`tcg-db migrate` 为尚未登记的现有 schema 1 登记基线，再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，保留原有数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
+
+### 卡牌订阅服务
+
+`TCG_SUBSCRIPTIONS_ENABLED=true` 在现有 Web 进程内启用每日检查和邮件重试，无需额外队列或服务。沿用 `TCG_SMTP_*` 及 `TCG_SEARCH_PROXY_URL`；通知邮件不依赖验证码 HMAC 密钥。订阅邮件默认发送到注册邮箱，也可使用用户单独验证的自定义通知邮箱；自定义地址的验证复用验证码 HMAC 密钥。
+
+两个 Linux 部署 Compose 均只读挂载 `/etc/localtime`，每天按宿主机本地时间 12:00 开始检查。部署前使用 `date` 确认宿主机时区；启动日志会打印有效时区和下一次执行时间。更改宿主机时区后重新创建 Web 容器以重新挂载时区文件。根目录的 Docker Desktop Compose 则要求 `.env` 中的 `TZ` 匹配宿主机时区。
+
+中午后启动的服务从次日中午开始，不补查；待发邮件的重试会在启动后恢复。正常停机会先停止线程再关闭数据库，Compose 为 Web 预留 60 秒退出时间，已经入队的邮件保留。强制终止留下的 `running` 任务不会补跑，后续每日检查继续使用各订阅最后成功保存的基准。
+
+每位用户每个检查日最多生成一封变化汇总，无变化不发。SMTP 失败后分别等待 1、5、30 分钟重试（共最多 4 次投递），耗尽后保留 `failed` 记录；SMTP 接收后进程意外中断，可能重复投递同一封邮件。任务、邮件状态及排查 SQL 见[开发文档](../docs/developer.md#卡牌订阅后端)。网页订阅入口位于收藏夹页面。
 
 ## 备份和恢复
 
