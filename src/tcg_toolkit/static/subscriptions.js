@@ -62,6 +62,6 @@ export function createSubscriptions(onChange) {
       if (current === generation) {state.busy.delete(key); onChange();}
     }
   }
-  return {state, find, clear, load, toggle: item => operate(item, !find(item)), remove: item => operate(item, false),
+  return {state, find, clear, load, toggle: item => operate(item, !find(item)), add: item => operate(item, true), remove: item => operate(item, false),
     activate(api) {clear(); request = api; return load();}};
 }

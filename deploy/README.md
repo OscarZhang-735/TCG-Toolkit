@@ -52,7 +52,7 @@ sudo python3 /opt/tcg-http/releases/源码指纹/deploy.py /opt/tcg-http sha256:
 4. 启动 Web，检查 HTTPS、版本、数据库健康、匿名拒绝及 CORS。
 5. 成功后更新 current.json/previous.json，随后由原工作流发布 Pages。
 
-发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 3。`tcg-db migrate` 为尚未登记的现有 schema 1 登记基线，再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，保留原有数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
+发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 5。`tcg-db migrate` 为尚未登记的现有 schema 1 登记基线，再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段、`0004` 创建收藏分组、`0005` 使收藏默认未分组（历史收藏均为未分组），保留原有数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
 
 ### 卡牌订阅服务
 
