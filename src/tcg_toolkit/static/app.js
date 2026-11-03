@@ -312,6 +312,11 @@ function renderSelection(matches) {
   $('favorites-select-all').disabled = busy || !matches.length;
   $('favorites-selection-count').textContent = sel.running ? t('favorite_bulk_progress', {done: sel.done, total: sel.total})
     : t('favorite_selected_count', {count}) + (sel.failed ? ' · ' + t('favorite_bulk_failed', {count: sel.failed}) : '');
+  $('favorites-bulk-refresh').disabled = busy || !count;
+  // Subscribing needs a verified notification address, same as the per-card bell.
+  $('favorites-bulk-subscribe').disabled = busy || !count || !subscriptions.state.ready || !notificationEmail;
+  $('favorites-bulk-subscribe').title = notificationEmail ? '' : t('subscription_email_required');
+  $('favorites-bulk-unsubscribe').disabled = busy || !count || !subscriptions.state.ready;
   $('favorites-bulk-move').disabled = busy || !count || !favorites.state.groups.length;
   $('favorites-bulk-remove').disabled = busy || !count;
 }
@@ -350,6 +355,9 @@ $('favorites-select-all').addEventListener('change', event => {
   const items = favoriteFilters.apply(favorites.visible().map(row => row.item));
   selection.setAll(items, event.target.checked);
 });
+$('favorites-bulk-refresh').addEventListener('click', () => selection.refresh());
+$('favorites-bulk-subscribe').addEventListener('click', () => selection.subscribe());
+$('favorites-bulk-unsubscribe').addEventListener('click', () => selection.unsubscribe());
 $('favorites-bulk-move').addEventListener('click', () => {
   const count = selection.state.keys.size;
   if (count) favoriteGroups.openBulkMove(count, groupId => selection.moveTo(groupId));

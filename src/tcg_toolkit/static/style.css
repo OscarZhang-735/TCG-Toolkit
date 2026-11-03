@@ -488,7 +488,7 @@ tr.selected td { background: var(--color-hover); }
 .select-all { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; cursor: pointer; }
 .select-all input { width: 16px; height: 16px; margin: 0; accent-color: var(--color-primary); }
 .selection-count { font-size: 12px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
-.selection-actions { display: flex; gap: 8px; margin-left: auto; }
+.selection-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 #favorites-select[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 .favorite-add-menu {
   position: fixed; z-index: 50; min-width: 160px; max-width: 240px; max-height: 280px; overflow-y: auto; padding: 6px;

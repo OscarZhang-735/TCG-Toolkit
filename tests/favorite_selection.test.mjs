@@ -77,3 +77,22 @@ test('clearing mid-run stops the remaining cards', async () => {
   assert.equal(calls.length, 1);
   assert.deepEqual(selection.state, {active: false, keys: new Set(), running: false, done: 0, total: 0, failed: 0});
 });
+
+test('bulk subscribe, unsubscribe and refresh keep the selection; refresh is paced', async () => {
+  const {favorites, subscriptions, calls} = models();
+  const messages = new Map();
+  favorites.state.messages = messages;
+  favorites.refresh = async item => { calls.push(['refresh', item.name]); messages.set(cardKey(item), item.name === 'b' ? 'favorite_missing' : 'favorite_updated'); };
+  subscriptions.add = async item => { calls.push(['subscribe', item.name]); return item.name !== 'c'; };
+  let pauses = 0;
+  const selection = createSelection(favorites, subscriptions, () => {}, async () => { pauses++; });
+  selection.setActive(true); selection.setAll(['a', 'b', 'c'].map(card), true);
+  await selection.refresh();
+  assert.equal(pauses, 2); assert.equal(selection.state.failed, 1); assert.equal(selection.state.keys.size, 3);
+  await selection.subscribe();
+  assert.equal(selection.state.failed, 1); assert.equal(selection.state.keys.size, 3);
+  await selection.unsubscribe();
+  assert.deepEqual(calls.map(call => call.join(' ')), ['refresh a', 'refresh b', 'refresh c', 'subscribe a', 'subscribe b', 'subscribe c',
+    'unsubscribe a', 'unsubscribe b', 'unsubscribe c']);
+  assert.equal(pauses, 2);
+});
