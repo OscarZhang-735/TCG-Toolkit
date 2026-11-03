@@ -6,9 +6,14 @@ from .database import is_unique_violation
 from .db_models import OwnedCard
 import time
 import uuid
+import json
+from io import BytesIO
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
+from xlsxwriter import Workbook
 from pydantic import BaseModel, Field, field_validator
 
 from .auth.routes import current_user, write_guard
@@ -84,6 +89,44 @@ def listing(request: Request, user=Depends(current_user)):
         rows = db.scalars(select(OwnedCard).where(OwnedCard.user_id == user['id']).order_by(
             OwnedCard.created_at.desc(), OwnedCard.sort_id.desc()))
         return {'items': [record(row) for row in rows]}
+
+
+@router.get('/export')
+def export_cards(request: Request, format: Literal['xlsx', 'json'], user=Depends(current_user)):
+    items = listing(request, user)['items']
+    headers = {'Content-Disposition': f'attachment; filename="cards.{format}"',
+               'Cache-Control': 'no-store'}
+    if format == 'json':
+        return Response(json.dumps({'items': items}, ensure_ascii=False, indent=2),
+                        media_type='application/json', headers=headers)
+    output = BytesIO()
+    columns = ('game', 'card_number', 'rarity', 'name', 'quantity', 'notes',
+               'image_url', 'id', 'created_at', 'updated_at')
+    with Workbook(output, {'in_memory': True}) as workbook:
+        sheet = workbook.add_worksheet('Cards')
+        heading = workbook.add_format({'bold': True, 'bg_color': '#E8EEF7'})
+        sheet.write_row(0, 0, columns, heading)
+        sheet.freeze_panes(1, 0)
+        sheet.set_column(0, 2, 20)
+        sheet.set_column(3, 3, 36)
+        sheet.set_column(4, 4, 18)
+        sheet.set_column(5, 7, 40)
+        sheet.set_column(8, 9, 20)
+        for row_index, item in enumerate(items, 1):
+            for column_index, key in enumerate(columns):
+                value = item[key]
+                # Excel preserves only 15 numeric digits; retain larger quantities as text.
+                if isinstance(value, int) and abs(value) < 10**15:
+                    sheet.write_number(row_index, column_index, value)
+                else:
+                    # Explicit strings preserve card numbers and never execute formulas.
+                    result = sheet.write_string(row_index, column_index, str(value))
+                    if result == -2:
+                        raise HTTPException(422, detail='export_xlsx_text_too_long')
+        sheet.autofilter(0, 0, len(items), len(columns) - 1)
+    return Response(output.getvalue(),
+                    media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    headers=headers)
 
 
 @router.post('', status_code=201, dependencies=[Depends(write_guard)])

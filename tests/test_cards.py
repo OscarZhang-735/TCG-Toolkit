@@ -1,4 +1,7 @@
 from tcg_toolkit.db_models import OwnedCard
+from io import BytesIO
+from zipfile import ZipFile
+from xml.etree import ElementTree as ET
 from auth_helpers import register_user
 
 import pytest
@@ -9,6 +12,59 @@ from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
 CARD = dict(game='ws', card_number='ABC-001', rarity='SR', name='Card', quantity=2, notes='Mine')
+
+
+def spreadsheet_rows(content):
+    ns = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    with ZipFile(BytesIO(content)) as archive:
+        strings = ET.fromstring(archive.read('xl/sharedStrings.xml'))
+        texts = [''.join(item.itertext()) for item in strings]
+        sheet = ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
+    assert sheet.findall('.//s:f', ns) == []
+    return [[texts[int(cell.find('s:v', ns).text)] if cell.get('t') == 's'
+             else int(cell.find('s:v', ns).text) for cell in row]
+            for row in sheet.findall('s:sheetData/s:row', ns)]
+
+
+@pytest.mark.parametrize('format', ['json', 'xlsx'])
+def test_export_empty_and_private(client, format):
+    response = client.get('/api/cards/export', params={'format': format})
+    assert response.status_code == 200
+    assert response.headers['cache-control'] == 'no-store'
+    assert response.headers['content-disposition'] == f'attachment; filename="cards.{format}"'
+    if format == 'json':
+        assert response.json() == {'items': []}
+    else:
+        assert len(spreadsheet_rows(response.content)) == 1
+    client.post('/api/cards', json=CARD)
+    login(client, 'bob')
+    response = client.get('/api/cards/export', params={'format': format})
+    assert (response.json()['items'] if format == 'json' else spreadsheet_rows(response.content)[1:]) == []
+    client.headers.pop('Authorization')
+    assert client.get('/api/cards/export', params={'format': format}).status_code == 401
+
+
+def test_export_round_trip(client):
+    saved = client.post('/api/cards', json={**CARD, 'card_number': '00123',
+        'name': '中文 カード', 'notes': '=1+1\n备注 & <text>',
+        'quantity': 9007199254740991, 'image_url': 'https://example.com/card.png'}).json()
+    zero = client.post('/api/cards', json={**CARD, 'quantity': 0}).json()
+    assert client.get('/api/cards/export?format=json').json() == {'items': [zero, saved]}
+    response = client.get('/api/cards/export?format=xlsx')
+    assert response.status_code == 200
+    assert 'spreadsheetml' in response.headers['content-type']
+    rows = spreadsheet_rows(response.content)
+    result = [dict(zip(rows[0], row)) for row in rows[1:]]
+    assert result == [zero, {**saved, 'quantity': str(saved['quantity'])}]
+    assert client.get('/api/cards/export?format=csv').status_code == 422
+
+
+def test_export_long_text_offers_lossless_json(client):
+    saved = client.post('/api/cards', json={**CARD, 'notes': '长' * 32768}).json()
+    response = client.get('/api/cards/export?format=xlsx')
+    assert response.status_code == 422
+    assert response.json()['detail'] == 'export_xlsx_text_too_long'
+    assert client.get('/api/cards/export?format=json').json()['items'] == [saved]
 
 
 def login(client, name):

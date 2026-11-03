@@ -4,6 +4,7 @@ import {t, getLanguage} from './i18n.js';
 import {rarityBadge, cardImage, markOrientation} from './card-view.js';
 import {numberButton} from './copy-number.js';
 import {setNavCount} from './nav-count.js';
+import {fetchCardExport, downloadCardExport} from './cards-export.js';
 import {raritiesForGame, rarityCategories, findRarity, rarityTier, rarityDescription} from './rarities.js';
 const $ = id => document.getElementById(id);
 const fields = ['game', 'card_number', 'rarity', 'name', 'quantity', 'notes', 'image_url'];
@@ -13,6 +14,14 @@ let officialAPI, officialGeneration = 0, officialController;
 const blankFilters = () => ({query: '', rarity: '', sort: 'original', hiddenGames: new Set()});
 let filters = blankFilters(), pendingDelete = null;
 const inventory = createCards(render);
+let exportController = null, exportError = '';
+function renderExport() {
+  const state = inventory.state;
+  for (const id of ['cards-export', 'cards-export-format']) {
+    $(id).disabled = !state.ready || state.loading || state.busy || Boolean(exportController);
+  }
+  $('cards-export-status').textContent = exportController ? t('cards_exporting') : exportError ? t(exportError) : '';
+}
 function node(tag, text = '', className = '') {const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el;}
 function icon(name) {return node('i', '', `bi ${name}`);}
 const number = value => value.toLocaleString(getLanguage());
@@ -193,6 +202,7 @@ export function ownedQuantity(item) {
 }
 function render() {
   const state = inventory.state, open = editorOpen();
+  renderExport();
   indexOwned(state.records);
   // Editor dialog
   gameOptions();
@@ -250,6 +260,21 @@ $('cards-form').addEventListener('submit', async event => {
   if (!inventory.state.error) $('card-dialog').close();
 });
 $('cards-add').addEventListener('click', () => openEditor());
+$('cards-export').addEventListener('click', async () => {
+  if ($('cards-export').disabled) return;
+  const controller = new AbortController(), format = $('cards-export-format').value;
+  exportController = controller; exportError = ''; renderExport();
+  try {
+    const blob = await fetchCardExport(officialAPI, format, controller.signal);
+    if (exportController === controller) downloadCardExport(blob, format);
+  } catch (error) {
+    if (exportController === controller && error.name !== 'AbortError') {
+      exportError = error.message === 'cards_export_too_long' ? error.message : 'cards_export_failed';
+    }
+  } finally {
+    if (exportController === controller) { exportController = null; renderExport(); }
+  }
+});
 $('cards-cancel').addEventListener('click', () => $('card-dialog').close());
 $('card-dialog-close').addEventListener('click', () => $('card-dialog').close());
 // Esc closes the dialog natively; block it while a save is in flight.
@@ -275,6 +300,7 @@ $('quantity-cancel').addEventListener('click', () => $('quantity-dialog').close(
 $('quantity-dialog').addEventListener('cancel', event => { if (inventory.state.busy) event.preventDefault(); });
 $('quantity-dialog').addEventListener('close', () => { quantityTarget = null; });
 export function clearCards() {
+  exportController?.abort(); exportController = null; exportError = '';
   clearOfficial();
   filters = blankFilters(); $('cards-query').value = '';
   $('card-dialog').close(); $('cards-delete-dialog').close(); $('quantity-dialog').close(); inventory.clear();

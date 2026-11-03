@@ -492,6 +492,16 @@ FROM subscriptions WHERE last_error IS NOT NULL;
 
 `subscription_runs.state` 为 `running/complete/failed`；`subscription_emails.state` 为 `pending/sent/failed/cancelled`。任务完成可以同时存在个别卡牌抓取错误，请结合订阅的 `last_error` 查看。日志包含有效时区、下一次执行时间、每轮唯一卡牌数、用户卡牌变化数、抓取失败数以及邮件投递状态，不输出 SMTP 密码。
 
+## 卡牌库导出
+
+卡牌库页的“导出全部”支持 XLSX 和 JSON，不受页面筛选影响。
+`GET /api/cards/export?format=xlsx|json` 使用现有 Bearer 登录，仅导出当前用户的全部卡牌，
+顺序与卡牌列表接口一致，响应为附件且禁止缓存。JSON 为 `{"items":[卡牌记录,…]}`，
+XLSX 的 `Cards` 工作表以字段名作为表头，包含游戏、卡号、稀有度、名称、数量、备注、图片 URL、
+记录 ID 和创建／更新时间（Unix 秒）。零数量记录也会导出；空库仍可下载。
+XLSX 文本不解析为公式，超过 15 位的数量以文本保留精度；文本超过单元格 32767 字符上限时
+返回 422 `export_xlsx_text_too_long`，页面提示改用 JSON。Web 安装依赖包含 XlsxWriter。
+
 ## WS 英文版卡牌库
 
 `WS EN` 是独立于 `WS` 的卡牌库品牌，接口标识及稀有度映射键为 `ws_en`。
@@ -499,5 +509,7 @@ FROM subscriptions WHERE last_error IS NOT NULL;
 `https://en.ws-tcg.com/cardlist/searchresults/?keyword=`，支持常规关键词匹配，无需完整卡号。
 候选列表显示前 5 条及总匹配数，可填入名称、稀有度和图片；徽章沿用 WS 图标。
 不接入游游亭价格搜索、收藏刷新或购物车。日英文卡牌独立存储、筛选和统计。
+
+本地前端在 `TCG_ALLOW_PROXY_SWITCH=true` 时默认关闭代理，使用浏览器 `localStorage` 的 `tcg.proxy-enabled` 保存上次选择，刷新页面或重新登录后恢复。偏好按浏览器站点保存，不按账户区分。关闭此配置、使用远程 API 前端或无法读取开关能力时，保持服务端默认代理模式，不采用或覆盖浏览器偏好；实际代理地址仍由 `TCG_SEARCH_PROXY_URL` 决定，显式为空时直连。后台订阅检查不受浏览器开关影响。
 
 游游亭购物车使用与搜索相同的代理开关。代理需支持方法、正文、Cookie、CSRF 请求头、状态码和 Set-Cookie 的透传（Lite-Proxy 协议）；不会在代理失败时回退直连或自动重试购物车写入。Cookie 仍按游游亭域名维护，并仅保留在当前操作内。当前默认代理入口为 HTTP，该传输段不加密。

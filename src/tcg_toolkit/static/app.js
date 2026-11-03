@@ -261,8 +261,7 @@ function favoriteMeta(item) {
   const onPage = saved && location.hash === '#favorites';
   const subscribed = onPage && subscriptions.find(item);
   const messages = [reported === 'favorite_updated' ? '' : reported,
-    onPage && subscriptions.state.messages.get(subscriptionKey(item)),
-    subscribed?.last_error && 'subscription_check_failed'].filter(Boolean);
+    onPage && subscriptions.state.messages.get(subscriptionKey(item))].filter(Boolean);
   const details = onPage && showDetails;
   if (!details && !messages.length) return null;
   const box = el('div', 'fav-meta');
@@ -275,6 +274,7 @@ function favoriteMeta(item) {
   if (details) {
     const time = subscribed ? when(subscribed.checked_at) : t('subscription_none');
     const stamp = el('span', 'fav-time'); stamp.append(icon('bi-bell'), t('subscription_checked', {time}));
+    if (subscribed?.last_error) stamp.append(t('subscription_check_failed'));
     box.append(stamp);
   }
   for (const message of messages) {
