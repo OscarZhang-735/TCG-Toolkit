@@ -42,12 +42,10 @@ class FavoriteGroup(Base):
     id: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     name: Mapped[str]
-    is_default: Mapped[bool] = mapped_column()
     created_at: Mapped[int]
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="favorite_groups_user_id_id_key"),
         UniqueConstraint("user_id", "name", name="favorite_groups_user_name_key"),
-        Index("favorite_groups_one_default", "user_id", unique=True, postgresql_where=is_default),
     )
 
 
@@ -56,7 +54,8 @@ class Favorite(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    group_id: Mapped[str]
+    # NULL means the favorite is not in any group.
+    group_id: Mapped[str | None]
     game: Mapped[str]
     product_url: Mapped[str]
     snapshot: Mapped[str]

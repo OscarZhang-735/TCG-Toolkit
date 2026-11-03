@@ -36,9 +36,8 @@ def test_register_session_logout_login(client):
         digest = db.scalar(select(LoginSession.token_hash))
         assert encoded.startswith("$argon2id$") and BODY["password"] not in encoded
         assert digest == token_hash(token) and token != digest
-        assert db.scalar(select(func.max(SchemaMigration.version))) == 4
-        group = db.scalars(select(FavoriteGroup).where(FavoriteGroup.user_id == user['id'])).one()
-        assert group.is_default and group.name == '默认收藏夹'
+        assert db.scalar(select(func.max(SchemaMigration.version))) == 5
+        assert db.scalars(select(FavoriteGroup).where(FavoriteGroup.user_id == user['id'])).all() == []
     assert AuthService(UserStore(store.conninfo)).current_user(token) == user
     assert client.post("/api/auth/logout", json={}).status_code == 204
     assert app.state.auth.current_user(token) is None

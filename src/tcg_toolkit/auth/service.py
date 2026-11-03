@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ..database import email_lock, is_unique_violation
-from ..db_models import EmailChallenge, FavoriteGroup, LoginSession, User
+from ..db_models import EmailChallenge, LoginSession, User
 from .passwords import hasher, verify_password
 from .email_verification import AuthError, EmailVerification, normalize_email
 
@@ -64,8 +64,6 @@ class AuthService:
                     if is_unique_violation(exc, "users_email_key"):
                         raise AuthError("email_taken", 409) from None
                     raise
-                db.add(FavoriteGroup(id=str(uuid.uuid4()), user_id=user.id, name="默认收藏夹",
-                                     is_default=True, created_at=user.created_at))
                 challenge.state = "used"
                 token = self._session(db, user.id)
         if error:

@@ -1,6 +1,7 @@
 import {createProxySettings} from './proxy-settings.js';
 import {clearCards, activateCards, ownedQuantity} from './cards-ui.js';
 import {createFavorites, cardKey} from './favorites.js';
+import {bindFavoriteGroups} from './favorite-groups-ui.js';
 import {createSubscriptions, subscriptionKey} from './subscriptions.js';
 import {t, applyLanguage, setLanguage, getLanguage} from './i18n.js';
 import {loadResults} from './logic.js';
@@ -62,6 +63,7 @@ const proxySettings = createProxySettings();
 let userId = null, requestAPI = fetch, notificationEmail = null;
 let history = [];
 const favorites = createFavorites(() => {render(); renderFavorites();});
+const favoriteGroups = bindFavoriteGroups(favorites);
 const subscriptions = createSubscriptions(() => {render(); renderFavorites();});
 let cartPage = null;
 const cartStock = createCartStock(() => cartPage?.render());
@@ -218,7 +220,16 @@ function subscriptionToggle(item) {
 // Refresh and subscribe act on saved cards, so they only appear on the favorites page.
 function favoritePageActions(item) {
   if (!favorites.find(item) || location.hash !== '#favorites') return [];
-  return [favoriteRefresh(item), subscriptionToggle(item)];
+  return [favoriteRefresh(item), ...(favorites.state.groups.length ? [favoriteMove(item)] : []), subscriptionToggle(item)];
+}
+function favoriteMove(item) {
+  const busy = favorites.state.busy.has(cardKey(item));
+  const button = el('button', 'icon-button fav-move'); button.type = 'button';
+  button.append(icon('bi-folder-symlink'));
+  button.setAttribute('aria-label', t('favorite_move')); button.title = button.getAttribute('aria-label');
+  button.disabled = favorites.state.running || favorites.state.groupBusy || busy;
+  button.addEventListener('click', () => favoriteGroups.openMove(item, cardKey(item)));
+  return button;
 }
 function favoriteRefresh(item) {
   const busy = favorites.state.busy.has(cardKey(item));
@@ -229,7 +240,17 @@ function favoriteRefresh(item) {
   button.addEventListener('click', () => favorites.refresh(item));
   return button;
 }
-// Refresh time and status note; the time only shows on the favorites page.
+// Update / check times appear only while the favorites page's details toggle is on.
+let showDetails = false;
+const favoriteGroup = item => favorites.state.groups.find(group => group.id === favorites.find(item)?.group_id);
+// Ungrouped cards get no tag.
+function groupTag(item) {
+  const group = favoriteGroup(item);
+  if (!group) return null;
+  const tag = el('span', 'group-tag', group.name); tag.title = group.name;
+  return tag;
+}
+// Detail times plus status notes; notes show everywhere, times only on the favorites page.
 function favoriteMeta(item) {
   const saved = favorites.find(item);
   // A successful refresh shows through the new update time; only problems get a note.
@@ -239,15 +260,16 @@ function favoriteMeta(item) {
   const messages = [reported === 'favorite_updated' ? '' : reported,
     onPage && subscriptions.state.messages.get(subscriptionKey(item)),
     subscribed?.last_error && 'subscription_check_failed'].filter(Boolean);
-  if (!onPage && !messages.length) return null;
+  const details = onPage && showDetails;
+  if (!details && !messages.length) return null;
   const box = el('div', 'fav-meta');
   const when = seconds => new Date(seconds * 1000).toLocaleString(getLanguage(), {dateStyle: 'short', timeStyle: 'short'});
-  if (onPage) {
+  if (details) {
     const time = saved.refreshed_at ? when(saved.refreshed_at) : t('favorite_never');
     const stamp = el('span', 'fav-time'); stamp.append(icon('bi-clock'), t('favorite_time', {time}));
     box.append(stamp);
   }
-  if (subscribed) {
+  if (details && subscribed) {
     const stamp = el('span', 'fav-time'); stamp.append(icon('bi-bell'), t('subscription_checked', {time: when(subscribed.checked_at)}));
     box.append(stamp);
   }
@@ -266,30 +288,34 @@ function favoriteCell(item) {
   return box;
 }
 function renderFavorites() {
-  const state = favorites.state;
-  const matches = favoriteFilters.apply(state.records.map(row => row.item));
+  const state = favorites.state, rows = favorites.visible(), group = favoriteGroups.selected();
+  const matches = favoriteFilters.apply(rows.map(row => row.item));
   setNavCount($('favorites-nav-count'), state.ready ? state.records.length : 0);
-  favoriteFilters.element.hidden = !state.records.length;
+  favoriteGroups.render();
+  $('favorites-title').textContent = group ? group.name : t('favorite_cards');
+  // Without any groups the group column would only hold dashes.
+  $('favorites-list').classList.toggle('without-groups', !state.groups.length);
+  favoriteFilters.element.hidden = !rows.length;
   $('favorites-rows').replaceChildren(...(view === 'list' ? matches.map(item => tableRow(item)) : []));
   $('favorites-grid').replaceChildren(...(view === 'grid' ? matches.map(item => gridCard(item)) : []));
   $('favorites-list').hidden = view !== 'list' || !matches.length;
   $('favorites-grid').hidden = view !== 'grid' || !matches.length;
   $('favorites-empty').hidden = !state.ready || matches.length > 0;
-  $('favorites-empty').querySelector('h3').textContent = t(state.records.length ? 'no_matching_results' : 'favorite_empty');
-  $('favorites-refresh').disabled = !state.ready || !state.records.length || state.running || state.busy.size > 0;
+  $('favorites-empty').querySelector('h3').textContent = t(rows.length ? 'no_matching_results' : state.records.length ? 'favorite_group_empty' : 'favorite_empty');
+  $('favorites-refresh').disabled = !state.ready || !rows.length || state.running || state.busy.size > 0;
   const error = state.error || subscriptions.state.error;
   $('favorites-retry').hidden = !error;
   $('favorites-status').textContent = error ? t(error) : !state.ready ? t('favorite_loading') : state.total ? t('favorite_progress', {done: state.done, total: state.total}) : '';
-  $('subscription-hint').hidden = !state.records.length;
-  $('subscription-hint-text').textContent = notificationEmail ? t('subscription_hint', {email: notificationEmail}) : t('subscription_hint_verify');
-  $('subscription-hint-link').hidden = Boolean(notificationEmail);
-  $('favorites-count').textContent = t('counts', {matching: matches.length.toLocaleString(getLanguage()), loaded: state.records.length.toLocaleString(getLanguage())});
+  $('favorites-count').textContent = t('counts', {matching: matches.length.toLocaleString(getLanguage()), loaded: rows.length.toLocaleString(getLanguage())});
   $('favorites-count').hidden = !state.ready;
   $('favorites-progress').hidden = !state.running;
   $('favorites-progress-bar').style.width = `${state.total ? state.done / state.total * 100 : 0}%`;
   $('favorites-refresh').querySelector('.bi').classList.toggle('spin', state.running);
+  $('favorites-details').setAttribute('aria-pressed', String(showDetails));
+  $('favorites-details').querySelector('span').textContent = t(showDetails ? 'favorite_details_hide' : 'favorite_details_show');
 }
 $('favorites-refresh').addEventListener('click', () => favorites.refreshAll());
+$('favorites-details').addEventListener('click', () => {showDetails = !showDetails; renderFavorites();});
 $('favorites-retry').addEventListener('click', () => {
   if (favorites.state.error) favorites.load();
   if (subscriptions.state.error) subscriptions.load();
@@ -309,6 +335,7 @@ function tableRow(item, withCart = false) {
   cell(priceDisplay(item), 'numeric'); cell(stockBadge(item));
   cell(owned ? owned.toLocaleString(getLanguage()) : '—', `numeric owned-cell${owned ? '' : ' muted'}`);
   if (withCart) cell(cartControls(item), 'cart-col');
+  else cell(groupTag(item) ?? el('span', 'muted', '—'), 'group-col');
   cell(favoriteCell(item), 'action-col');
   return row;
 }
@@ -322,11 +349,12 @@ function gridCard(item, withCart = false) {
   if (owned) { const badge = el('span', 'owned-badge'); badge.append(icon('bi-collection'), t('cards_owned_badge', {quantity: owned.toLocaleString(getLanguage())})); image.append(badge); }
   card.append(top, image, cardLink(item, 'card-name'), bottom);
   if (withCart) { const row = el('div', 'card-cart'); row.append(el('span', 'card-cart-label', t('cart_column')), cartControls(item)); card.append(row); }
-  const meta = favoriteMeta(item);
-  if (meta) {
-    const actions = favoritePageActions(item);
-    if (actions.length) { const box = el('div', 'fav-actions'); box.append(...actions); meta.append(box); }
-    card.append(meta);
+  const meta = favoriteMeta(item); if (meta) card.append(meta);
+  // Favorites page footer: card actions on the left, its group in the bottom-right corner.
+  const actions = favoritePageActions(item);
+  if (actions.length) {
+    const foot = el('div', 'card-foot'), box = el('div', 'fav-actions');
+    box.append(...actions); foot.append(box); const tag = groupTag(item); if (tag) foot.append(tag); card.append(foot);
   }
   return card;
 }
@@ -404,8 +432,8 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favorites.clear(); subscriptions.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
-  userId = null; notificationEmail = null; items = []; history = []; started = false; errors = [];
+  proxySettings.clear(); favoriteGroups.close(); favorites.clear(); subscriptions.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;
   $('search').inert = true;

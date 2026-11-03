@@ -283,16 +283,19 @@
 <main id="favorites-panel" hidden>
 <header><h1 data-i18n="favorites"></h1></header>
 <section class="results">
+<div id="favorite-groups-bar" class="group-bar" hidden>
+<div id="favorite-groups" class="group-tabs" role="group" data-i18n-aria-label="favorite_groups"></div>
+<div class="group-actions"><button id="favorite-group-rename" type="button" class="icon-button" data-i18n-aria-label="favorite_group_rename" data-i18n-title="favorite_group_rename" hidden><i class="bi bi-pencil"></i></button><button id="favorite-group-delete" type="button" class="icon-button" data-i18n-aria-label="favorite_group_delete" data-i18n-title="favorite_group_delete" hidden><i class="bi bi-trash3"></i></button><button id="favorite-group-create" type="button" class="secondary compact"><i class="bi bi-folder-plus"></i><span data-i18n="favorite_group_create"></span></button></div>
+</div>
 <div class="section-heading">
-<div class="heading-left"><h2 data-i18n="favorite_cards"></h2><span class="count" id="favorites-count" hidden></span><span id="favorites-status" role="status" aria-live="polite"></span></div>
-<div class="heading-actions"><button id="favorites-refresh" type="button" class="secondary compact"><i class="bi bi-arrow-clockwise"></i><span data-i18n="favorite_refresh_all"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
+<div class="heading-left"><h2 id="favorites-title"></h2><span class="count" id="favorites-count" hidden></span><span id="favorites-status" role="status" aria-live="polite"></span></div>
+<div class="heading-actions"><button id="favorites-details" type="button" class="secondary compact" aria-pressed="false"><i class="bi bi-clock-history"></i><span></span></button><button id="favorites-refresh" type="button" class="secondary compact"><i class="bi bi-arrow-clockwise"></i><span data-i18n="favorite_refresh_all"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
 <div class="progress" id="favorites-progress" hidden><div class="progress-bar" id="favorites-progress-bar"></div></div>
-<p id="subscription-hint" class="subscription-hint" hidden><i class="bi bi-bell"></i><span id="subscription-hint-text"></span><a id="subscription-hint-link" href="#account" data-i18n="subscription_hint_link"></a></p>
 <button id="favorites-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div id="favorites-filters"></div>
 <div class="panel table-panel" id="favorites-list">
-<div class="table-scroll"><table><thead><tr><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="stock"></th><th class="numeric" data-i18n="cards_owned_column"></th><th class="action-col"><span class="sr-only" data-i18n="favorites"></span></th></tr></thead><tbody id="favorites-rows"></tbody></table></div>
+<div class="table-scroll"><table><thead><tr><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="stock"></th><th class="numeric" data-i18n="cards_owned_column"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="favorites"></span></th></tr></thead><tbody id="favorites-rows"></tbody></table></div>
 </div>
 <div id="favorites-grid" class="card-grid" hidden></div>
 <div id="favorites-empty" class="empty" hidden><i class="bi bi-star"></i><h3></h3></div>
@@ -398,6 +401,38 @@
 <button id="cart-remove-cancel" type="button" class="secondary" autofocus data-i18n="detail_cancel"></button>
 <button id="cart-remove-confirm" type="button"><i class="bi bi-trash3"></i><span data-i18n="cart_remove"></span></button>
 </div>
+</dialog>
+<dialog id="favorite-group-dialog" class="form-dialog confirm-dialog" aria-labelledby="favorite-group-dialog-title">
+<form id="favorite-group-form" novalidate>
+<div class="dialog-head"><h2 id="favorite-group-dialog-title"></h2></div>
+<label class="field"><span data-i18n="favorite_group_name"></span><input id="favorite-group-name" type="text" maxlength="100" required autocomplete="off"/></label>
+<p id="favorite-group-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="favorite-group-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="favorite-group-save" type="submit"><i class="bi bi-check-lg"></i><span data-i18n="cards_save"></span></button>
+</div>
+</form>
+</dialog>
+<dialog id="favorite-group-delete-dialog" class="form-dialog confirm-dialog" aria-labelledby="favorite-group-delete-title" aria-describedby="favorite-group-delete-message">
+<div class="dialog-head"><h2 id="favorite-group-delete-title" data-i18n="favorite_group_delete"></h2></div>
+<p id="favorite-group-delete-message"></p>
+<p id="favorite-group-delete-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="favorite-group-delete-cancel" type="button" class="secondary" autofocus data-i18n="detail_cancel"></button>
+<button id="favorite-group-delete-confirm" type="button"><i class="bi bi-trash3"></i><span data-i18n="favorite_group_delete"></span></button>
+</div>
+</dialog>
+<dialog id="favorite-move-dialog" class="form-dialog confirm-dialog" aria-labelledby="favorite-move-title" aria-describedby="favorite-move-name">
+<form id="favorite-move-form">
+<div class="dialog-head"><h2 id="favorite-move-title" data-i18n="favorite_move"></h2></div>
+<p id="favorite-move-name" class="favorite-move-name"></p>
+<label class="field"><span data-i18n="favorite_move_target"></span><select id="favorite-move-group"></select></label>
+<p id="favorite-move-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="favorite-move-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="favorite-move-save" type="submit"><i class="bi bi-folder-symlink"></i><span data-i18n="favorite_move_confirm"></span></button>
+</div>
+</form>
 </dialog>
 <dialog id="image-dialog" class="image-dialog" aria-labelledby="preview-name">
 <button type="button" id="preview-close" class="icon-button preview-close" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button>

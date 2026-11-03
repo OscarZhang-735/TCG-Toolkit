@@ -444,16 +444,16 @@ th.action-col, td.action-col { width: 1%; text-align: right; }
 .favorite-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .fav-actions { display: flex; gap: 4px; }
 /* Star and refresh share one look; [aria-pressed] must not pick up the view-toggle style. */
-button.fav-toggle, button.fav-refresh, button.fav-subscribe, button.fav-toggle[aria-pressed=true], button.fav-subscribe[aria-pressed=true] {
+button.fav-toggle, button.fav-refresh, button.fav-move, button.fav-subscribe, button.fav-toggle[aria-pressed=true], button.fav-subscribe[aria-pressed=true] {
   width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%;
   background: transparent; box-shadow: none; color: var(--color-text-muted); font-size: 16px;
 }
-button.fav-toggle:hover, button.fav-refresh:hover, button.fav-subscribe:hover { background: var(--color-hover); color: var(--color-text); }
+button.fav-toggle:hover, button.fav-refresh:hover, button.fav-move:hover, button.fav-subscribe:hover { background: var(--color-hover); color: var(--color-text); }
 button.fav-subscribe[aria-pressed=true] .bi-bell-fill { color: var(--color-primary); }
 button.fav-toggle:hover .bi-star { color: var(--color-favorite); }
 button.fav-toggle[aria-pressed=true] .bi-star-fill { color: var(--color-favorite); }
 button.fav-toggle[aria-pressed=true]:hover .bi-star-fill { color: var(--color-favorite-hover); }
-button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-subscribe:disabled:hover { background: transparent; }
+button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-move:disabled:hover, button.fav-subscribe:disabled:hover { background: transparent; }
 .card-image button.fav-toggle, .card-image button.fav-toggle[aria-pressed=true] {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   background: var(--color-surface); box-shadow: var(--shadow-sm);
@@ -463,15 +463,48 @@ button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-
 .card-image button.fav-toggle:disabled:hover { background: var(--color-surface); transform: none; }
 .fav-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11px; color: var(--color-text-muted); }
 .favorite-controls .fav-meta { flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; }
-.card .fav-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; margin-top: -2px; }
-.card .fav-meta > span { grid-column: 1; }
-.card .fav-meta .fav-actions { grid-column: 2; grid-row: 1; gap: 2px; }
-.card .fav-meta .fav-actions button { width: 28px; height: 28px; font-size: 14px; }
+.card .fav-meta { flex-direction: column; align-items: flex-start; gap: 2px; margin-top: -2px; }
+.card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -4px -6px -4px; }
+.card-foot .fav-actions { gap: 2px; }
+.card-foot .fav-actions button { width: 28px; height: 28px; font-size: 14px; }
+.group-tag {
+  display: inline-block; max-width: 140px; padding: 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; font-weight: 500; color: var(--color-text-secondary); background: var(--color-surface-sunken); border-radius: var(--radius-pill);
+}
+.card-foot .group-tag { margin-right: 6px; }
+td.group-col { white-space: nowrap; }
+#favorites-list.without-groups .group-col { display: none; }
+#favorites-details[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 /* Always level with the update time; a status note, if any, goes on the line below. */
 .fav-time, .fav-note { display: inline-flex; align-items: center; gap: 5px; }
 .fav-note { color: var(--color-text); font-weight: 500; }
 #favorites-retry { margin-bottom: 14px; }
-.subscription-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -4px 0 14px; font-size: 12px; color: var(--color-text-muted); }
+/* Favorite groups: pill tabs with counts; rename / delete apply to the selected custom group. */
+.group-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.group-bar[hidden] { display: none; }
+.group-tabs { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+button.group-tab {
+  height: 32px; max-width: 220px; padding: 0 6px 0 12px; gap: 8px; border-radius: var(--radius-pill);
+  border-color: var(--color-border-strong); background: var(--color-surface); color: var(--color-text-secondary);
+  font-size: 13px; font-weight: 500;
+}
+button.group-tab:hover { background: var(--color-hover); border-color: var(--color-border-hover); }
+button.group-tab[aria-pressed=true] { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-on-primary); }
+button.group-tab:disabled:hover { background: var(--color-surface); border-color: var(--color-border-strong); }
+button.group-tab[aria-pressed=true]:disabled:hover { background: var(--color-primary); border-color: var(--color-primary); }
+.group-tab-name { overflow: hidden; text-overflow: ellipsis; }
+.group-tab-count {
+  min-width: 20px; padding: 1px 6px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 600;
+  font-variant-numeric: tabular-nums; background: var(--color-surface-sunken); color: var(--color-text-secondary);
+}
+button.group-tab[aria-pressed=true] .group-tab-count { background: color-mix(in srgb, var(--color-on-primary) 20%, transparent); color: var(--color-on-primary); }
+.group-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.group-actions .icon-button { width: 34px; height: 34px; }
+#favorite-group-name { margin-top: 6px; }
+@media (max-width: 700px) {
+  .group-bar { flex-direction: column; align-items: stretch; }
+  .group-actions { justify-content: flex-end; }
+}
 /* Shared page skeleton: header, optional top panel, results heading, filters, list. */
 header + .results > .section-heading { margin-top: 0; }
 .heading-actions { display: flex; align-items: center; gap: 10px; }
@@ -597,6 +630,8 @@ button.row-action:hover { background: var(--color-hover); color: var(--color-tex
 .dialog-existing { margin-right: auto; }
 .confirm-dialog { width: min(420px, 92vw); }
 .confirm-dialog p { margin: 0; line-height: 1.6; color: var(--color-text-secondary); }
+.confirm-dialog p.dialog-error { margin-top: 16px; color: var(--color-text); }
+.confirm-dialog p.favorite-move-name { margin-bottom: 16px; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
 @media (max-width: 700px) {
   .cards-summary { grid-template-columns: 1fr; }
   .stat-groups, .cards-form-grid, .cards-filter-grid { grid-template-columns: 1fr; }

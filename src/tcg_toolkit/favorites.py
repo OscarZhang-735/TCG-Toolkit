@@ -62,7 +62,8 @@ class GroupName(BaseModel):
 
 
 class GroupTarget(BaseModel):
-    group_id: str = Field(min_length=1)
+    # null removes the favorite from its group.
+    group_id: str | None = Field(min_length=1)
 
 
 def store(request):
@@ -95,18 +96,8 @@ def owned_group(db: Session, user_id, group_id):
     return row
 
 
-def default_group(db: Session, user_id):
-    return db.scalars(select(FavoriteGroup).where(
-        FavoriteGroup.user_id == user_id, FavoriteGroup.is_default.is_(True))).one()
-
-
 def group_record(row: FavoriteGroup):
-    return {'id': row.id, 'name': row.name, 'is_default': row.is_default, 'created_at': row.created_at}
-
-
-def require_custom_group(row: FavoriteGroup):
-    if row.is_default:
-        raise HTTPException(409, detail='default_favorite_group_protected')
+    return {'id': row.id, 'name': row.name, 'created_at': row.created_at}
 
 
 def require_available_name(db: Session, user_id, name, group_id=None):
@@ -121,7 +112,7 @@ def require_available_name(db: Session, user_id, name, group_id=None):
 def groups(request: Request, user=Depends(current_user)):
     with store(request).session() as db:
         rows = db.scalars(select(FavoriteGroup).where(FavoriteGroup.user_id == user['id']).order_by(
-            FavoriteGroup.is_default.desc(), FavoriteGroup.created_at, FavoriteGroup.id))
+            FavoriteGroup.created_at, FavoriteGroup.id))
         return {'items': [group_record(row) for row in rows]}
 
 
@@ -130,8 +121,7 @@ def create_group(body: GroupName, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
         lock_user(db, user['id'])
         require_available_name(db, user['id'], body.name)
-        row = FavoriteGroup(id=str(uuid.uuid4()), user_id=user['id'], name=body.name,
-                            is_default=False, created_at=int(time.time()))
+        row = FavoriteGroup(id=str(uuid.uuid4()), user_id=user['id'], name=body.name, created_at=int(time.time()))
         db.add(row)
         return group_record(row)
 
@@ -141,7 +131,6 @@ def rename_group(group_id: str, body: GroupName, request: Request, user=Depends(
     with store(request).session() as db:
         lock_user(db, user['id'])
         row = owned_group(db, user['id'], group_id)
-        require_custom_group(row)
         require_available_name(db, user['id'], body.name, row.id)
         row.name = body.name
         return group_record(row)
@@ -152,10 +141,9 @@ def remove_group(group_id: str, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
         lock_user(db, user['id'])
         row = owned_group(db, user['id'], group_id)
-        require_custom_group(row)
-        target = default_group(db, user['id'])
+        # Deleting a group keeps its favorites; they just become ungrouped.
         db.execute(update(Favorite).where(Favorite.user_id == user['id'], Favorite.group_id == row.id)
-                   .values(group_id=target.id))
+                   .values(group_id=None))
         db.delete(row)
 
 
@@ -175,10 +163,9 @@ def listing(request: Request, group_id: str | None = None, user=Depends(current_
 def add(body: FavoriteInput, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
         lock_user(db, user['id'])
-        group = (default_group(db, user['id']) if body.group_id is None
-                 else owned_group(db, user['id'], body.group_id))
+        group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
         db.execute(insert(Favorite).values(
-            id=str(uuid.uuid4()), user_id=user['id'], group_id=group.id, game=body.game.value,
+            id=str(uuid.uuid4()), user_id=user['id'], group_id=group_id, game=body.game.value,
             product_url=body.product_url, snapshot=body.model_dump_json(exclude={'group_id'}), created_at=int(time.time())
         ).on_conflict_do_nothing(index_elements=[Favorite.user_id, Favorite.game, Favorite.product_url]))
         row = db.scalar(select(Favorite).where(Favorite.user_id == user['id'],
@@ -190,9 +177,9 @@ def add(body: FavoriteInput, request: Request, user=Depends(current_user)):
 def move(favorite_id: str, body: GroupTarget, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
         lock_user(db, user['id'])
-        group = owned_group(db, user['id'], body.group_id)
+        group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
         row = owned(db, user['id'], favorite_id, lock=True)
-        row.group_id = group.id
+        row.group_id = group_id
         return record(row)
 
 

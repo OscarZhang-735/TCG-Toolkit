@@ -125,28 +125,22 @@ def group(client, name='Custom'):
     return response.json()
 
 
-def default(client):
+def groups(client):
     response = client.get('/api/favorites/groups')
     assert response.status_code == 200
     assert response.headers['cache-control'] == 'no-store'
-    return response.json()['items'][0]
+    return response.json()['items']
 
 
 def test_group_lifecycle_and_name_rules(client):
-    initial = default(client)
-    assert initial['is_default'] and initial['name'] == '默认收藏夹'
-    assert client.get('/api/favorites/groups').json() == {'items': [initial]}
-    for method, body in [('PUT', {'name': 'Renamed'}), ('DELETE', {})]:
-        response = client.request(method, f"/api/favorites/groups/{initial['id']}", json=body)
-        assert response.status_code == 409
-        assert response.json()['detail'] == 'default_favorite_group_protected'
+    assert groups(client) == []
     for name in ['', ' \t\n', 'x' * 101, None, 42]:
         assert client.post('/api/favorites/groups', json={'name': name}).status_code == 422
     first = group(client, '  Custom  ')
-    assert first['name'] == 'Custom' and not first['is_default']
+    assert first['name'] == 'Custom' and set(first) == {'id', 'name', 'created_at'}
     second = group(client, 'custom')  # Names are case sensitive.
     group(client, ' ' + '长' * 100 + ' ')
-    for name in ['Custom', ' Custom ', initial['name']]:
+    for name in ['Custom', ' Custom ']:
         response = client.post('/api/favorites/groups', json={'name': name})
         assert response.status_code == 409
         assert response.json()['detail'] == 'favorite_group_name_taken'
@@ -156,17 +150,17 @@ def test_group_lifecycle_and_name_rules(client):
     assert client.put(path, json={'name': 'Custom'}).json() == first
     renamed = client.put(path, json={'name': ' Renamed '}).json()
     assert renamed == {**first, 'name': 'Renamed'}
-    rows = client.get('/api/favorites/groups').json()['items']
-    assert rows[0] == initial
-    assert rows[1:] == sorted(rows[1:], key=lambda row: (row['created_at'], row['id']))
+    rows = groups(client)
+    assert rows[0] == renamed
+    assert rows == sorted(rows, key=lambda row: (row['created_at'], row['id']))
     assert client.request('DELETE', f"/api/favorites/groups/{second['id']}", json={}).status_code == 204
     assert client.get('/api/favorites', params={'group_id': second['id']}).status_code == 404
 
 
 def test_membership_filter_move_and_delete_preserve_records(client):
-    initial, custom = default(client), group(client)
+    custom = group(client)
     saved = add(client)
-    assert saved['group_id'] == initial['id']
+    assert saved['group_id'] is None
     item = replace(card(), product_url=card().product_url + '2')
     response = client.post('/api/favorites', json={**item.to_dict(), 'group_id': custom['id']})
     assert response.status_code == 200
@@ -178,18 +172,19 @@ def test_membership_filter_move_and_delete_preserve_records(client):
     assert client.post('/api/favorites', json={**card().to_dict(), 'group_id': custom['id']}).json() == saved
     assert client.post('/api/favorites', json={**item.to_dict(), 'group_id': None}).json() == other
     path = f"/api/favorites/{saved['id']}/group"
-    for body in [{}, {'group_id': None}, {'group_id': ''}]:
+    for body in [{}, {'group_id': ''}]:
         assert client.put(path, json=body).status_code == 422
     moved = client.put(path, json={'group_id': custom['id']}).json()
     assert moved == {**saved, 'group_id': custom['id']}
     assert client.put(path, json={'group_id': custom['id']}).json() == moved
-    assert client.get('/api/favorites', params={'group_id': initial['id']}).json()['items'] == []
+    assert client.put(path, json={'group_id': None}).json() == saved
+    moved = client.put(path, json={'group_id': custom['id']}).json()
     with app.state.auth.store.session() as db:
         row = db.get(Favorite, saved['id'])
         db.add(Subscription(id='sub', user_id=row.user_id, game=row.game, product_url=row.product_url,
                             snapshot=row.snapshot, created_at=1, checked_at=1))
     assert client.request('DELETE', f"/api/favorites/groups/{custom['id']}", json={}).status_code == 204
-    assert client.get('/api/favorites').json()['items'] == [{**other, 'group_id': initial['id']}, saved]
+    assert client.get('/api/favorites').json()['items'] == [{**other, 'group_id': None}, saved]
     with app.state.auth.store.session() as db:
         assert db.get(Subscription, 'sub').snapshot == json.dumps(saved['item'], separators=(',', ':'))
     assert client.request('DELETE', f"/api/favorites/groups/{custom['id']}", json={}).status_code == 404
@@ -197,11 +192,10 @@ def test_membership_filter_move_and_delete_preserve_records(client):
 
 def test_groups_are_owned_and_database_rejects_cross_account_membership(client):
     alice_group, saved = group(client), add(client)
-    alice_default = default(client)
     login(client, 'bob')
+    assert groups(client) == []
     bob_group = group(client)
     bob_saved = add(client)
-    assert default(client)['id'] != alice_default['id']
     for group_id in [alice_group['id'], 'missing']:
         calls = [
             ('GET', '/api/favorites', {'params': {'group_id': group_id}}),
@@ -221,10 +215,6 @@ def test_groups_are_owned_and_database_rejects_cross_account_membership(client):
     with pytest.raises(IntegrityError):
         with app.state.auth.store.session() as db:
             db.execute(update(Favorite).where(Favorite.id == saved['id']).values(group_id=bob_group['id']))
-    with pytest.raises(IntegrityError):
-        with app.state.auth.store.session() as db:
-            owner = db.get(Favorite, bob_saved['id']).user_id
-            db.add(FavoriteGroup(id='duplicate-default', user_id=owner, name='Another', is_default=True, created_at=1))
 
 
 @pytest.mark.parametrize('method,path,body', [
@@ -261,7 +251,7 @@ def test_group_delete_rolls_back_membership_on_failure(client, monkeypatch):
 
 @pytest.mark.parametrize('action', ['add', 'move'])
 def test_concurrent_group_delete_and_membership_write(client, action):
-    initial, custom = default(client), group(client)
+    custom = group(client)
     saved = add(client) if action == 'move' else None
     barrier = Barrier(2)
     def remove():
@@ -279,7 +269,7 @@ def test_concurrent_group_delete_and_membership_write(client, action):
     assert result.status_code in (200, 404)
     rows = client.get('/api/favorites').json()['items']
     assert len(rows) == (1 if action == 'move' or result.status_code == 200 else 0)
-    assert all(row['group_id'] == initial['id'] for row in rows)
+    assert all(row['group_id'] is None for row in rows)
     if saved:
         assert rows == [saved]
 
