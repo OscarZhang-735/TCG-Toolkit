@@ -2,6 +2,7 @@ import {createProxySettings} from './proxy-settings.js';
 import {clearCards, activateCards, ownedQuantity} from './cards-ui.js';
 import {createFavorites, cardKey} from './favorites.js';
 import {bindFavoriteGroups} from './favorite-groups-ui.js';
+import {createSelection} from './favorite-selection.js';
 import {createSubscriptions, subscriptionKey} from './subscriptions.js';
 import {t, applyLanguage, setLanguage, getLanguage} from './i18n.js';
 import {loadResults} from './logic.js';
@@ -65,6 +66,7 @@ let history = [];
 const favorites = createFavorites(() => {render(); renderFavorites();});
 const favoriteGroups = bindFavoriteGroups(favorites);
 const subscriptions = createSubscriptions(() => {render(); renderFavorites();});
+const selection = createSelection(favorites, subscriptions, () => renderFavorites());
 let cartPage = null;
 const cartStock = createCartStock(() => cartPage?.render());
 const productDetails = createProductDetails(() => cartPage?.render());
@@ -203,6 +205,7 @@ function favoriteToggle(item) {
     if (subscribed && !await subscriptions.remove(item)) return;
     favorites.toggle(item);
   });
+  if (!saved) favoriteGroups.attachAddMenu(button, item);
   return button;
 }
 function subscriptionToggle(item) {
@@ -269,8 +272,9 @@ function favoriteMeta(item) {
     const stamp = el('span', 'fav-time'); stamp.append(icon('bi-clock'), t('favorite_time', {time}));
     box.append(stamp);
   }
-  if (details && subscribed) {
-    const stamp = el('span', 'fav-time'); stamp.append(icon('bi-bell'), t('subscription_checked', {time: when(subscribed.checked_at)}));
+  if (details) {
+    const time = subscribed ? when(subscribed.checked_at) : t('subscription_none');
+    const stamp = el('span', 'fav-time'); stamp.append(icon('bi-bell'), t('subscription_checked', {time}));
     box.append(stamp);
   }
   for (const message of messages) {
@@ -287,9 +291,34 @@ function favoriteCell(item) {
   const meta = favoriteMeta(item); if (meta) box.append(meta);
   return box;
 }
+// Checkbox for multi-select; only shown while selecting (CSS hides it otherwise).
+function selectBox(item) {
+  const box = el('input', 'select-box'); box.type = 'checkbox';
+  box.checked = selection.state.keys.has(cardKey(item)); box.disabled = selection.state.running;
+  box.setAttribute('aria-label', t('favorite_select_card', {name: item.name}));
+  box.addEventListener('click', event => event.stopPropagation());
+  box.addEventListener('change', () => selection.toggle(item));
+  return box;
+}
+function renderSelection(matches) {
+  const sel = selection.state, count = sel.keys.size, busy = sel.running || favorites.state.running;
+  $('favorites-panel').classList.toggle('selecting', sel.active);
+  $('favorites-selection-bar').hidden = !sel.active;
+  $('favorites-select').setAttribute('aria-pressed', String(sel.active));
+  $('favorites-select').querySelector('span').textContent = t(sel.active ? 'favorite_select_done' : 'favorite_select');
+  $('favorites-select').disabled = sel.running || !favorites.state.ready;
+  $('favorites-select-all').checked = count > 0 && count === matches.length;
+  $('favorites-select-all').indeterminate = count > 0 && count < matches.length;
+  $('favorites-select-all').disabled = busy || !matches.length;
+  $('favorites-selection-count').textContent = sel.running ? t('favorite_bulk_progress', {done: sel.done, total: sel.total})
+    : t('favorite_selected_count', {count}) + (sel.failed ? ' · ' + t('favorite_bulk_failed', {count: sel.failed}) : '');
+  $('favorites-bulk-move').disabled = busy || !count || !favorites.state.groups.length;
+  $('favorites-bulk-remove').disabled = busy || !count;
+}
 function renderFavorites() {
   const state = favorites.state, rows = favorites.visible(), group = favoriteGroups.selected();
   const matches = favoriteFilters.apply(rows.map(row => row.item));
+  selection.prune(matches); renderSelection(matches);
   setNavCount($('favorites-nav-count'), state.ready ? state.records.length : 0);
   favoriteGroups.render();
   $('favorites-title').textContent = group ? group.name : t('favorite_cards');
@@ -302,7 +331,7 @@ function renderFavorites() {
   $('favorites-grid').hidden = view !== 'grid' || !matches.length;
   $('favorites-empty').hidden = !state.ready || matches.length > 0;
   $('favorites-empty').querySelector('h3').textContent = t(rows.length ? 'no_matching_results' : state.records.length ? 'favorite_group_empty' : 'favorite_empty');
-  $('favorites-refresh').disabled = !state.ready || !rows.length || state.running || state.busy.size > 0;
+  $('favorites-refresh').disabled = !state.ready || !rows.length || state.running || state.busy.size > 0 || selection.state.running;
   const error = state.error || subscriptions.state.error;
   $('favorites-retry').hidden = !error;
   $('favorites-status').textContent = error ? t(error) : !state.ready ? t('favorite_loading') : state.total ? t('favorite_progress', {done: state.done, total: state.total}) : '';
@@ -316,6 +345,22 @@ function renderFavorites() {
 }
 $('favorites-refresh').addEventListener('click', () => favorites.refreshAll());
 $('favorites-details').addEventListener('click', () => {showDetails = !showDetails; renderFavorites();});
+$('favorites-select').addEventListener('click', () => selection.setActive(!selection.state.active));
+$('favorites-select-all').addEventListener('change', event => {
+  const items = favoriteFilters.apply(favorites.visible().map(row => row.item));
+  selection.setAll(items, event.target.checked);
+});
+$('favorites-bulk-move').addEventListener('click', () => {
+  const count = selection.state.keys.size;
+  if (count) favoriteGroups.openBulkMove(count, groupId => selection.moveTo(groupId));
+});
+$('favorites-bulk-remove').addEventListener('click', () => {
+  const count = selection.state.keys.size; if (!count) return;
+  $('favorites-bulk-remove-message').textContent = t('favorite_bulk_remove_message', {count: count.toLocaleString(getLanguage())});
+  $('favorites-bulk-remove-dialog').showModal();
+});
+$('favorites-bulk-remove-cancel').addEventListener('click', () => $('favorites-bulk-remove-dialog').close());
+$('favorites-bulk-remove-confirm').addEventListener('click', () => { $('favorites-bulk-remove-dialog').close(); selection.remove(); });
 $('favorites-retry').addEventListener('click', () => {
   if (favorites.state.error) favorites.load();
   if (subscriptions.state.error) subscriptions.load();
@@ -329,6 +374,7 @@ document.addEventListener('inventorychange', () => {render(); renderFavorites();
 function tableRow(item, withCart = false) {
   const row = document.createElement('tr');
   const cell = (child, className = '') => {const td = el('td', className); td.append(child); row.append(td);};
+  if (!withCart) { cell(selectBox(item), 'select-col'); row.classList.toggle('selected', selection.state.keys.has(cardKey(item))); }
   const product = el('div', 'product-summary'); product.append(cardImage(item), cardLink(item));
   cell(el('span', 'game-tag', gameLabel(item.game))); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
   const owned = ownedQuantity(item);
@@ -345,6 +391,9 @@ function gridCard(item, withCart = false) {
   const top = el('div', 'card-top'); top.append(tags, numberButton(item.card_number));
   const bottom = el('div', 'card-bottom'); bottom.append(priceDisplay(item), stockBadge(item));
   const image = cardImage(item); image.append(favoriteToggle(item));
+  if (!withCart && selection.state.active) {
+    image.append(selectBox(item)); card.classList.toggle('selected', selection.state.keys.has(cardKey(item)));
+  }
   const owned = ownedQuantity(item);
   if (owned) { const badge = el('span', 'owned-badge'); badge.append(icon('bi-collection'), t('cards_owned_badge', {quantity: owned.toLocaleString(getLanguage())})); image.append(badge); }
   card.append(top, image, cardLink(item, 'card-name'), bottom);
@@ -432,7 +481,7 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favoriteGroups.close(); favorites.clear(); subscriptions.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
   userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;

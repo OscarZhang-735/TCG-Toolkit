@@ -43,7 +43,8 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     } catch (error) {if (current === generation && error.name !== 'AbortError') state.error = 'favorite_failed';}
     if (current === generation) onChange();
   }
-  async function operate(item, refresh = false) {
+  // groupId only applies when adding: the new favorite goes straight into that group.
+  async function operate(item, refresh = false, groupId = null) {
     const key = cardKey(item), current = generation;
     if (!state.ready || state.busy.has(key)) return;
     const saved = find(item);
@@ -51,13 +52,16 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     state.busy.add(key); state.messages.delete(key); onChange();
     try {
       const result = await call(saved ? `/api/favorites/${saved.id}${refresh ? '/refresh' : ''}` : '/api/favorites',
-        saved && !refresh ? 'DELETE' : 'POST', saved ? {} : item);
+        saved && !refresh ? 'DELETE' : 'POST', saved ? {} : groupId ? {...item, group_id: groupId} : item);
       if (current !== generation) return;
       if (!saved) state.records.unshift(result);
       else if (refresh) {state.records = state.records.map(row => row.id === saved.id ? result : row); state.messages.set(key, 'favorite_updated');}
       else state.records = state.records.filter(row => row.id !== saved.id);
     } catch (error) {
-      if (current === generation && error.name !== 'AbortError') state.messages.set(key, error.key || 'favorite_failed');
+      if (current === generation && error.name !== 'AbortError') {
+        state.messages.set(key, error.key || 'favorite_failed');
+        if (error.key === 'favorite_group_missing') load();
+      }
     } finally {
       if (current === generation) {state.busy.delete(key); onChange();}
     }
@@ -132,7 +136,7 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     if (state.running || (id !== null && !state.groups.some(group => group.id === id))) return;
     state.group = id; onChange();
   }
-  return {state, find, visible, clear, load, toggle: item => operate(item), refresh: item => operate(item, true), refreshAll,
+  return {state, find, visible, clear, load, toggle: (item, groupId = null) => operate(item, false, groupId), refresh: item => operate(item, true), refreshAll,
     move, select, createGroup, renameGroup, deleteGroup,
     activate(api) {clear(); request = api; return load();}};
 }

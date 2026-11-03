@@ -473,6 +473,34 @@ button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-
 }
 .card-foot .group-tag { margin-right: 6px; }
 td.group-col { white-space: nowrap; }
+/* Multi-select: checkboxes and the action bar only show while selecting. */
+#favorites-panel:not(.selecting) .select-col { display: none; }
+th.select-col, td.select-col { width: 1%; padding-right: 0; }
+input.select-box { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--color-primary); }
+.card-image input.select-box { position: absolute; top: 12px; left: 12px; z-index: 3; width: 20px; height: 20px; }
+tr.selected td { background: var(--color-hover); }
+.card.selected { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); }
+.selection-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin: -4px 0 14px; padding: 8px 12px;
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+}
+.selection-bar[hidden] { display: none; }
+.select-all { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; cursor: pointer; }
+.select-all input { width: 16px; height: 16px; margin: 0; accent-color: var(--color-primary); }
+.selection-count { font-size: 12px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.selection-actions { display: flex; gap: 8px; margin-left: auto; }
+#favorites-select[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
+.favorite-add-menu {
+  position: fixed; z-index: 50; min-width: 160px; max-width: 240px; max-height: 280px; overflow-y: auto; padding: 6px;
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+}
+.favorite-add-menu[hidden] { display: none; }
+.favorite-add-title { margin: 2px 8px 6px; font-size: 11px; font-weight: 600; color: var(--color-text-muted); }
+button.favorite-add-option {
+  display: block; width: 100%; height: 32px; padding: 0 10px; overflow: hidden; text-overflow: ellipsis; text-align: left;
+  border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 13px; font-weight: 500;
+}
+button.favorite-add-option:hover, button.favorite-add-option:focus-visible { background: var(--color-hover); outline: none; }
 #favorites-list.without-groups .group-col { display: none; }
 #favorites-details[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 /* Always level with the update time; a status note, if any, goes on the line below. */

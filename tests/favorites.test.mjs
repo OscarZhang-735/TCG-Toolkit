@@ -118,3 +118,17 @@ test('group errors come back as translation keys; a missing group reloads', asyn
   assert.equal(await model.move(item, 'deck'), 'favorite_group_missing');
   assert.equal(gets, 4); assert.equal(model.state.busy.size, 0);
 });
+
+test('adding with a group sends group_id; plain add stays ungrouped', async () => {
+  const bodies = [];
+  const model = createFavorites(() => {});
+  await model.activate(async (url, options) => {
+    if (options.method === 'GET') return response({items: url.endsWith('/groups') ? groups : []});
+    const body = JSON.parse(options.body); bodies.push(body);
+    return response({id: body.product_url, item: body, group_id: body.group_id ?? null});
+  });
+  const other = {...item, product_url: item.product_url + '3'};
+  await model.toggle(item, 'deck'); await model.toggle(other);
+  assert.deepEqual(bodies.map(body => body.group_id), ['deck', undefined]);
+  assert.equal(model.find(item).group_id, 'deck'); assert.equal(model.find(other).group_id, null);
+});
