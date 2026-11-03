@@ -1,5 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from types import SimpleNamespace
+from uuid import UUID
 
 from sqlalchemy import select, delete, update
 from sqlalchemy.exc import IntegrityError
@@ -132,14 +134,19 @@ def groups(client):
     return response.json()['items']
 
 
-def test_group_lifecycle_and_name_rules(client):
+@pytest.mark.parametrize('created_at', [(100, 100, 100), (100, 101, 102)])
+def test_group_lifecycle_and_name_rules(client, monkeypatch, created_at):
+    # Exercise UUID tie-breaking without depending on request speed or random IDs.
+    timestamps, ids = iter(created_at), iter([3, 2, 1])
+    monkeypatch.setattr('tcg_toolkit.favorites.time', SimpleNamespace(time=lambda: next(timestamps)))
+    monkeypatch.setattr('tcg_toolkit.favorites.uuid', SimpleNamespace(uuid4=lambda: UUID(int=next(ids))))
     assert groups(client) == []
     for name in ['', ' \t\n', 'x' * 101, None, 42]:
         assert client.post('/api/favorites/groups', json={'name': name}).status_code == 422
     first = group(client, '  Custom  ')
     assert first['name'] == 'Custom' and set(first) == {'id', 'name', 'created_at'}
     second = group(client, 'custom')  # Names are case sensitive.
-    group(client, ' ' + '长' * 100 + ' ')
+    third = group(client, ' ' + '长' * 100 + ' ')
     for name in ['Custom', ' Custom ']:
         response = client.post('/api/favorites/groups', json={'name': name})
         assert response.status_code == 409
@@ -151,8 +158,7 @@ def test_group_lifecycle_and_name_rules(client):
     renamed = client.put(path, json={'name': ' Renamed '}).json()
     assert renamed == {**first, 'name': 'Renamed'}
     rows = groups(client)
-    assert rows[0] == renamed
-    assert rows == sorted(rows, key=lambda row: (row['created_at'], row['id']))
+    assert rows == sorted([renamed, second, third], key=lambda row: (row['created_at'], row['id']))
     assert client.request('DELETE', f"/api/favorites/groups/{second['id']}", json={}).status_code == 204
     assert client.get('/api/favorites', params={'group_id': second['id']}).status_code == 404
 
