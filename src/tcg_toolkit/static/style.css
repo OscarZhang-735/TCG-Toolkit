@@ -724,6 +724,17 @@ button.cards-qty:hover { background: var(--color-hover); border-color: var(--col
 td.numeric button.cards-qty { margin-right: -8px; }
 td.muted button.cards-qty, .card.out_of_stock button.cards-qty { color: var(--color-text-subtle); }
 .quantity-dialog { width: min(380px, 92vw); }
+/* Export settings dialog */
+.export-dialog { width: min(560px, 94vw); }
+.export-group { margin: 0 0 18px; padding: 0; border: 0; min-width: 0; }
+.export-group legend { display: flex; align-items: center; gap: 10px; width: 100%; padding: 0; font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
+.export-group legend .text-button { margin-left: auto; font-size: 12px; }
+.export-group .chips { margin-top: 8px; }
+.export-group .chip { position: relative; }
+.export-group[disabled] .chips { opacity: .5; }
+.export-group[disabled] .chip { cursor: not-allowed; }
+.chip:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.export-summary { margin: 4px 0 0; font-size: 13px; color: var(--color-text-secondary); }
 .quantity-card { display: flex; align-items: center; gap: 8px; }
 .quantity-name { margin: 8px 0 18px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
 .quantity-stepper { display: flex; align-items: center; gap: 10px; }

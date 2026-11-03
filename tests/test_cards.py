@@ -67,6 +67,24 @@ def test_export_long_text_offers_lossless_json(client):
     assert client.get('/api/cards/export?format=json').json()['items'] == [saved]
 
 
+def test_export_language_fields_and_games(client):
+    ws = client.post('/api/cards', json=CARD).json()
+    client.post('/api/cards', json={**CARD, 'game': 'pm'})
+    sev = client.post('/api/cards', json={**CARD, 'game': 'sev en'}).json()
+    params = {'format': 'json', 'games': ['ws', 'SEV EN'], 'fields': ['quantity', 'name']}
+    assert client.get('/api/cards/export', params=params).json() == {'items': [
+        {'name': sev['name'], 'quantity': sev['quantity']}, {'name': ws['name'], 'quantity': ws['quantity']}]}
+    response = client.get('/api/cards/export', params={**params, 'format': 'xlsx', 'language': 'zh-CN'})
+    assert spreadsheet_rows(response.content) == [['名称', '拥有量'], ['Card', 2], ['Card', 2]]
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert '卡牌' in archive.read('xl/workbook.xml').decode()
+    english = client.get('/api/cards/export', params={'format': 'xlsx', 'language': 'en', 'fields': 'card_number'})
+    assert spreadsheet_rows(english.content) == [['Number'], ['ABC-001'], ['ABC-001'], ['ABC-001']]
+    assert client.get('/api/cards/export', params={'format': 'json', 'games': 'other'}).json() == {'items': []}
+    for bad in [{'fields': 'password'}, {'language': 'fr'}]:
+        assert client.get('/api/cards/export', params={'format': 'xlsx', **bad}).status_code == 422
+
+
 def login(client, name):
     data = register_user(client, name).json()
     client.headers['Authorization'] = 'Bearer ' + data['token']

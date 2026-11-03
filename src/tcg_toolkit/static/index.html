@@ -196,9 +196,8 @@
 <section class="results">
 <div class="section-heading">
 <div class="heading-left"><h2 data-i18n="cards_list"></h2><span class="count" id="cards-count" hidden></span><span id="cards-status" role="status" aria-live="polite"></span></div>
-<div class="heading-actions"><select id="cards-export-format" data-i18n-aria-label="cards_export_format" disabled><option value="xlsx">XLSX</option><option value="json">JSON</option></select><button id="cards-export" type="button" class="secondary compact" disabled><i class="bi bi-download" aria-hidden="true"></i><span data-i18n="cards_export"></span></button><button id="cards-add" type="button" class="compact" disabled><i class="bi bi-plus-lg"></i><span data-i18n="cards_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
+<div class="heading-actions"><button id="cards-export" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-download" aria-hidden="true"></i><span data-i18n="cards_export"></span></button><button id="cards-add" type="button" class="compact" disabled><i class="bi bi-plus-lg"></i><span data-i18n="cards_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
-<p id="cards-export-status" role="status" aria-live="polite"></p>
 <button id="cards-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div class="panel filters" id="cards-filters" hidden>
 <div class="filter-top">
@@ -385,6 +384,33 @@
 <div class="dialog-actions">
 <button id="quantity-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
 <button id="quantity-save" type="submit"><i class="bi bi-check-lg"></i><span data-i18n="cards_save"></span></button>
+</div>
+</form>
+</dialog>
+<dialog id="cards-export-dialog" class="form-dialog export-dialog" aria-labelledby="cards-export-title">
+<form id="cards-export-form" novalidate>
+<div class="dialog-head"><h2 id="cards-export-title" data-i18n="cards_export_title"></h2><button type="button" id="cards-export-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<fieldset class="export-group"><legend data-i18n="cards_export_format"></legend>
+<div class="chips" id="cards-export-format">
+<label class="chip"><input type="radio" name="export-format" value="xlsx" checked/><i class="bi bi-check-lg"></i><span data-i18n="cards_export_xlsx"></span></label>
+<label class="chip"><input type="radio" name="export-format" value="json"/><i class="bi bi-check-lg"></i><span data-i18n="cards_export_json"></span></label>
+</div></fieldset>
+<fieldset class="export-group" id="cards-export-language-group"><legend data-i18n="cards_export_language"></legend>
+<div class="chips">
+<label class="chip"><input type="radio" name="export-language" value="zh-CN"/><i class="bi bi-check-lg"></i><span>中文</span></label>
+<label class="chip"><input type="radio" name="export-language" value="en"/><i class="bi bi-check-lg"></i><span>English</span></label>
+<label class="chip"><input type="radio" name="export-language" value="keys"/><i class="bi bi-check-lg"></i><span data-i18n="cards_export_language_keys"></span></label>
+</div>
+<p class="field-hint" id="cards-export-language-hint" data-i18n="cards_export_language_hint"></p></fieldset>
+<fieldset class="export-group"><legend><span data-i18n="cards_export_games"></span><button type="button" class="text-button" id="cards-export-games-all" data-i18n="cards_export_select_all"></button></legend>
+<div class="chips" id="cards-export-games"></div></fieldset>
+<fieldset class="export-group"><legend><span data-i18n="cards_export_fields"></span><button type="button" class="text-button" id="cards-export-fields-all" data-i18n="cards_export_select_all"></button></legend>
+<div class="chips" id="cards-export-fields"></div></fieldset>
+<p class="export-summary" id="cards-export-summary" aria-live="polite"></p>
+<p id="cards-export-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="cards-export-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="cards-export-confirm" type="submit"><i class="bi bi-download" aria-hidden="true"></i><span data-i18n="cards_export_download"></span></button>
 </div>
 </form>
 </dialog>

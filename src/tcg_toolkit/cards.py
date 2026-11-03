@@ -8,10 +8,10 @@ import time
 import uuid
 import json
 from io import BytesIO
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from xlsxwriter import Workbook
 from pydantic import BaseModel, Field, field_validator
@@ -91,27 +91,49 @@ def listing(request: Request, user=Depends(current_user)):
         return {'items': [record(row) for row in rows]}
 
 
+EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'notes',
+                  'image_url', 'id', 'created_at', 'updated_at')
+EXPORT_WIDTHS = {'game': 20, 'card_number': 20, 'rarity': 20, 'name': 36, 'quantity': 18,
+                 'notes': 40, 'image_url': 40, 'id': 40, 'created_at': 20, 'updated_at': 20}
+# XLSX headings are for people; JSON keys stay stable so files remain machine-readable.
+EXPORT_HEADINGS = {
+    'en': {'sheet': 'Cards', 'game': 'Game', 'card_number': 'Number', 'rarity': 'Rarity', 'name': 'Name',
+           'quantity': 'Quantity', 'notes': 'Notes', 'image_url': 'Image URL', 'id': 'ID',
+           'created_at': 'Created at', 'updated_at': 'Updated at'},
+    'zh-CN': {'sheet': '卡牌', 'game': '游戏', 'card_number': '编号', 'rarity': '稀有度', 'name': '名称',
+              'quantity': '拥有量', 'notes': '备注', 'image_url': '图片地址', 'id': 'ID',
+              'created_at': '创建时间', 'updated_at': '更新时间'},
+}
+
+
 @router.get('/export')
-def export_cards(request: Request, format: Literal['xlsx', 'json'], user=Depends(current_user)):
+def export_cards(request: Request, format: Literal['xlsx', 'json'],
+                 language: Literal['en', 'zh-CN'] | None = None,
+                 fields: Annotated[list[Literal[EXPORT_COLUMNS]] | None, Query()] = None,
+                 games: Annotated[list[str] | None, Query()] = None,
+                 user=Depends(current_user)):
     items = listing(request, user)['items']
+    if games is not None:
+        wanted = {game.strip().casefold() for game in games}
+        items = [item for item in items if item['game'].casefold() in wanted]
+    # Canonical column order, regardless of the order fields were requested in.
+    columns = [key for key in EXPORT_COLUMNS if fields is None or key in fields]
+    items = [{key: item[key] for key in columns} for item in items]
     headers = {'Content-Disposition': f'attachment; filename="cards.{format}"',
                'Cache-Control': 'no-store'}
     if format == 'json':
         return Response(json.dumps({'items': items}, ensure_ascii=False, indent=2),
                         media_type='application/json', headers=headers)
+    # Without a language, headings are the raw keys (stable for scripts and re-import).
+    labels = EXPORT_HEADINGS.get(language) or {'sheet': 'Cards', **{key: key for key in EXPORT_COLUMNS}}
     output = BytesIO()
-    columns = ('game', 'card_number', 'rarity', 'name', 'quantity', 'notes',
-               'image_url', 'id', 'created_at', 'updated_at')
     with Workbook(output, {'in_memory': True}) as workbook:
-        sheet = workbook.add_worksheet('Cards')
-        heading = workbook.add_format({'bold': True, 'bg_color': '#E8EEF7'})
-        sheet.write_row(0, 0, columns, heading)
+        sheet = workbook.add_worksheet(labels['sheet'])
+        bold = workbook.add_format({'bold': True, 'bg_color': '#E8EEF7'})
+        sheet.write_row(0, 0, [labels[key] for key in columns], bold)
         sheet.freeze_panes(1, 0)
-        sheet.set_column(0, 2, 20)
-        sheet.set_column(3, 3, 36)
-        sheet.set_column(4, 4, 18)
-        sheet.set_column(5, 7, 40)
-        sheet.set_column(8, 9, 20)
+        for column_index, key in enumerate(columns):
+            sheet.set_column(column_index, column_index, EXPORT_WIDTHS[key])
         for row_index, item in enumerate(items, 1):
             for column_index, key in enumerate(columns):
                 value = item[key]
