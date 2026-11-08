@@ -50,20 +50,24 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     const saved = find(item);
     if (refresh && !saved) return;
     state.busy.add(key); state.messages.delete(key); onChange();
+    let removedItem;
     try {
       const result = await call(saved ? `/api/favorites/${saved.id}${refresh ? '/refresh' : ''}` : '/api/favorites',
         saved && !refresh ? 'DELETE' : 'POST', saved ? {} : groupId ? {...item, group_id: groupId} : item);
       if (current !== generation) return;
       if (!saved) state.records.unshift(result);
       else if (refresh) {state.records = state.records.map(row => row.id === saved.id ? result : row); state.messages.set(key, 'favorite_updated');}
-      else state.records = state.records.filter(row => row.id !== saved.id);
+      else {
+        state.records = state.records.filter(row => row.id !== saved.id);
+        removedItem = saved.item;
+      }
     } catch (error) {
       if (current === generation && error.name !== 'AbortError') {
         state.messages.set(key, error.key || 'favorite_failed');
         if (error.key === 'favorite_group_missing') load();
       }
     } finally {
-      if (current === generation) {state.busy.delete(key); onChange();}
+      if (current === generation) {state.busy.delete(key); onChange(removedItem);}
     }
   }
   // Refreshes what the favorites page shows: the selected group, or everything.

@@ -4,10 +4,10 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
-from .db_models import Favorite, FavoriteGroup, User
+from .db_models import Favorite, FavoriteGroup, Subscription, User
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -186,7 +186,13 @@ def move(favorite_id: str, body: GroupTarget, request: Request, user=Depends(cur
 @router.delete('/{favorite_id}', status_code=204, dependencies=[Depends(write_guard)])
 def remove(favorite_id: str, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
-        db.delete(owned(db, user['id'], favorite_id, lock=True))
+        row = owned(db, user['id'], favorite_id, lock=True)
+        db.execute(delete(Subscription).where(
+            Subscription.user_id == row.user_id,
+            Subscription.game == row.game,
+            Subscription.product_url == row.product_url.rstrip('/'),
+        ))
+        db.delete(row)
 
 
 @router.post('/{favorite_id}/refresh', dependencies=[Depends(write_guard)])

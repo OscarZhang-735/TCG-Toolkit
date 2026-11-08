@@ -63,7 +63,10 @@ const proxySettings = createProxySettings();
 // Effective subscription recipient (custom notification email or verified account email).
 let userId = null, requestAPI = fetch, notificationEmail = null;
 let history = [];
-const favorites = createFavorites(() => {render(); renderFavorites();});
+const favorites = createFavorites(removedItem => {
+  if (removedItem) subscriptions.forget(removedItem);
+  render(); renderFavorites();
+});
 const favoriteGroups = bindFavoriteGroups(favorites);
 const subscriptions = createSubscriptions(() => {render(); renderFavorites();});
 const selection = createSelection(favorites, subscriptions, () => renderFavorites());
@@ -200,11 +203,7 @@ function favoriteToggle(item) {
   button.setAttribute('aria-pressed', String(Boolean(saved)));
   button.setAttribute('aria-label', t(subscribed ? 'favorite_remove_subscribed' : saved ? 'favorite_remove' : 'favorite_add')); button.title = button.getAttribute('aria-label');
   button.disabled = !favorites.state.ready || busy;
-  // Subscriptions are only reachable from favorites, so unfavoriting must not leave one behind.
-  button.addEventListener('click', async () => {
-    if (subscribed && !await subscriptions.remove(item)) return;
-    favorites.toggle(item);
-  });
+  button.addEventListener('click', () => favorites.toggle(item));
   if (!saved) favoriteGroups.attachAddMenu(button, item);
   return button;
 }

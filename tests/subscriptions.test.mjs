@@ -71,3 +71,14 @@ test('old responses cannot restore previous account data', async () => {
   resolve({items: [row]}); await pending;
   assert.deepEqual(model.state.records, []);
 });
+
+test('a pending load cannot restore a subscription removed with its favorite', async () => {
+  let resolve;
+  const model = createSubscriptions(() => {});
+  const pending = model.activate(() => new Promise(r => { resolve = r; }));
+  model.forget(item);
+  resolve(response({items: [row]}));
+  await pending;
+  assert.equal(model.state.ready, true);
+  assert.deepEqual(model.state.records, []);
+});

@@ -93,6 +93,45 @@ def test_subscription_idempotency_normalization_and_isolation(client, monkeypatc
     assert client.get('/api/subscriptions').json()['items'] == []
 
 
+def test_unfavorite_removes_only_the_matching_users_subscription(client):
+    favorite = client.post('/api/favorites', json=snapshot(URL + '/'))
+    assert favorite.status_code == 200
+    add(client)
+    unrelated = add(client, URL.replace('10240', '10241'))
+    alice = client.headers['Authorization']
+    login(client, 'bob')
+    bobs_subscription = add(client)
+    bob = client.headers['Authorization']
+
+    path = '/api/favorites/' + favorite.json()['id']
+    assert client.request('DELETE', path, json={}).status_code == 404
+    client.headers['Authorization'] = alice
+    assert client.request('DELETE', path, json={}).status_code == 204
+    assert client.get('/api/favorites').json()['items'] == []
+    assert client.get('/api/subscriptions').json()['items'] == [unrelated]
+    client.headers['Authorization'] = bob
+    assert client.get('/api/subscriptions').json()['items'] == [bobs_subscription]
+
+
+def test_unfavorite_rolls_back_subscription_if_favorite_delete_fails(client):
+    favorite = client.post('/api/favorites', json=snapshot()).json()
+    subscription = add(client)
+    engine = app.state.auth.store.engine
+
+    def fail_favorite_delete(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith('DELETE FROM favorites '):
+            raise RuntimeError('simulated favorite delete failure')
+
+    event.listen(engine, 'before_cursor_execute', fail_favorite_delete)
+    try:
+        with pytest.raises(RuntimeError, match='simulated favorite delete failure'):
+            client.request('DELETE', '/api/favorites/' + favorite['id'], json={})
+    finally:
+        event.remove(engine, 'before_cursor_execute', fail_favorite_delete)
+    assert client.get('/api/favorites').json()['items'] == [favorite]
+    assert client.get('/api/subscriptions').json()['items'] == [subscription]
+
+
 @pytest.mark.parametrize('url', [
     URL.replace('https:', 'http:'), URL.replace('yuyu-tei.jp', 'evil.example'),
     URL.replace('/wsr/', '/ws/'), URL + '?next=1', URL + '#x',
