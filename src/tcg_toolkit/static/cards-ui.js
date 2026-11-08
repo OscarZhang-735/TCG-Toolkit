@@ -14,6 +14,32 @@ let officialAPI, officialGeneration = 0, officialController;
 const blankFilters = () => ({query: '', rarity: '', sort: 'original', hiddenGames: new Set()});
 let filters = blankFilters(), pendingDelete = null;
 const inventory = createCards(render);
+let importResult = null;
+function renderImport() {
+  const {ready, busy, loading} = inventory.state;
+  $('cards-import').disabled = !ready || busy || loading;
+  $('cards-import-file').disabled = busy;
+  $('cards-import-cancel').disabled = busy;
+  const file = $('cards-import-file').files[0], importing = busy && $('cards-import-dialog').open;
+  $('cards-import-confirm').disabled = !ready || busy || loading || !file;
+  $('cards-import-confirm').querySelector('.bi').className = `bi ${importing ? 'bi-arrow-repeat spin' : 'bi-upload'}`;
+  $('cards-import-confirm').querySelector('span').textContent = t(importing ? 'cards_importing' : 'cards_import');
+  // The drop zone doubles as the file name display.
+  $('cards-import-drop').classList.toggle('chosen', Boolean(file));
+  $('cards-import-icon').className = `bi ${file ? 'bi-file-earmark-check' : 'bi-file-earmark-arrow-up'}`;
+  $('cards-import-name').textContent = file ? file.name : t('cards_import_choose');
+  const error = importResult?.error;
+  let message = '';
+  if (error?.code === 'cards_import_row') message = t('cards_import_row', {row: error.row});
+  else if (error) {
+    const known = ['cards_import_invalid', 'cards_import_format', 'cards_import_headers', 'cards_import_too_large'];
+    message = t(known.includes(error) ? error : 'cards_import_failed');
+  }
+  $('cards-import-error').textContent = importing ? '' : message;
+  $('cards-import-cancel').textContent = t(importResult && !error ? 'close' : 'detail_cancel');
+  $('cards-import-status').textContent = !importing && importResult && !error
+    ? t('cards_import_result', {imported: number(importResult.imported), skipped: number(importResult.skipped)}) : '';
+}
 // Export settings: format, heading language and fields are remembered; the games
 // start from the page's game filter each time the dialog opens.
 let exportController = null, exportError = '', exportHiddenGames = new Set();
@@ -281,6 +307,7 @@ export function ownedQuantity(item) {
 function render() {
   const state = inventory.state, open = editorOpen();
   renderExport();
+  renderImport();
   indexOwned(state.records);
   // Editor dialog
   gameOptions();
@@ -358,6 +385,39 @@ $('cards-export-cancel').addEventListener('click', () => $('cards-export-dialog'
 $('cards-export-close').addEventListener('click', () => $('cards-export-dialog').close());
 // Closing the dialog (Esc, cancel, ×) abandons an export still in flight.
 $('cards-export-dialog').addEventListener('close', () => { exportController?.abort(); exportController = null; exportError = ''; renderExport(); });
+$('cards-import').addEventListener('click', () => {
+  $('cards-import-form').reset(); importResult = null; renderImport(); $('cards-import-dialog').showModal();
+});
+$('cards-import-file').addEventListener('change', () => { importResult = null; renderImport(); });
+for (const id of ['cards-import-cancel', 'cards-import-close']) $(id).addEventListener('click', () => { if (!inventory.state.busy) $('cards-import-dialog').close(); });
+// Dropping a file onto the zone fills the hidden input, as if it was picked.
+const importDrop = $('cards-import-drop');
+for (const type of ['dragenter', 'dragover']) importDrop.addEventListener(type, event => {
+  if (!event.dataTransfer?.types.includes('Files') || $('cards-import-file').disabled) return;
+  event.preventDefault(); importDrop.classList.add('dragging');
+});
+for (const type of ['dragleave', 'drop']) importDrop.addEventListener(type, () => importDrop.classList.remove('dragging'));
+importDrop.addEventListener('drop', event => {
+  if (!event.dataTransfer?.files.length || $('cards-import-file').disabled) return;
+  event.preventDefault();
+  const files = new DataTransfer(); files.items.add(event.dataTransfer.files[0]);
+  $('cards-import-file').files = files.files; importResult = null; renderImport();
+});
+$('cards-import-dialog').addEventListener('cancel', event => { if (inventory.state.busy) event.preventDefault(); });
+$('cards-import-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if ($('cards-import-confirm').disabled) return;
+  const file = $('cards-import-file').files[0];
+  const format = file.name.toLowerCase().split('.').pop();
+  if (['json', 'xlsx'].includes(format)) {
+    importResult = null;
+    const result = await inventory.importFile(file, format);
+    if (!result || !$('cards-import-dialog').open) return;
+    importResult = result;
+    if (!result.error) $('cards-import-form').reset();
+  } else importResult = {error: 'cards_import_format'};
+  renderImport();
+});
 $('cards-cancel').addEventListener('click', () => $('card-dialog').close());
 $('card-dialog-close').addEventListener('click', () => $('card-dialog').close());
 // Esc closes the dialog natively; block it while a save is in flight.
@@ -385,6 +445,7 @@ $('quantity-dialog').addEventListener('close', () => { quantityTarget = null; })
 export function clearCards() {
   exportController?.abort(); exportController = null; exportError = '';
   $('cards-export-dialog').close();
+  $('cards-import-dialog').close(); importResult = null;
   clearOfficial();
   filters = blankFilters(); $('cards-query').value = '';
   $('card-dialog').close(); $('cards-delete-dialog').close(); $('quantity-dialog').close(); inventory.clear();

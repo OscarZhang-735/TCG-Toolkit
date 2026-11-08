@@ -1,5 +1,6 @@
 """Private, manually maintained card inventory."""
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import is_unique_violation
@@ -10,13 +11,19 @@ import json
 from io import BytesIO
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
+from zipfile import BadZipFile, ZipFile
+from xml.etree.ElementTree import ParseError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
+from defusedxml.common import DefusedXmlException
+from starlette.concurrency import run_in_threadpool
 from xlsxwriter import Workbook
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from .auth.routes import current_user, write_guard
+from .auth.routes import current_user, require_trusted_origin, write_guard
 
 router = APIRouter(prefix='/api/cards')
 GAMES = {'ws': 'WS', 'ws_en': 'WS EN', 'ws en': 'WS EN', 'wsr': 'WSR', 'pm': 'PM', 'sev': 'SEV', 'sev_en': 'SEV EN', 'sev en': 'SEV EN', 'lycee': 'Lycee',
@@ -93,6 +100,9 @@ def listing(request: Request, user=Depends(current_user)):
 
 EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'notes',
                   'image_url', 'id', 'created_at', 'updated_at')
+XLSX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+IMPORT_LIMIT = 10 * 1024 * 1024
+REQUIRED_COLUMNS = {key for key, field in CardInput.model_fields.items() if field.is_required()}
 EXPORT_WIDTHS = {'game': 20, 'card_number': 20, 'rarity': 20, 'name': 36, 'quantity': 18,
                  'notes': 40, 'image_url': 40, 'id': 40, 'created_at': 20, 'updated_at': 20}
 # XLSX headings are for people; JSON keys stay stable so files remain machine-readable.
@@ -104,6 +114,10 @@ EXPORT_HEADINGS = {
               'quantity': '拥有量', 'notes': '备注', 'image_url': '图片地址', 'id': 'ID',
               'created_at': '创建时间', 'updated_at': '更新时间'},
 }
+
+# Import reads raw keys and every exported heading language, so any export file round-trips.
+HEADING_KEYS = {label.casefold(): key for labels in [{key: key for key in EXPORT_COLUMNS}, *EXPORT_HEADINGS.values()]
+                for key, label in labels.items() if key != 'sheet'}
 
 
 @router.get('/export')
@@ -147,8 +161,96 @@ def export_cards(request: Request, format: Literal['xlsx', 'json'],
                         raise HTTPException(422, detail='export_xlsx_text_too_long')
         sheet.autofilter(0, 0, len(items), len(columns) - 1)
     return Response(output.getvalue(),
-                    media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    media_type=XLSX_MEDIA_TYPE,
                     headers=headers)
+
+
+def xlsx_import_rows(content):
+    with ZipFile(BytesIO(content)) as archive:
+        if sum(entry.file_size for entry in archive.infolist()) > 64 * 1024 * 1024:
+            raise HTTPException(413, detail='cards_import_too_large')
+    workbook = load_workbook(BytesIO(content), read_only=True, keep_links=False)
+    try:
+        sheet = workbook.worksheets[0]
+        sheet.reset_dimensions()
+        rows = sheet.iter_rows(max_col=len(EXPORT_COLUMNS) + 1)
+        headings = [cell.value for cell in next(rows, ())]
+        while headings and headings[-1] is None:
+            headings.pop()
+        headers = [HEADING_KEYS.get(value.strip().casefold()) if isinstance(value, str) else None
+                   for value in headings]
+        if (any(not isinstance(key, str) or key not in EXPORT_COLUMNS for key in headers)
+                or len(set(headers)) != len(headers) or not REQUIRED_COLUMNS.issubset(headers)):
+            raise HTTPException(422, detail='cards_import_headers')
+        for line, cells in enumerate(rows, 2):
+            if not any(cell.value is not None for cell in cells):
+                continue
+            if any(cell.value is not None for cell in cells[len(headers):]):
+                raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line})
+            item = {}
+            for key, cell in zip(headers, cells):
+                if key not in CardInput.model_fields or cell.value is None:
+                    continue
+                if cell.data_type in ('f', 'e'):
+                    raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line})
+                value = cell.value
+                if key == 'quantity' and isinstance(value, str) and value.isascii() and value.isdecimal():
+                    value = int(value) if len(value) <= 16 else value
+                if key == 'card_number' and type(value) is int:
+                    value = str(value)
+                item[key] = value
+            yield line, item
+    finally:
+        workbook.close()
+
+
+def import_card_rows(content, format, store, user_id):
+    now = int(time.time())
+    try:
+        if format == 'json':
+            data = json.loads(content.decode('utf-8-sig'))
+            items = data.get('items') if isinstance(data, dict) else data
+            if not isinstance(items, list):
+                raise ValueError('Expected a list of cards')
+            rows = enumerate(items, 1)
+        else:
+            rows = xlsx_import_rows(content)
+        cards = []
+        for line, item in rows:
+            try:
+                body = CardInput.model_validate(item)
+                fields = values(body)
+                for value in fields.values():
+                    if isinstance(value, str):
+                        if '\0' in value:
+                            raise ValueError('NUL character')
+                        value.encode('utf-8')
+            except (ValidationError, ValueError):
+                raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line}) from None
+            cards.append(dict(id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **fields))
+    except (BadZipFile, InvalidFileException, ParseError, DefusedXmlException, KeyError, IndexError,
+            ValueError, TypeError, RecursionError, OSError):
+        raise HTTPException(422, detail='cards_import_invalid') from None
+    if not cards:
+        return {'imported': 0, 'skipped': 0}
+    statement = insert(OwnedCard).on_conflict_do_nothing(
+        index_elements=['user_id', 'game_key', 'number_key', 'rarity_key']).returning(OwnedCard.id)
+    with store.session() as db:
+        imported = len(db.scalars(statement, cards).all())
+    return {'imported': imported, 'skipped': len(cards) - imported}
+
+
+@router.post('/import', dependencies=[Depends(require_trusted_origin)])
+async def import_cards(request: Request, format: Literal['xlsx', 'json'], user=Depends(current_user)):
+    media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
+    if media_type != ('application/json' if format == 'json' else XLSX_MEDIA_TYPE):
+        raise HTTPException(415, detail='cards_import_format')
+    content = bytearray()
+    async for chunk in request.stream():
+        if len(content) + len(chunk) > IMPORT_LIMIT:
+            raise HTTPException(413, detail='cards_import_too_large')
+        content.extend(chunk)
+    return await run_in_threadpool(import_card_rows, content, format, request.app.state.auth.store, user['id'])
 
 
 @router.post('', status_code=201, dependencies=[Depends(write_guard)])

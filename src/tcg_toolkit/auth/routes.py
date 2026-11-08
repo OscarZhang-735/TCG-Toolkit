@@ -130,9 +130,13 @@ def current_user(request: Request):
     return user
 
 
-def write_guard(request: Request):
+def require_trusted_origin(request: Request):
     if request.headers.get("origin") not in request.app.state.auth_origins:
         raise HTTPException(403, detail="untrusted_origin")
+
+
+def write_guard(request: Request):
+    require_trusted_origin(request)
     if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
         raise HTTPException(415, detail="json_required")
 

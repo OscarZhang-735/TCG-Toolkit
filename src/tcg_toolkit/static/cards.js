@@ -65,5 +65,24 @@ export function createCards(onChange) {
       if (current === generation && error.name !== 'AbortError') {state.error = error.key || 'cards_failed'; state.duplicate = error.duplicate || '';}
     } finally {if (current === generation) {state.busy = false; onChange();}}
   }
-  return {state, clear, load, edit, save: () => mutate(), remove: id => mutate(id), activate(api) {clear(); request = api; return load();}};
+  async function importFile(file, format) {
+    if (state.busy || state.loading || !state.ready) return;
+    const current = generation;
+    state.busy = true; onChange();
+    try {
+      const type = format === 'json' ? 'application/json' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const response = await request(`/api/cards/import?format=${format}`, {method: 'POST', cache: 'no-store',
+        headers: {'Content-Type': type}, body: file, signal: controller.signal});
+      const result = await response.json();
+      if (current !== generation) return;
+      if (!response.ok) return {error: result.detail};
+      await load();
+      if (current === generation) return result;
+    } catch {
+      if (current === generation) return {error: 'cards_import_failed'};
+    } finally {
+      if (current === generation) {state.busy = false; onChange();}
+    }
+  }
+  return {state, clear, load, edit, importFile, save: () => mutate(), remove: id => mutate(id), activate(api) {clear(); request = api; return load();}};
 }

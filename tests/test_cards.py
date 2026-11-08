@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tcg_toolkit.auth.store import UserStore
+from tcg_toolkit.cards import XLSX_MEDIA_TYPE
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -83,6 +84,72 @@ def test_export_language_fields_and_games(client):
     assert client.get('/api/cards/export', params={'format': 'json', 'games': 'other'}).json() == {'items': []}
     for bad in [{'fields': 'password'}, {'language': 'fr'}]:
         assert client.get('/api/cards/export', params={'format': 'xlsx', **bad}).status_code == 422
+
+
+@pytest.mark.parametrize('format,media_type', [('json', 'application/json'), ('xlsx', XLSX_MEDIA_TYPE)])
+def test_import_exported_cards_into_current_account(client, format, media_type):
+    saved = client.post('/api/cards', json={**CARD, 'card_number': '00123',
+        'quantity': 9007199254740991, 'notes': '=1+1\n备注',
+        'image_url': 'https://example.com/card.png'}).json()
+    exported = client.get('/api/cards/export', params={'format': format}).content
+    login(client, 'bob')
+    path = f'/api/cards/import?format={format}'
+    headers = {'Content-Type': media_type}
+    response = client.post(path, content=exported, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == {'imported': 1, 'skipped': 0}
+    [imported] = client.get('/api/cards').json()['items']
+    assert imported['id'] != saved['id']
+    assert {key: imported[key] for key in CARD | {'image_url': ''}} == {
+        key: saved[key] for key in CARD | {'image_url': ''}}
+    client.put('/api/cards/' + imported['id'], json={**imported, 'quantity': 0})
+    assert client.post(path, content=exported, headers=headers).json() == {'imported': 0, 'skipped': 1}
+    assert client.get('/api/cards').json()['items'][0]['quantity'] == 0
+
+
+def test_import_rejects_invalid_rows_without_writing_any_cards(client):
+    path = '/api/cards/import?format=json'
+    response = client.post(path, json={'items': [CARD, {**CARD, 'name': ''}]})
+    assert response.status_code == 422
+    assert response.json()['detail'] == {'code': 'cards_import_row', 'row': 2}
+    assert client.get('/api/cards').json() == {'items': []}
+    assert client.post(path, json={'items': [CARD]}, headers={'Origin': 'https://evil.test'}).status_code == 403
+    client.headers.pop('Authorization')
+    assert client.post(path, json={'items': [CARD]}).status_code == 401
+
+
+@pytest.mark.parametrize('language', ['zh-CN', 'en'])
+def test_xlsx_import_reads_localized_headings(client, language):
+    client.post('/api/cards', json=CARD)
+    exported = client.get('/api/cards/export', params={'format': 'xlsx', 'language': language}).content
+    login(client, 'bob')
+    response = client.post('/api/cards/import?format=xlsx', content=exported, headers={'Content-Type': XLSX_MEDIA_TYPE})
+    assert response.json() == {'imported': 1, 'skipped': 0}
+    [row] = client.get('/api/cards').json()['items']
+    assert {key: row[key] for key in CARD} == {**CARD, 'game': 'WS'}
+
+
+def test_xlsx_import_rejects_unknown_headings_and_formulas(client):
+    from xlsxwriter import Workbook
+
+    path = '/api/cards/import?format=xlsx'
+    headers = {'Content-Type': XLSX_MEDIA_TYPE}
+    for heading in [['游戏', 'Number', 'rarity', '价格'], ['game', 'card_number', 'rarity', '名称', 'Name']]:
+        output = BytesIO()
+        with Workbook(output, {'in_memory': True}) as book:
+            book.add_worksheet().write_row(0, 0, heading)
+        response = client.post(path, content=output.getvalue(), headers=headers)
+        assert response.status_code == 422
+        assert response.json()['detail'] == 'cards_import_headers'
+    output = BytesIO()
+    with Workbook(output, {'in_memory': True}) as book:
+        sheet = book.add_worksheet()
+        sheet.write_row(0, 0, ['name', 'rarity', 'card_number', 'game'])
+        sheet.write_row(1, 0, ['=1+1', 'SR', 'ABC-001', 'WS'])
+    response = client.post(path, content=output.getvalue(), headers=headers)
+    assert response.status_code == 422
+    assert response.json()['detail'] == {'code': 'cards_import_row', 'row': 2}
+    assert client.get('/api/cards').json() == {'items': []}
 
 
 def login(client, name):
