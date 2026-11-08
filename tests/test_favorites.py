@@ -100,6 +100,24 @@ def test_refresh_exact_match_across_pages(client, monkeypatch, game):
     assert add(client, item) == response.json()
 
 
+def test_favorite_preserves_cart_condition_on_save_and_refresh(client, monkeypatch):
+    normal = replace(card(), cart={'gid': 56, 'ver': 'set', 'cid': '001', 'kizu': 0})
+    damaged = replace(normal, cart={**normal.cart, 'kizu': 1})
+    saved = add(client, damaged)
+    assert saved['item']['cart'] == damaged.cart
+
+    class Fake:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def iter_pages(self, keyword):
+            yield SearchPage([normal, replace(damaged, price=50)], keyword, 1, None)
+
+    monkeypatch.setitem(SEARCHERS, Game.WSR, Fake)
+    refreshed = client.post(f"/api/favorites/{saved['id']}/refresh", json={}).json()['item']
+    assert refreshed['cart'] == damaged.cart
+    assert refreshed['price'] == 50
+
+
 @pytest.mark.parametrize('failure,status', [('missing', 404), ('request', 502), ('parse', 502), ('timeout', 504), ('removed', 404)])
 def test_refresh_failures_preserve_snapshot(client, monkeypatch, failure, status):
     saved = add(client)

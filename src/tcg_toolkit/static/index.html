@@ -296,7 +296,7 @@
 <button id="favorites-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div id="favorites-filters"></div>
 <div class="panel table-panel" id="favorites-list">
-<div class="table-scroll"><table><thead><tr><th class="select-col"><span class="sr-only" data-i18n="favorite_select"></span></th><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="stock"></th><th class="numeric" data-i18n="cards_owned_column"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="favorites"></span></th></tr></thead><tbody id="favorites-rows"></tbody></table></div>
+<div class="table-scroll"><table><thead><tr><th class="select-col"><span class="sr-only" data-i18n="favorite_select"></span></th><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="stock"></th><th class="numeric" data-i18n="cards_owned_column"></th><th class="cart-col" data-i18n="cart_column"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="favorites"></span></th></tr></thead><tbody id="favorites-rows"></tbody></table></div>
 </div>
 <div id="favorites-grid" class="card-grid" hidden></div>
 <div id="favorites-empty" class="empty" hidden><i class="bi bi-star"></i><h3></h3></div>
@@ -502,6 +502,7 @@
 </div>
 </dialog>
 <div id="favorite-add-menu" class="favorite-add-menu" role="menu" aria-labelledby="favorite-add-title" hidden><p id="favorite-add-title" class="favorite-add-title" data-i18n="favorite_add_to_group"></p><div id="favorite-add-items"></div></div>
+<div id="page-notice" class="page-notice" role="alert" hidden><i class="bi bi-exclamation-triangle" aria-hidden="true"></i><span id="page-notice-text"></span><a id="page-notice-action" href="#account" data-i18n="notice_go_account"></a><button id="page-notice-close" type="button" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
 <p id="copy-status" class="sr-only" role="status" aria-live="polite"></p>
 </body>
 </html>

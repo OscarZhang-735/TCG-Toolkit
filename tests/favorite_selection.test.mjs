@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const favoritesSource = await readFile(new URL('favorites.js', base), 'utf8');
+const noticesModule = asModule(await readFile(new URL('notices.js', base), 'utf8'));
+const favoritesSource = (await readFile(new URL('favorites.js', base), 'utf8')).replace("'./notices.js'", JSON.stringify(noticesModule));
 const source = (await readFile(new URL('favorite-selection.js', base), 'utf8'))
   .replace("'./favorites.js'", JSON.stringify(asModule(favoritesSource)));
 const {createSelection} = await import(asModule(source));

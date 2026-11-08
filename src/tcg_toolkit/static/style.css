@@ -504,8 +504,7 @@ button.favorite-add-option:hover, button.favorite-add-option:focus-visible { bac
 #favorites-list.without-groups .group-col { display: none; }
 #favorites-details[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 /* Always level with the update time; a status note, if any, goes on the line below. */
-.fav-time, .fav-note { display: inline-flex; align-items: center; gap: 5px; }
-.fav-note { color: var(--color-text); font-weight: 500; }
+.fav-time { display: inline-flex; align-items: center; gap: 5px; }
 #favorites-retry { margin-bottom: 14px; }
 /* Favorite groups: pill tabs with counts; rename / delete apply to the selected custom group. */
 .group-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
@@ -790,10 +789,8 @@ button.cart-step { width: 28px; height: 28px; padding: 0; border: 0; border-radi
 button.cart-step:hover { background: var(--color-hover); border: 0; color: var(--color-text); }
 button.cart-step:disabled:hover { background: transparent; }
 .cart-qty { min-width: 26px; text-align: center; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.cart-note { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; font-size: 11px; color: var(--color-text); white-space: normal; }
 .card-cart { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .card-cart .cart-controls { align-items: flex-end; min-width: 0; }
-.card-cart .cart-note { justify-content: flex-end; text-align: right; }
 .card-cart-label { flex: none; font-size: 12px; line-height: 30px; color: var(--color-text-muted); }
 .cart-settings { display: flex; flex-direction: column; gap: 16px; padding: 20px; margin-bottom: 16px; }
 .cart-settings-head { display: flex; align-items: flex-start; gap: 14px; }
@@ -1135,3 +1132,27 @@ button.switch:hover .switch-track { filter: brightness(.95); }
   outline: 2px solid #8d8295;
   outline-offset: 3px;
 }
+/* Card feedback (notices.js): a dot left by an error; tooltip and tap show its text. */
+.has-dot { position: relative; }
+.card-image .fav-toggle.has-dot { position: absolute; }
+.notice-dot {
+  position: absolute; top: -3px; right: -3px; z-index: 4; width: 9px; height: 9px; border-radius: 50%;
+  background: #dc2626; box-shadow: 0 0 0 2px var(--color-surface); cursor: help;
+}
+/* A larger invisible target than the visible dot. */
+.notice-dot::before { content: ''; position: absolute; inset: -6px; }
+.notice-dot--warning { background: #f59e0b; }
+.cart-stepper.has-dot { border-color: #fca5a5; }
+
+/* One page-level notice for account problems that would otherwise repeat on every card. */
+.page-notice {
+  position: fixed; top: 16px; right: 16px; z-index: 50; display: flex; align-items: center; gap: 10px;
+  max-width: min(440px, calc(100vw - 32px)); padding: 10px 8px 10px 14px; font-size: 13px; color: #713f12;
+  background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+}
+.page-notice > .bi { flex: none; }
+.page-notice span { flex: 1; min-width: 0; }
+.page-notice a { flex: none; font-weight: 600; color: inherit; text-decoration: underline; white-space: nowrap; }
+.page-notice .icon-button { flex: none; width: 28px; height: 28px; color: inherit; }
+.page-notice .icon-button:hover { background: #fde68a; color: inherit; }
+@media (max-width: 700px) { .page-notice { top: auto; bottom: 16px; left: 16px; right: 16px; max-width: none; } }

@@ -1,3 +1,4 @@
+import {createMessages} from './notices.js';
 export const cardKey = item => JSON.stringify([item.game, item.product_url]);
 const errorKeys = {refresh_product_missing: 'favorite_missing', refresh_parse_error: 'favorite_parse',
   favorite_group_name_taken: 'favorite_group_name_taken', favorite_group_not_found: 'favorite_group_missing'};
@@ -10,15 +11,16 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
   if (signal.aborted) done();
 })) {
   let generation = 0, request, controller = new AbortController();
+  const messages = createMessages(onChange);
   // group is the selected group id on the favorites page; null shows every group.
-  const initial = () => ({records: [], groups: [], group: null, groupBusy: false, busy: new Set(), messages: new Map(),
+  const initial = () => ({records: [], groups: [], group: null, groupBusy: false, busy: new Set(), messages: messages.map,
     ready: false, error: '', running: false, done: 0, total: 0});
   const state = initial();
   const find = item => state.records.find(row => cardKey(row.item) === cardKey(item));
   const visible = () => state.group === null ? state.records : state.records.filter(row => row.group_id === state.group);
   function clear() {
     generation++; controller.abort(); controller = new AbortController();
-    Object.assign(state, initial());
+    messages.clear(); Object.assign(state, initial());
     onChange();
   }
   async function call(url, method, body) {
@@ -49,21 +51,21 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     if (!state.ready || state.busy.has(key)) return;
     const saved = find(item);
     if (refresh && !saved) return;
-    state.busy.add(key); state.messages.delete(key); onChange();
+    state.busy.add(key); messages.remove(key); onChange();
     let removedItem;
     try {
       const result = await call(saved ? `/api/favorites/${saved.id}${refresh ? '/refresh' : ''}` : '/api/favorites',
         saved && !refresh ? 'DELETE' : 'POST', saved ? {} : groupId ? {...item, group_id: groupId} : item);
       if (current !== generation) return;
       if (!saved) state.records.unshift(result);
-      else if (refresh) {state.records = state.records.map(row => row.id === saved.id ? result : row); state.messages.set(key, 'favorite_updated');}
+      else if (refresh) {state.records = state.records.map(row => row.id === saved.id ? result : row); messages.set(key, 'favorite_updated');}
       else {
         state.records = state.records.filter(row => row.id !== saved.id);
         removedItem = saved.item;
       }
     } catch (error) {
       if (current === generation && error.name !== 'AbortError') {
-        state.messages.set(key, error.key || 'favorite_failed');
+        messages.set(key, error.key || 'favorite_failed');
         if (error.key === 'favorite_group_missing') load();
       }
     } finally {
@@ -89,7 +91,7 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     const key = cardKey(item), current = generation, saved = find(item);
     if (!state.ready || !saved || state.busy.has(key)) return 'favorite_failed';
     if (saved.group_id === groupId) return '';
-    state.busy.add(key); state.messages.delete(key); onChange();
+    state.busy.add(key); messages.remove(key); onChange();
     try {
       const result = await call(`/api/favorites/${saved.id}/group`, 'PUT', {group_id: groupId});
       if (current === generation) state.records = state.records.map(row => row.id === saved.id ? result : row);
@@ -140,7 +142,7 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     if (state.running || (id !== null && !state.groups.some(group => group.id === id))) return;
     state.group = id; onChange();
   }
-  return {state, find, visible, clear, load, toggle: (item, groupId = null) => operate(item, false, groupId), refresh: item => operate(item, true), refreshAll,
+  return {state, bubbleStarted: item => messages.started(cardKey(item)), find, visible, clear, load, toggle: (item, groupId = null) => operate(item, false, groupId), refresh: item => operate(item, true), refreshAll,
     move, select, createGroup, renameGroup, deleteGroup,
     activate(api) {clear(); request = api; return load();}};
 }

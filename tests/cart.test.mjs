@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
-const source = await readFile(new URL('../src/tcg_toolkit/static/cart.js', import.meta.url), 'utf8');
+const noticesModule = 'data:text/javascript;base64,' + Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/notices.js', import.meta.url), 'utf8')).toString('base64');
+const source = (await readFile(new URL('../src/tcg_toolkit/static/cart.js', import.meta.url), 'utf8')).replace("'./notices.js'", JSON.stringify(noticesModule));
 const {cartTarget, cartErrorKey, createCart, parseQuantity, quantityRange, planQuantity} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 const target = {gid: 56, ver: 'OS01', cid: '10044', kizu: 0};
@@ -22,7 +23,7 @@ test('cart target prefers hidden fields and falls back to the product URL', () =
   assert.deepEqual(cartTarget({game: 'sev', product_url: 'https://yuyu-tei.jp/sell/sev/card/bp01/10238'}),
     {gid: 47, ver: 'bp01', cid: '10238', kizu: 0});
   assert.deepEqual(cartTarget({cart: {...target, kizu: 1}}), {...target, kizu: 1});
-  assert.deepEqual(cartTarget({game: 'lycee', product_url: 'https://yuyu-tei.jp/sell/lo/card/bd5.0/123'}),
+  assert.deepEqual(cartTarget({game: 'lycee', product_url: 'https://yuyu-tei.jp/sell/lo/card/bd5.0/123/'}),
     {gid: 34, ver: 'bd5.0', cid: '123', kizu: 0});
   assert.equal(cartTarget({game: 'ws', product_url: 'https://yuyu-tei.jp/sell/pm/card/a/1'}), null);
   assert.equal(cartTarget({game: 'ws', product_url: 'https://evil.example/sell/ws/card/a/1'}), null);
@@ -267,14 +268,14 @@ test('limit bubble keeps its start time across refresh and expires after the fad
     type: 'yuyutei_quantity_mismatch', requested_quantity: 1, before_quantity: 2, after_quantity: 2}}); }});
   const cart = createCart(client, () => {}, () => 'key');
   await cart.refresh(); await cart.increase(target);
-  const started = cart.warningStarted(target);
+  const started = cart.bubbleStarted(target);
   clock.tick(2000);
   await cart.refresh();
-  assert.equal(cart.warningStarted(target), started);
+  assert.equal(cart.bubbleStarted(target), started);
   assert.equal(cart.message(target), 'cart_limit_reached');
   clock.tick(300);
   assert.equal(cart.message(target), undefined);
-  assert.equal(cart.warningStarted(target), undefined);
+  assert.equal(cart.bubbleStarted(target), undefined);
 });
 
 test('a new warning gets its own two seconds and logout cancels expiration', async t => {
@@ -290,7 +291,7 @@ test('a new warning gets its own two seconds and logout cancels expiration', asy
   cart.clear(); const previous = renders;
   clock.tick(3000);
   assert.equal(renders, previous);
-  assert.equal(cart.warningStarted(target), undefined);
+  assert.equal(cart.bubbleStarted(target), undefined);
 });
 
 
@@ -304,3 +305,37 @@ function fakeWarningClock(t) {
   t.after(() => { globalThis.setTimeout = original.setTimeout; globalThis.clearTimeout = original.clearTimeout; Date.now = original.now; });
   return {tick(ms) { now += ms; for (const [id, task] of tasks) if (task.at <= now) { tasks.delete(id); task.callback(); } }};
 }
+
+test('handled outcomes fade with their bubble; errors stay as a dot until the next action', async t => {
+  const clock = fakeWarningClock(t);
+  let fail = {status: 504, detail: {type: 'yuyutei_timeout'}};
+  const client = fakeClient({add: async () => { if (fail) throw Object.assign(new Error('cart_request_failed'), fail); return {after_quantity: 3}; }});
+  const cart = createCart(client, () => {}, () => 'key');
+  await cart.refresh(); await cart.increase(target);
+  assert.equal(cart.message(target), 'cart_unverified');
+  clock.tick(2300);
+  assert.equal(cart.message(target), undefined);
+  fail = {status: 422, detail: {type: 'yuyutei_cart_rejected'}};
+  await cart.increase(target);
+  assert.equal(cart.message(target), 'cart_rejected'); assert.notEqual(cart.bubbleStarted(target), undefined);
+  clock.tick(2300);
+  assert.equal(cart.message(target), 'cart_rejected'); assert.equal(cart.bubbleStarted(target), undefined);
+  fail = null; await cart.increase(target);
+  assert.equal(cart.message(target), undefined);
+});
+
+test('credential problems become one page notice instead of a per-card message', async () => {
+  let fail = true;
+  const client = fakeClient({add: async () => {
+    if (fail) throw Object.assign(new Error('cart_request_failed'), {status: 401, detail: {type: 'yuyutei_credentials_rejected'}});
+    return {after_quantity: 3};
+  }});
+  const cart = createCart(client, () => {}, () => 'key');
+  await cart.refresh(); await cart.increase(target);
+  assert.equal(cart.state.notice, 'cart_credentials_rejected');
+  assert.equal(cart.message(target), undefined);
+  cart.dismissNotice(); assert.equal(cart.state.notice, '');
+  await cart.increase(target); assert.equal(cart.state.notice, 'cart_credentials_rejected');
+  fail = false; await cart.increase(target);
+  assert.equal(cart.state.notice, '');
+});
