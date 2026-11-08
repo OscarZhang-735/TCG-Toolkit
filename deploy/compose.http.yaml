@@ -55,6 +55,8 @@ services:
     networks: [database]
     restart: "no"
   db:
+    ports:
+      - "127.0.0.1:15432:5432"
     image: ${TCG_POSTGRES_IMAGE:-postgres:17-bookworm@sha256:839fbb5a4942a7758dd93e18b42ea5649807491a0545b5eeeb8f0b8bb11857a5}
     environment:
       POSTGRES_USER: postgres
@@ -69,7 +71,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./init-db.sh:/docker-entrypoint-initdb.d/10-app.sh:ro
-    networks: [database]
+    networks: [database, database-access]
     restart: unless-stopped
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$APP_DB_USER" -d "$$APP_DB_NAME"']
@@ -81,6 +83,7 @@ volumes:
   postgres-data:
     name: tcg-http-postgres-data
 networks:
+  database-access: {}
   database:
     internal: true
     ipam:

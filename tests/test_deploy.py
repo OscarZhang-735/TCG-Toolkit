@@ -31,6 +31,8 @@ def test_postgres_release_backup_and_recovery(tmp_path, monkeypatch, deploy_modu
 
     def fake_run(*args, output=None, **kwargs):
         calls.append(args)
+        if "run" in args: assert "--rm" in args
+        if "run" in args: assert "--rm" in args
         if "config" in args:
             return json.dumps({"services":{"web":{"environment":{"API_DOMAIN":"api.example.com"}},
                                             "db":{"image":"postgres:17@sha256:"+"a"*64}}})
@@ -81,6 +83,8 @@ def test_cross_engine_rollback_is_rejected_before_changes(tmp_path, monkeypatch,
     calls = []
     def fake_run(*args, output=None, **kwargs):
         calls.append(args)
+        if "run" in args: assert "--rm" in args
+        if "run" in args: assert "--rm" in args
         if "config" in args: return json.dumps({"services":{"web":{"environment":{"API_DOMAIN":"api.example.com"}}}})
         if "run" in args and args[-1] == "status":
             return json.dumps({"engine":"postgresql", "schema":1})
@@ -105,6 +109,8 @@ def test_first_ssh_cutover_backs_up_sqlite_and_keeps_cross_engine_boundary(
 
     def fake_run(*args, **kwargs):
         calls.append(args)
+        if "run" in args: assert "--rm" in args
+        if "run" in args: assert "--rm" in args
         if 'inspect' in args: return image
         if 'config' in args:
             return json.dumps({'services':{'web':{'environment':{'API_DOMAIN':'api.example.com'}},
