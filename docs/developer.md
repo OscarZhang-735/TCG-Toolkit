@@ -45,7 +45,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_TRUSTED_ORIGINS` | 允许登录的访问地址，多个用逗号分隔，不含路径 | 空（不允许登录） |
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
-| `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/proxy` |
+| `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
 | `PGHOST` / `PGPORT` | PostgreSQL 地址；Compose 内使用服务名 | `db` / `5432`（Compose） |
 | `PGDATABASE` / `PGUSER` / `PGPASSWORD` | 应用数据库、非超级用户角色及密码 | Compose 默认库和角色为 `tcg`；密码必填 |
 | `TCG_PG_ADMIN_PASSWORD` | PostgreSQL 初始化管理员密码，仅传给 db | 必填 |
@@ -454,7 +454,7 @@ Content-Type: application/json
 
 订阅独立于收藏夹，监控普通品相 `kizu=0`。所有接口需要 Bearer 登录；写入沿用可信 `Origin` 和 `Content-Type: application/json` 检查，响应均为 `Cache-Control: no-store`。
 
-网页目前只在收藏夹页面提供入口：每张已收藏卡牌的刷新按钮旁有铃铛按钮，前端状态由 `static/subscriptions.js` 管理，按游戏和去掉尾部 `/` 的链接与收藏匹配。没有有效通知邮箱时铃铛禁用，并在页面上提示前往用户中心；有效时提示中显示收件地址。绑定邮箱或设置通知邮箱后无需重新登录。已订阅卡牌显示最近检查时间，`last_error` 非空时提示上次检查失败。收藏夹筛选面板额外提供“订阅”筛选（全部／已订阅／未订阅）；共享筛选面板仅在传入 `isSubscribed` 时显示该项，搜索页不受影响。取消收藏已订阅卡牌时先取消订阅，取消订阅失败则保留收藏，避免留下网页无法管理的订阅。
+网页目前只在收藏夹页面提供入口：每张已收藏卡牌的刷新按钮旁有铃铛按钮，前端状态由 `static/subscriptions.js` 管理，按游戏和去掉尾部 `/` 的链接与收藏匹配。没有有效通知邮箱时铃铛禁用，并在页面上提示前往用户中心；有效时提示中显示收件地址。绑定邮箱或设置通知邮箱后无需重新登录。已订阅卡牌显示最近检查时间，`last_error` 非空时提示上次检查失败。收藏夹筛选面板额外提供“订阅”筛选（全部／已订阅／未订阅）；共享筛选面板仅在传入 `isSubscribed` 时显示该项，搜索页不受影响。取消收藏接口在同一个数据库事务中删除收藏和当前用户对应的订阅。匹配使用游戏和去掉尾部 `/` 的链接。任一步失败都会回滚。
 
 | 接口 | 请求与响应 |
 | --- | --- |
@@ -492,6 +492,16 @@ FROM subscriptions WHERE last_error IS NOT NULL;
 
 `subscription_runs.state` 为 `running/complete/failed`；`subscription_emails.state` 为 `pending/sent/failed/cancelled`。任务完成可以同时存在个别卡牌抓取错误，请结合订阅的 `last_error` 查看。日志包含有效时区、下一次执行时间、每轮唯一卡牌数、用户卡牌变化数、抓取失败数以及邮件投递状态，不输出 SMTP 密码。
 
+## 卡牌库导出
+
+卡牌库页的“导出全部”支持 XLSX 和 JSON，不受页面筛选影响。
+`GET /api/cards/export?format=xlsx|json` 使用现有 Bearer 登录，仅导出当前用户的全部卡牌，
+顺序与卡牌列表接口一致，响应为附件且禁止缓存。JSON 为 `{"items":[卡牌记录,…]}`，
+XLSX 的 `Cards` 工作表以字段名作为表头，包含游戏、卡号、稀有度、名称、数量、备注、图片 URL、
+记录 ID 和创建／更新时间（Unix 秒）。零数量记录也会导出；空库仍可下载。
+XLSX 文本不解析为公式，超过 15 位的数量以文本保留精度；文本超过单元格 32767 字符上限时
+返回 422 `export_xlsx_text_too_long`，页面提示改用 JSON。Web 安装依赖包含 XlsxWriter。
+
 ## WS 英文版卡牌库
 
 `WS EN` 是独立于 `WS` 的卡牌库品牌，接口标识及稀有度映射键为 `ws_en`。
@@ -500,4 +510,12 @@ FROM subscriptions WHERE last_error IS NOT NULL;
 候选列表显示前 5 条及总匹配数，可填入名称、稀有度和图片；徽章沿用 WS 图标。
 不接入游游亭价格搜索、收藏刷新或购物车。日英文卡牌独立存储、筛选和统计。
 
+本地前端在 `TCG_ALLOW_PROXY_SWITCH=true` 时默认关闭代理，使用浏览器 `localStorage` 的 `tcg.proxy-enabled` 保存上次选择，刷新页面或重新登录后恢复。偏好按浏览器站点保存，不按账户区分。关闭此配置、使用远程 API 前端或无法读取开关能力时，保持服务端默认代理模式，不采用或覆盖浏览器偏好；实际代理地址仍由 `TCG_SEARCH_PROXY_URL` 决定，显式为空时直连。后台订阅检查不受浏览器开关影响。
+
 游游亭购物车使用与搜索相同的代理开关。代理需支持方法、正文、Cookie、CSRF 请求头、状态码和 Set-Cookie 的透传（Lite-Proxy 协议）；不会在代理失败时回退直连或自动重试购物车写入。Cookie 仍按游游亭域名维护，并仅保留在当前操作内。当前默认代理入口为 HTTP，该传输段不加密。
+
+## 加密代理接口
+
+设置 `TCG_PROXY_KEY_FILE` 为 32 字节原始密钥文件路径后，代理使用 `/encrypted-proxy`。`TCG_SEARCH_PROXY_URL` 可填写服务根地址或 `/encrypted-proxy` 地址，不再支持旧 `/proxy`。启用代理必须配置密钥文件，否则请求失败且不会发送网络请求；代理关闭时仍直连。加密失败不会回退明文或自动重试。
+
+协议与 lite-proxy v1 客户端一致：HKDF-SHA256 派生请求／响应密钥，AES-GCM 加密目标 URL、请求头、正文和响应，并校验响应 request_id。密钥不应提交到仓库；容器使用时需只读挂载密钥，并将容器内路径传入该环境变量。外层 HTTP 仍可暴露代理地址、流量大小及时间，加密不对代理运营方隐藏内容。

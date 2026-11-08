@@ -1,7 +1,8 @@
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const source = await readFile(new URL('../src/tcg_toolkit/static/subscriptions.js', import.meta.url));
+const noticesModule = 'data:text/javascript;base64,' + Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/notices.js', import.meta.url), 'utf8')).toString('base64');
+const source = Buffer.from((await readFile(new URL('../src/tcg_toolkit/static/subscriptions.js', import.meta.url), 'utf8')).replace("'./notices.js'", JSON.stringify(noticesModule)));
 const {createSubscriptions, subscriptionKey} = await import(`data:text/javascript;base64,${source.toString('base64')}`);
 const item = {game: 'wsr', product_url: 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240/', name: 'Card'};
 const row = {id: 'one', item: {...item, product_url: 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240'}, checked_at: 1, last_error: null};
@@ -35,7 +36,7 @@ test('repeated clicks cannot duplicate requests', async () => {
 });
 
 test('server errors become per-card messages and keep state', async () => {
-  const cases = [[403, 'verified_email_required', 'subscription_email_required'], [504, 'product_timeout', 'subscription_timeout'],
+  const cases = [[504, 'product_timeout', 'subscription_timeout'],
     [502, 'product_unreadable', 'subscription_unreadable'], [422, [{msg: 'bad'}], 'subscription_unsupported'], [500, null, 'subscription_failed']];
   for (const [status, detail, key] of cases) {
     const model = createSubscriptions(() => {});
@@ -44,6 +45,20 @@ test('server errors become per-card messages and keep state', async () => {
     assert.equal(model.state.messages.get(subscriptionKey(item)), key);
     assert.deepEqual(model.state.records, []); assert.equal(model.state.busy.size, 0);
   }
+});
+
+test('a missing verified email is one page notice, not a per-card message', async () => {
+  const model = createSubscriptions(() => {});
+  let fail = true;
+  await model.activate(async (url, options) => options.method === 'GET' ? response({items: []})
+    : fail ? response({detail: 'verified_email_required'}, 403) : response(row));
+  assert.equal(await model.toggle(item), false);
+  assert.equal(model.state.notice, 'subscription_email_required');
+  assert.equal(model.state.messages.size, 0);
+  model.dismissNotice(); assert.equal(model.state.notice, '');
+  assert.equal(await model.toggle(item), false); fail = false;
+  assert.equal(await model.toggle(item), true);
+  assert.equal(model.state.notice, '');
 });
 
 test('remove succeeds when the subscription is already gone', async () => {
@@ -69,5 +84,16 @@ test('old responses cannot restore previous account data', async () => {
   await Promise.resolve();
   await model.activate(async () => response({items: []}));
   resolve({items: [row]}); await pending;
+  assert.deepEqual(model.state.records, []);
+});
+
+test('a pending load cannot restore a subscription removed with its favorite', async () => {
+  let resolve;
+  const model = createSubscriptions(() => {});
+  const pending = model.activate(() => new Promise(r => { resolve = r; }));
+  model.forget(item);
+  resolve(response({items: [row]}));
+  await pending;
+  assert.equal(model.state.ready, true);
   assert.deepEqual(model.state.records, []);
 });

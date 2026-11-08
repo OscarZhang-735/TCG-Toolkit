@@ -1,5 +1,6 @@
 // YuYu-Tei cart state for search results: per-product quantities, +1 / −1 actions.
 // The shop is the source of truth; every change is reported back by the server.
+import {createMessages, messageTier} from './notices.js';
 const GAME_IDS = {ws: 7, chaos: 8, pm: 11, lycee: 34, sev: 47, wsr: 56};
 const GAME_PATHS = {ws: 'ws', chaos: 'chaos', pm: 'pm', lycee: 'lo', sev: 'sev', wsr: 'wsr'};
 
@@ -9,7 +10,7 @@ export function cartTarget(item) {
   if (item.cart) return item.cart;
   try {
     const url = new URL(item.product_url);
-    const match = url.hostname === 'yuyu-tei.jp' && url.pathname.match(/^\/sell\/([A-Za-z0-9_-]+)\/card\/([A-Za-z0-9_.-]+)\/([0-9]+)$/);
+    const match = url.hostname === 'yuyu-tei.jp' && url.pathname.match(/^\/sell\/([A-Za-z0-9_-]+)\/card\/([A-Za-z0-9_.-]+)\/([0-9]+)\/?$/);
     if (match && match[1] === GAME_PATHS[item.game]) return {gid: GAME_IDS[item.game], ver: match[2], cid: match[3], kizu: 0};
   } catch { /* not a product URL */ }
   return null;
@@ -68,26 +69,14 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
   const onChange = () => { try { onView(); } catch (error) { console.error(error); } };
   // generation: signed-in user; reads: latest cart query (older replies are dropped).
   let generation = 0, reads = 0;
-  const warnings = new Map();
-  function clearWarning(key) {
-    const warning = warnings.get(key);
-    if (warning) clearTimeout(warning.timer);
-    warnings.delete(key);
-  }
-  function startWarning(key) {
-    clearWarning(key);
-    const warning = {started: Date.now()};
-    warning.timer = setTimeout(() => {
-      if (warnings.get(key) !== warning) return;
-      warnings.delete(key);
-      if (state.messages.get(key) === 'cart_limit_reached') state.messages.delete(key);
-      onChange();
-    }, 2300);
-    warning.timer.unref?.();
-    warnings.set(key, warning);
-  }
+  const messages = createMessages(onChange);
+  // notice: an account-level problem (credentials) shown once for the page, not per card.
   const state = {configured: false, loading: false, error: '', rows: [], totalQuantity: null,
-    subtotal: null, complete: true, busy: new Set(), messages: new Map()};
+    subtotal: null, complete: true, busy: new Set(), messages: messages.map, notice: ''};
+  function report(key, message) {
+    if (messageTier(message) === 'account') state.notice = message;
+    else messages.set(key, message);
+  }
   function apply(cart) {
     state.rows = cart.items; state.totalQuantity = cart.total_quantity;
     state.subtotal = cart.subtotal; state.complete = cart.complete;
@@ -97,9 +86,9 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
   }
   function clear({syncCredentials = false} = {}) {
     generation++;
-    for (const key of warnings.keys()) clearWarning(key);
+    messages.clear();
     Object.assign(state, {configured: false, loading: false, error: '', rows: [], totalQuantity: null,
-      subtotal: null, complete: true, busy: new Set(), messages: new Map()});
+      subtotal: null, complete: true, busy: new Set(), notice: ''});
     if (syncCredentials) state.configured = configured();
     onChange();
   }
@@ -121,18 +110,16 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
   async function operate(target, action) {
     const key = productKey(target), current = generation;
     if (state.busy.has(key)) return;
-    clearWarning(key);
-    state.busy.add(key); state.messages.delete(key); onChange();
+    state.busy.add(key); messages.remove(key); onChange();
     let resync = false;
     try {
       // An action returns true when its local result is incomplete and needs a re-read.
       resync = Boolean(await action());
       // This reply is newer than any query still in flight.
-      reads++; state.loading = false; state.error = '';
+      reads++; state.loading = false; state.error = ''; state.notice = '';
     } catch (error) {
       if (current !== generation || error.name === 'AbortError') return;
-      state.messages.set(key, cartErrorKey(error));
-      if (state.messages.get(key) === 'cart_limit_reached') startWarning(key);
+      report(key, cartErrorKey(error));
       // The outcome may differ from what we believe: read the real cart again.
       resync = error.status !== 422 && error.message !== 'yuyutei_credentials_missing';
     } finally {
@@ -196,7 +183,7 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
         : client.setQuantity({...target, type: limits.row.type}, value - limits.others).then(result => { apply(result.cart); }));
     }
     // The adjustment note outlives the operation's own message reset; errors take precedence.
-    if (note && !state.messages.has(key)) { state.messages.set(key, note); onChange(); }
+    if (note && !messages.has(key)) { messages.set(key, note); onChange(); }
     return value;
   }
   // Without a type, the normal row goes first; reserved rows are lowered once it is gone.
@@ -215,8 +202,9 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
       apply(result.cart);
     });
   }
-  return {state, refresh, clear, quantity, increase, decrease, remove, setTo, range,
+  return {state, refresh, clear, quantity, dismissNotice() { state.notice = ''; onChange(); }, increase, decrease, remove, setTo, range,
     isBusy: target => state.busy.has(productKey(target)),
-    warningStarted: target => warnings.get(productKey(target))?.started,
-    message: target => state.messages.get(productKey(target))};
+    // When this card's bubble started; undefined once the bubble is over.
+    bubbleStarted: target => messages.started(productKey(target)),
+    message: target => messages.get(productKey(target))};
 }

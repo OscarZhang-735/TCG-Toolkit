@@ -25,6 +25,7 @@ from .external import CurrencyClient, CurrencyConfigError, CurrencyRequestError,
 mimetypes.add_type('image/webp', '.webp')
 
 from .auth.routes import router as auth_router, current_user, initialize_auth
+from .auth.avatar import avatar_bucket, retry_avatar_cleanup
 from .favorites import router as favorites_router
 from .cards import router as cards_router
 from .official import router as official_router
@@ -40,12 +41,18 @@ async def lifespan(app):
     initialize_auth(app)
     store = app.state.auth.store
     worker = None
+    stop_avatar_cleanup = asyncio.Event()
+    avatar_worker = (asyncio.create_task(retry_avatar_cleanup(store, stop_avatar_cleanup))
+                     if avatar_bucket() else None)
     try:
         if os.getenv('TCG_SUBSCRIPTIONS_ENABLED', '').lower() == 'true':
             worker = SubscriptionWorker(store)
             worker.start()
         yield
     finally:
+        if avatar_worker is not None:
+            stop_avatar_cleanup.set()
+            await avatar_worker
         if worker is not None:
             await asyncio.to_thread(worker.stop)
         store.close()

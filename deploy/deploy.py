@@ -94,7 +94,7 @@ def main():
 
     def pg_schema(release):
         # The image owns schema inspection, including legacy PostgreSQL releases.
-        state = json.loads(compose(release, "run", "--no-deps", "-T", "migrate", "tcg-db", "status"))
+        state = json.loads(compose(release, "run", "--rm", "--no-deps", "-T", "migrate", "tcg-db", "status"))
         return int(state["schema"])
 
     config = json.loads(compose(target, "config", "--format", "json"))
@@ -134,7 +134,7 @@ def main():
         if before_engine == "sqlite" and pg_schema(target) != 0:
             raise RuntimeError("First PostgreSQL cutover requires an empty database; existing data was left untouched")
         # Explicitly run on every release; never reuse a previous completed migrate container.
-        compose(target, "run", "--no-deps", "-T", "migrate", "tcg-db", "migrate")
+        compose(target, "run", "--rm", "--no-deps", "-T", "migrate", "tcg-db", "migrate")
         target["schema"] = pg_schema(target)
         web_started = True
         compose(target, "up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "web")

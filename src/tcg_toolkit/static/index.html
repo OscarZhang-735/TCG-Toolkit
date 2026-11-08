@@ -66,9 +66,11 @@
 <main id="account-panel" hidden>
 <header><h1 data-i18n="auth_account"></h1></header>
 <section class="panel profile-card">
-<span class="avatar avatar-lg" id="account-avatar" aria-hidden="true"></span>
-<div class="profile-meta"><h2 id="account-username"></h2><p><i class="bi bi-calendar3"></i><span data-i18n="auth_created"></span><time id="account-created"></time></p></div>
+<button id="avatar-upload" type="button" class="avatar-button" aria-haspopup="dialog" data-i18n-aria-label="avatar_upload" data-i18n-title="avatar_hint"><span class="avatar avatar-lg" id="account-avatar" aria-hidden="true"></span><span class="avatar-edit" aria-hidden="true"><i id="avatar-upload-icon" class="bi bi-camera"></i></span></button>
+<input id="avatar-file" type="file" accept="image/jpeg,image/png,image/webp" hidden/>
+<div class="profile-meta"><div class="profile-name"><h2 id="account-username" dir="auto"></h2><button id="nickname-edit" type="button" class="icon-button" aria-haspopup="dialog" data-i18n-aria-label="nickname_edit" data-i18n-title="nickname_edit"><i class="bi bi-pencil" aria-hidden="true"></i></button></div><p id="account-login-name" hidden><span data-i18n="auth_username_label"></span><bdi id="account-login-username"></bdi></p><p><i class="bi bi-calendar3"></i><span data-i18n="auth_created"></span><time id="account-created"></time></p></div>
 <div class="profile-actions">
+<span id="avatar-status" role="status" aria-live="polite"></span>
 <button id="logout" type="button" class="secondary"><i class="bi bi-box-arrow-right"></i><span data-i18n="auth_logout"></span></button>
 <span id="account-status" role="alert"></span>
 </div>
@@ -196,7 +198,7 @@
 <section class="results">
 <div class="section-heading">
 <div class="heading-left"><h2 data-i18n="cards_list"></h2><span class="count" id="cards-count" hidden></span><span id="cards-status" role="status" aria-live="polite"></span></div>
-<div class="heading-actions"><button id="cards-add" type="button" class="compact" disabled><i class="bi bi-plus-lg"></i><span data-i18n="cards_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
+<div class="heading-actions"><button id="cards-import" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-upload" aria-hidden="true"></i><span data-i18n="cards_import"></span></button><button id="cards-export" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-download" aria-hidden="true"></i><span data-i18n="cards_export"></span></button><button id="cards-add" type="button" class="compact" disabled><i class="bi bi-plus-lg"></i><span data-i18n="cards_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
 <button id="cards-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div class="panel filters" id="cards-filters" hidden>
@@ -296,7 +298,7 @@
 <button id="favorites-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div id="favorites-filters"></div>
 <div class="panel table-panel" id="favorites-list">
-<div class="table-scroll"><table><thead><tr><th class="select-col"><span class="sr-only" data-i18n="favorite_select"></span></th><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="stock"></th><th class="numeric" data-i18n="cards_owned_column"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="favorites"></span></th></tr></thead><tbody id="favorites-rows"></tbody></table></div>
+<div class="table-scroll"><table><thead><tr><th class="select-col"><span class="sr-only" data-i18n="favorite_select"></span></th><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="stock"></th><th class="numeric" data-i18n="cards_owned_column"></th><th class="cart-col" data-i18n="cart_column"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="favorites"></span></th></tr></thead><tbody id="favorites-rows"></tbody></table></div>
 </div>
 <div id="favorites-grid" class="card-grid" hidden></div>
 <div id="favorites-empty" class="empty" hidden><i class="bi bi-star"></i><h3></h3></div>
@@ -387,6 +389,50 @@
 </div>
 </form>
 </dialog>
+<dialog id="cards-import-dialog" class="form-dialog import-dialog" aria-labelledby="cards-import-title">
+<form id="cards-import-form" novalidate>
+<div class="dialog-head"><h2 id="cards-import-title" data-i18n="cards_import_title"></h2><button type="button" id="cards-import-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<label class="import-drop" id="cards-import-drop">
+<input id="cards-import-file" type="file" accept=".json,.xlsx" aria-describedby="cards-import-hint"/>
+<i class="bi bi-file-earmark-arrow-up" id="cards-import-icon" aria-hidden="true"></i>
+<span class="import-drop-text"><span class="import-drop-title" id="cards-import-name" data-i18n="cards_import_choose"></span><span class="import-drop-note" data-i18n="cards_import_types"></span></span>
+</label>
+<p id="cards-import-hint" class="field-hint" data-i18n="cards_import_hint"></p>
+<p id="cards-import-status" class="import-result" role="status" aria-live="polite"></p>
+<p id="cards-import-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="cards-import-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="cards-import-confirm" type="submit"><i class="bi bi-upload" aria-hidden="true"></i><span data-i18n="cards_import"></span></button>
+</div>
+</form>
+</dialog>
+<dialog id="cards-export-dialog" class="form-dialog export-dialog" aria-labelledby="cards-export-title">
+<form id="cards-export-form" novalidate>
+<div class="dialog-head"><h2 id="cards-export-title" data-i18n="cards_export_title"></h2><button type="button" id="cards-export-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<fieldset class="export-group"><legend data-i18n="cards_export_format"></legend>
+<div class="chips" id="cards-export-format">
+<label class="chip"><input type="radio" name="export-format" value="xlsx" checked/><i class="bi bi-check-lg"></i><span data-i18n="cards_export_xlsx"></span></label>
+<label class="chip"><input type="radio" name="export-format" value="json"/><i class="bi bi-check-lg"></i><span data-i18n="cards_export_json"></span></label>
+</div></fieldset>
+<fieldset class="export-group" id="cards-export-language-group"><legend data-i18n="cards_export_language"></legend>
+<div class="chips">
+<label class="chip"><input type="radio" name="export-language" value="zh-CN"/><i class="bi bi-check-lg"></i><span>中文</span></label>
+<label class="chip"><input type="radio" name="export-language" value="en"/><i class="bi bi-check-lg"></i><span>English</span></label>
+<label class="chip"><input type="radio" name="export-language" value="keys"/><i class="bi bi-check-lg"></i><span data-i18n="cards_export_language_keys"></span></label>
+</div>
+<p class="field-hint" id="cards-export-language-hint" data-i18n="cards_export_language_hint"></p></fieldset>
+<fieldset class="export-group"><legend><span data-i18n="cards_export_games"></span><button type="button" class="text-button" id="cards-export-games-all" data-i18n="cards_export_select_all"></button></legend>
+<div class="chips" id="cards-export-games"></div></fieldset>
+<fieldset class="export-group"><legend><span data-i18n="cards_export_fields"></span><button type="button" class="text-button" id="cards-export-fields-all" data-i18n="cards_export_select_all"></button></legend>
+<div class="chips" id="cards-export-fields"></div></fieldset>
+<p class="export-summary" id="cards-export-summary" aria-live="polite"></p>
+<p id="cards-export-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="cards-export-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="cards-export-confirm" type="submit"><i class="bi bi-download" aria-hidden="true"></i><span data-i18n="cards_export_download"></span></button>
+</div>
+</form>
+</dialog>
 <dialog id="cards-delete-dialog" class="form-dialog confirm-dialog" aria-labelledby="cards-delete-title" aria-describedby="cards-delete-message">
 <div class="dialog-head"><h2 id="cards-delete-title" data-i18n="cards_delete"></h2></div>
 <p id="cards-delete-message"></p>
@@ -443,6 +489,28 @@
 </div>
 </form>
 </dialog>
+<dialog id="nickname-dialog" class="form-dialog nickname-dialog" aria-labelledby="nickname-title">
+<form id="nickname-form">
+<div class="dialog-head"><h2 id="nickname-title" data-i18n="nickname_edit"></h2><button type="button" id="nickname-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<label class="field"><span data-i18n="nickname_label"></span><input id="nickname-input" type="text" dir="auto" autocomplete="nickname" aria-describedby="nickname-hint" autofocus/></label>
+<p id="nickname-hint" class="field-hint" data-i18n="nickname_hint"></p>
+<p id="nickname-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions"><button id="nickname-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button><button id="nickname-save" type="submit" data-i18n="nickname_save"></button></div>
+</form>
+</dialog>
+<dialog id="avatar-crop-dialog" class="form-dialog avatar-crop-dialog" aria-labelledby="avatar-crop-title">
+<form id="avatar-crop-form" novalidate>
+<div class="dialog-head"><h2 id="avatar-crop-title" data-i18n="avatar_crop_title"></h2><button type="button" id="avatar-crop-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<div id="avatar-crop-stage" class="avatar-crop-stage" tabindex="0" role="group" data-i18n-aria-label="avatar_crop_area" aria-describedby="avatar-crop-hint"><canvas id="avatar-crop-canvas"></canvas></div>
+<p id="avatar-crop-hint" class="sr-only" data-i18n="avatar_crop_hint"></p>
+<div class="avatar-zoom"><i class="bi bi-zoom-out" aria-hidden="true"></i><input id="avatar-crop-zoom" type="range" min="1" max="4" step="0.01" value="1" data-i18n-aria-label="avatar_zoom"/><i class="bi bi-zoom-in" aria-hidden="true"></i></div>
+<p id="avatar-crop-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="avatar-crop-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="avatar-crop-confirm" type="submit"><i class="bi bi-check-lg" aria-hidden="true"></i><span id="avatar-crop-confirm-label" data-i18n="avatar_crop_confirm"></span></button>
+</div>
+</form>
+</dialog>
 <dialog id="image-dialog" class="image-dialog" aria-labelledby="preview-name">
 <button type="button" id="preview-close" class="icon-button preview-close" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button>
 <figure><div class="preview-frame"><img id="preview-image" alt=""/><i class="bi bi-arrow-repeat spin preview-spinner" aria-hidden="true"></i></div>
@@ -458,6 +526,7 @@
 </div>
 </dialog>
 <div id="favorite-add-menu" class="favorite-add-menu" role="menu" aria-labelledby="favorite-add-title" hidden><p id="favorite-add-title" class="favorite-add-title" data-i18n="favorite_add_to_group"></p><div id="favorite-add-items"></div></div>
+<div id="page-notice" class="page-notice" role="alert" hidden><i class="bi bi-exclamation-triangle" aria-hidden="true"></i><span id="page-notice-text"></span><a id="page-notice-action" href="#account" data-i18n="notice_go_account"></a><button id="page-notice-close" type="button" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
 <p id="copy-status" class="sr-only" role="status" aria-live="polite"></p>
 </body>
 </html>

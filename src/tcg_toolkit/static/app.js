@@ -17,6 +17,8 @@ import {createCart, cartTarget} from './cart.js';
 import {bindCartSettings} from './cart-settings.js';
 import {cartStepper, createCartPage} from './cart-page.js';
 import {createProductDetails} from './product-details.js';
+import {showFeedback, markDot} from './feedback.js';
+import {messageTier} from './notices.js';
 import {createCartStock} from './cart-stock.js';
 const $ = id => document.getElementById(id);
 const checked = name => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(el => el.value);
@@ -63,14 +65,27 @@ const proxySettings = createProxySettings();
 // Effective subscription recipient (custom notification email or verified account email).
 let userId = null, requestAPI = fetch, notificationEmail = null;
 let history = [];
-const favorites = createFavorites(() => {render(); renderFavorites();});
+const favorites = createFavorites(removedItem => {
+  if (removedItem) subscriptions.forget(removedItem);
+  render(); renderFavorites();
+});
 const favoriteGroups = bindFavoriteGroups(favorites);
-const subscriptions = createSubscriptions(() => {render(); renderFavorites();});
+const subscriptions = createSubscriptions(() => {render(); renderFavorites(); renderNotice();});
 const selection = createSelection(favorites, subscriptions, () => renderFavorites());
 let cartPage = null;
 const cartStock = createCartStock(() => cartPage?.render());
 const productDetails = createProductDetails(() => cartPage?.render());
-const cart = createCart(yuyuteiClient, () => {render(); renderCartSummary(); cartPage?.render();});
+const cart = createCart(yuyuteiClient, () => {render(); renderFavorites(); renderCartSummary(); cartPage?.render(); renderNotice();});
+// Account-level problems (credentials, notification email) would hit every card the same way,
+// so they appear once, here, until dismissed or the next successful request.
+function renderNotice() {
+  const notice = cart.state.notice || subscriptions.state.notice;
+  $('page-notice').hidden = !notice || location.hash === '#account';
+  $('page-notice-text').textContent = notice ? t(notice) : '';
+}
+const dismissNotice = () => { cart.dismissNotice(); subscriptions.dismissNotice(); };
+$('page-notice-close').addEventListener('click', dismissNotice);
+$('page-notice-action').addEventListener('click', dismissNotice);
 const cartSettings = bindCartSettings(yuyuteiClient, cart);
 function renderCartSummary() {
   const state = cart.state, box = $('cart-summary');
@@ -200,12 +215,10 @@ function favoriteToggle(item) {
   button.setAttribute('aria-pressed', String(Boolean(saved)));
   button.setAttribute('aria-label', t(subscribed ? 'favorite_remove_subscribed' : saved ? 'favorite_remove' : 'favorite_add')); button.title = button.getAttribute('aria-label');
   button.disabled = !favorites.state.ready || busy;
-  // Subscriptions are only reachable from favorites, so unfavoriting must not leave one behind.
-  button.addEventListener('click', async () => {
-    if (subscribed && !await subscriptions.remove(item)) return;
-    favorites.toggle(item);
-  });
+  button.addEventListener('click', () => favorites.toggle(item));
   if (!saved) favoriteGroups.attachAddMenu(button, item);
+  const message = favorites.state.messages.get(cardKey(item));
+  if (message && messageTier(message) === 'error') markDot(button, t(message));
   return button;
 }
 function subscriptionToggle(item) {
@@ -218,6 +231,9 @@ function subscriptionToggle(item) {
   button.setAttribute('aria-label', t(label)); button.title = button.getAttribute('aria-label');
   button.disabled = !subscriptions.state.ready || busy || favorites.state.busy.has(cardKey(item)) || (!saved && !notificationEmail);
   button.addEventListener('click', () => subscriptions.toggle(item));
+  const message = subscriptions.state.messages.get(subscriptionKey(item));
+  if (message && !busy) markDot(button, t(message));
+  else if (saved?.last_error && !busy) markDot(button, t('subscription_check_failed'), {tone: 'warning'});
   return button;
 }
 // Refresh and subscribe act on saved cards, so they only appear on the favorites page.
@@ -253,42 +269,36 @@ function groupTag(item) {
   const tag = el('span', 'group-tag', group.name); tag.title = group.name;
   return tag;
 }
-// Detail times plus status notes; notes show everywhere, times only on the favorites page.
+// Update and check times, shown only on the favorites page while details are on.
 function favoriteMeta(item) {
   const saved = favorites.find(item);
-  // A successful refresh shows through the new update time; only problems get a note.
-  const reported = favorites.state.messages.get(cardKey(item));
-  const onPage = saved && location.hash === '#favorites';
-  const subscribed = onPage && subscriptions.find(item);
-  const messages = [reported === 'favorite_updated' ? '' : reported,
-    onPage && subscriptions.state.messages.get(subscriptionKey(item)),
-    subscribed?.last_error && 'subscription_check_failed'].filter(Boolean);
-  const details = onPage && showDetails;
-  if (!details && !messages.length) return null;
+  if (!saved || location.hash !== '#favorites' || !showDetails) return null;
+  const subscribed = subscriptions.find(item);
   const box = el('div', 'fav-meta');
   const when = seconds => new Date(seconds * 1000).toLocaleString(getLanguage(), {dateStyle: 'short', timeStyle: 'short'});
-  if (details) {
-    const time = saved.refreshed_at ? when(saved.refreshed_at) : t('favorite_never');
-    const stamp = el('span', 'fav-time'); stamp.append(icon('bi-clock'), t('favorite_time', {time}));
-    box.append(stamp);
-  }
-  if (details) {
-    const time = subscribed ? when(subscribed.checked_at) : t('subscription_none');
-    const stamp = el('span', 'fav-time'); stamp.append(icon('bi-bell'), t('subscription_checked', {time}));
-    box.append(stamp);
-  }
-  for (const message of messages) {
-    const note = el('span', 'fav-note'); note.setAttribute('role', 'status');
-    note.append(icon('bi-exclamation-circle'), t(message));
-    box.append(note);
-  }
+  const refreshed = el('span', 'fav-time');
+  refreshed.append(icon('bi-clock'), t('favorite_time', {time: saved.refreshed_at ? when(saved.refreshed_at) : t('favorite_never')}));
+  const checked = el('span', 'fav-time');
+  checked.append(icon('bi-bell'), t('subscription_checked', {time: subscribed ? when(subscribed.checked_at) : t('subscription_none')}));
+  box.append(refreshed, checked);
   return box;
+}
+// Fresh favorite / subscription messages as a bubble on the card; errors also leave a dot
+// on the star or bell (see favoriteToggle / subscriptionToggle). A successful refresh shows
+// through its new update time instead.
+function favoriteBubbles(item, anchor) {
+  const reported = favorites.state.messages.get(cardKey(item));
+  if (reported && reported !== 'favorite_updated')
+    showFeedback(reported, t(reported), {anchor, control: null, started: favorites.bubbleStarted(item)});
+  const subscribed = location.hash === '#favorites' && subscriptions.state.messages.get(subscriptionKey(item));
+  if (subscribed) showFeedback(subscribed, t(subscribed), {anchor, control: null, started: subscriptions.bubbleStarted(item)});
 }
 function favoriteCell(item) {
   const box = el('div', 'favorite-controls'), actions = el('div', 'fav-actions');
   actions.append(favoriteToggle(item), ...favoritePageActions(item));
   box.append(actions);
   const meta = favoriteMeta(item); if (meta) box.append(meta);
+  favoriteBubbles(item, box);
   return box;
 }
 // Checkbox for multi-select; only shown while selecting (CSS hides it otherwise).
@@ -330,8 +340,8 @@ function renderFavorites() {
   // Without any groups the group column would only hold dashes.
   $('favorites-list').classList.toggle('without-groups', !state.groups.length);
   favoriteFilters.element.hidden = !rows.length;
-  $('favorites-rows').replaceChildren(...(view === 'list' ? matches.map(item => tableRow(item)) : []));
-  $('favorites-grid').replaceChildren(...(view === 'grid' ? matches.map(item => gridCard(item)) : []));
+  $('favorites-rows').replaceChildren(...(view === 'list' ? matches.map(item => tableRow(item, true)) : []));
+  $('favorites-grid').replaceChildren(...(view === 'grid' ? matches.map(item => gridCard(item, true)) : []));
   $('favorites-list').hidden = view !== 'list' || !matches.length;
   $('favorites-grid').hidden = view !== 'grid' || !matches.length;
   $('favorites-empty').hidden = !state.ready || matches.length > 0;
@@ -374,38 +384,40 @@ $('favorites-retry').addEventListener('click', () => {
   if (subscriptions.state.error) subscriptions.load();
 });
 window.addEventListener('hashchange', () => {
-  render(); renderFavorites();
+  render(); renderFavorites(); renderNotice();
   // Each visit reads the shop again: the cart may have changed on YuYu-Tei itself.
   if (location.hash === '#cart' && userId) cart.refresh();
 });
 document.addEventListener('inventorychange', () => {render(); renderFavorites();});
-function tableRow(item, withCart = false) {
+function tableRow(item, inFavorites = false) {
   const row = document.createElement('tr');
   const cell = (child, className = '') => {const td = el('td', className); td.append(child); row.append(td);};
-  if (!withCart) { cell(selectBox(item), 'select-col'); row.classList.toggle('selected', selection.state.keys.has(cardKey(item))); }
+  if (inFavorites) { cell(selectBox(item), 'select-col'); row.classList.toggle('selected', selection.state.keys.has(cardKey(item))); }
   const product = el('div', 'product-summary'); product.append(cardImage(item), cardLink(item));
   cell(el('span', 'game-tag', gameLabel(item.game))); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
   const owned = ownedQuantity(item);
   cell(priceDisplay(item), 'numeric'); cell(stockBadge(item));
   cell(owned ? owned.toLocaleString(getLanguage()) : '—', `numeric owned-cell${owned ? '' : ' muted'}`);
-  if (withCart) cell(cartControls(item), 'cart-col');
-  else cell(groupTag(item) ?? el('span', 'muted', '—'), 'group-col');
+  cell(cartControls(item), 'cart-col');
+  if (inFavorites) cell(groupTag(item) ?? el('span', 'muted', '—'), 'group-col');
   cell(favoriteCell(item), 'action-col');
   return row;
 }
-function gridCard(item, withCart = false) {
+function gridCard(item, inFavorites = false) {
   const card = el('article', `card ${item.stock_status}`);
   const tags = el('div', 'card-tags'); tags.append(el('span', 'game-tag', gameLabel(item.game)), rarityBadge(item));
   const top = el('div', 'card-top'); top.append(tags, numberButton(item.card_number));
   const bottom = el('div', 'card-bottom'); bottom.append(priceDisplay(item), stockBadge(item));
   const image = cardImage(item); image.append(favoriteToggle(item));
-  if (!withCart && selection.state.active) {
+  if (inFavorites && selection.state.active) {
     image.append(selectBox(item)); card.classList.toggle('selected', selection.state.keys.has(cardKey(item)));
   }
   const owned = ownedQuantity(item);
   if (owned) { const badge = el('span', 'owned-badge'); badge.append(icon('bi-collection'), t('cards_owned_badge', {quantity: owned.toLocaleString(getLanguage())})); image.append(badge); }
   card.append(top, image, cardLink(item, 'card-name'), bottom);
-  if (withCart) { const row = el('div', 'card-cart'); row.append(el('span', 'card-cart-label', t('cart_column')), cartControls(item)); card.append(row); }
+  const cartRow = el('div', 'card-cart');
+  cartRow.append(el('span', 'card-cart-label', t('cart_column')), cartControls(item));
+  card.append(cartRow);
   const meta = favoriteMeta(item); if (meta) card.append(meta);
   // Favorites page footer: card actions on the left, its group in the bottom-right corner.
   const actions = favoritePageActions(item);
@@ -413,6 +425,7 @@ function gridCard(item, withCart = false) {
     const foot = el('div', 'card-foot'), box = el('div', 'fav-actions');
     box.append(...actions); foot.append(box); const tag = groupTag(item); if (tag) foot.append(tag); card.append(foot);
   }
+  favoriteBubbles(item, card);
   return card;
 }
 function render() {
@@ -421,7 +434,7 @@ function render() {
   $('counts').title = t('counts_hint', {matching: matches.length.toLocaleString(getLanguage()), loaded: items.length.toLocaleString(getLanguage())});
   const shown = matches.slice(0, limit);
   const fragment = document.createDocumentFragment();
-  fragment.append(...shown.map(item => view === 'grid' ? gridCard(item, true) : tableRow(item, true)));
+  fragment.append(...shown.map(item => view === 'grid' ? gridCard(item) : tableRow(item)));
   $('rows').replaceChildren(...(view === 'list' ? [fragment] : []));
   $('grid-view').replaceChildren(...(view === 'grid' ? [fragment] : []));
   $('list-view').hidden = view !== 'list' || !matches.length;
@@ -479,7 +492,7 @@ function renderErrors() {
 }
 function refreshLanguage() {
   applyLanguage(document); $('language').value = getLanguage();
-  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render();
+  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); renderNotice();
 }
 $('language').addEventListener('change', () => {setLanguage($('language').value); refreshLanguage();});
 $('detail-cancel').addEventListener('click', () => $('detail-dialog').close());

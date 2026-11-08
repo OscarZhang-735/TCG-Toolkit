@@ -11,6 +11,7 @@ services:
     image: ${TCG_IMAGE:-tcg-toolkit:local}
     environment:
       <<: *database-env
+      TCG_AVATAR_COS_URL: "${TCG_AVATAR_COS_URL:-}"
       TCG_SMTP_HOST: "${TCG_SMTP_HOST:-}"
       TCG_SMTP_PORT: "${TCG_SMTP_PORT:-}"
       TCG_SMTP_USERNAME: "${TCG_SMTP_USERNAME:-}"
@@ -23,7 +24,7 @@ services:
       TZ: "${TZ:?Set TZ to the host IANA timezone, e.g. America/Toronto}"
       TCG_ALLOW_PROXY_SWITCH: "${TCG_ALLOW_PROXY_SWITCH:-true}"
       RAPIDAPI_KEY: "${RAPIDAPI_KEY:-}"
-      TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/proxy}"
+      TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/encrypted-proxy}"
       TCG_TRUSTED_ORIGINS: "${TCG_TRUSTED_ORIGINS:-}"
       FORWARDED_ALLOW_IPS: "${TCG_PROXY_IPS:-127.0.0.1}"
     ports:
@@ -56,6 +57,8 @@ services:
     networks: [database]
     restart: "no"
   db:
+    ports:
+      - "127.0.0.1:15432:5432"
     image: ${TCG_POSTGRES_IMAGE:-postgres:17-bookworm@sha256:839fbb5a4942a7758dd93e18b42ea5649807491a0545b5eeeb8f0b8bb11857a5}
     environment:
       POSTGRES_USER: postgres
@@ -70,7 +73,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./deploy/init-db.sh:/docker-entrypoint-initdb.d/10-app.sh:ro
-    networks: [database]
+    networks: [database, database-access]
     restart: unless-stopped
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$APP_DB_USER" -d "$$APP_DB_NAME"']
@@ -81,6 +84,7 @@ services:
 volumes:
   postgres-data:
 networks:
+  database-access: {}
   database:
     internal: true
     ipam:

@@ -4,7 +4,7 @@ import {t, getLanguage} from './i18n.js';
 import {cardImage, rarityBadge} from './card-view.js';
 import {productKey, parseQuantity} from './cart.js';
 import {numberButton} from './copy-number.js';
-import {showBubble} from './bubble.js';
+import {showFeedback} from './feedback.js';
 const $ = id => document.getElementById(id);
 const el = (tag, className = '', text = '') => {const node = document.createElement(tag); node.className = className; node.textContent = text; return node;};
 const icon = name => el('i', `bi ${name}`);
@@ -62,16 +62,12 @@ export function cartStepper(cart, target, {quantity, onIncrease, onDecrease, onS
   stepper.append(button('bi-dash-lg', 'cart_decrease', pending || !quantity || !canDecrease, onDecrease), count,
     button('bi-plus-lg', increaseKey, pending || !canIncrease, onIncrease));
   box.append(stepper);
+  // No line of text under the stepper: a bubble while fresh, then a dot if it was an error.
   const message = cart.message(target);
   if (message) {
     const {key, params} = typeof message === 'string' ? {key: message, params: {}} : message;
-    const warning = key === 'cart_limit_reached';
     const text = t(key, Object.fromEntries(Object.entries(params).map(([k, v]) => [k, number(v)])));
-    if (warning) showBubble(box, text, {started: cart.warningStarted(target)});
-    else {
-      const note = el('span', 'cart-note'); note.setAttribute('role', 'status');
-      note.append(icon('bi-exclamation-circle'), text); box.append(note);
-    }
+    showFeedback(message, text, {anchor: box, control: stepper, started: cart.bubbleStarted(target)});
   }
   return box;
 }

@@ -56,9 +56,7 @@ export function createSelection(favorites, subscriptions, onChange, pause = () =
     await favorites.refresh(row.item);
     return favorites.state.messages.get(cardKey(row.item)) === 'favorite_updated';
   }, {keep: true, gap: true});
-  // Same rule as the star: a subscription must not outlive its favorite.
   const remove = () => run(async row => {
-    if (subscriptions.find(row.item) && !await subscriptions.remove(row.item)) return false;
     await favorites.toggle(row.item);
     return !favorites.find(row.item);
   });

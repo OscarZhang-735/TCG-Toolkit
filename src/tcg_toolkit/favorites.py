@@ -4,10 +4,10 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
-from .db_models import Favorite, FavoriteGroup, User
+from .db_models import Favorite, FavoriteGroup, Subscription, User
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .auth.routes import current_user, write_guard
 from .models import Game, StockStatus
 from .errors import SearchRequestError, SearchParseError
+from .yuyutei_cart import CartTarget
 
 
 router = APIRouter(prefix='/api/favorites')
@@ -50,6 +51,7 @@ class CardSnapshot(BaseModel):
 
 class FavoriteInput(CardSnapshot):
     group_id: str | None = Field(default=None, min_length=1)
+    cart: CartTarget | None = None
 
 
 class GroupName(BaseModel):
@@ -164,9 +166,10 @@ def add(body: FavoriteInput, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
         lock_user(db, user['id'])
         group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
+        excluded = {'group_id'} if body.cart is not None else {'group_id', 'cart'}
         db.execute(insert(Favorite).values(
             id=str(uuid.uuid4()), user_id=user['id'], group_id=group_id, game=body.game.value,
-            product_url=body.product_url, snapshot=body.model_dump_json(exclude={'group_id'}), created_at=int(time.time())
+            product_url=body.product_url, snapshot=body.model_dump_json(exclude=excluded), created_at=int(time.time())
         ).on_conflict_do_nothing(index_elements=[Favorite.user_id, Favorite.game, Favorite.product_url]))
         row = db.scalar(select(Favorite).where(Favorite.user_id == user['id'],
                         Favorite.game == body.game.value, Favorite.product_url == body.product_url))
@@ -186,7 +189,13 @@ def move(favorite_id: str, body: GroupTarget, request: Request, user=Depends(cur
 @router.delete('/{favorite_id}', status_code=204, dependencies=[Depends(write_guard)])
 def remove(favorite_id: str, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
-        db.delete(owned(db, user['id'], favorite_id, lock=True))
+        row = owned(db, user['id'], favorite_id, lock=True)
+        db.execute(delete(Subscription).where(
+            Subscription.user_id == row.user_id,
+            Subscription.game == row.game,
+            Subscription.product_url == row.product_url.rstrip('/'),
+        ))
+        db.delete(row)
 
 
 @router.post('/{favorite_id}/refresh', dependencies=[Depends(write_guard)])
@@ -194,11 +203,13 @@ def refresh(favorite_id: str, request: Request, user=Depends(current_user)):
     from .web import SEARCHERS
     with store(request).session() as db:
         saved = record(owned(db, user['id'], favorite_id))['item']
+    condition = (saved.get('cart') or {}).get('kizu')
     match = None
     try:
         with SEARCHERS[Game(saved['game'])]() as searcher:
             for page in searcher.iter_pages(saved['card_number']):
-                match = next((item for item in page.items if item.product_url == saved['product_url']), None)
+                match = next((item for item in page.items if item.product_url == saved['product_url']
+                              and (condition is None or (item.cart or {}).get('kizu', 0) == condition)), None)
                 if match is not None:
                     break
     except SearchRequestError as exc:

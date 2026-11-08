@@ -3,14 +3,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const favoritesSource = await readFile(new URL('favorites.js', base), 'utf8');
+const noticesModule = asModule(await readFile(new URL('notices.js', base), 'utf8'));
+const favoritesSource = (await readFile(new URL('favorites.js', base), 'utf8')).replace("'./notices.js'", JSON.stringify(noticesModule));
 const source = (await readFile(new URL('favorite-selection.js', base), 'utf8'))
   .replace("'./favorites.js'", JSON.stringify(asModule(favoritesSource)));
 const {createSelection} = await import(asModule(source));
 const {cardKey} = await import(asModule(favoritesSource));
 
 const card = id => ({game: 'wsr', product_url: `https://yuyu-tei.jp/sell/wsr/card/a/${id}`, name: id});
-function models({failMove = [], failUnsubscribe = []} = {}) {
+function models({failMove = [], failRemove = []} = {}) {
   const records = ['a', 'b', 'c'].map(id => ({id, item: card(id), group_id: null}));
   const subscribed = new Set(['b']), calls = [];
   const find = item => records.find(row => cardKey(row.item) === cardKey(item));
@@ -22,12 +23,12 @@ function models({failMove = [], failUnsubscribe = []} = {}) {
     },
     async toggle(item) {
       calls.push(['unfavorite', item.name]);
+      if (failRemove.includes(item.name)) return;
       records.splice(records.indexOf(find(item)), 1);
     }};
   const subscriptions = {find: item => subscribed.has(item.name),
     async remove(item) {
       calls.push(['unsubscribe', item.name]);
-      if (failUnsubscribe.includes(item.name)) return false;
       subscribed.delete(item.name); return true;
     }};
   return {favorites, subscriptions, records, calls};
@@ -56,13 +57,14 @@ test('bulk move runs one card at a time and keeps failures selected', async () =
   assert.equal(selection.state.failed, 1); assert.equal(selection.state.running, false);
 });
 
-test('bulk unfavorite cancels subscriptions first and skips cards it cannot unsubscribe', async () => {
-  const {favorites, subscriptions, records, calls} = models({failUnsubscribe: ['b']});
+test('bulk unfavorite delegates to the favorite API and keeps failed cards selected', async () => {
+  const {favorites, subscriptions, records, calls} = models({failRemove: ['b']});
   const selection = createSelection(favorites, subscriptions, () => {});
   selection.setActive(true); selection.setAll(['a', 'b', 'c'].map(card), true);
   await selection.remove();
-  assert.deepEqual(calls, [['unfavorite', 'a'], ['unsubscribe', 'b'], ['unfavorite', 'c']]);
+  assert.deepEqual(calls, [['unfavorite', 'a'], ['unfavorite', 'b'], ['unfavorite', 'c']]);
   assert.deepEqual(records.map(row => row.id), ['b']);
+  assert.deepEqual([...selection.state.keys], [cardKey(card('b'))]);
   assert.equal(selection.state.failed, 1);
 });
 

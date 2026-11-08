@@ -6,15 +6,20 @@ import {bindNavMenus, syncNavMenus} from './nav-menu.js';
 import {createEmailChallenge, authError} from './email-code.js';
 import {createPasswordUI} from './password-ui.js';
 import {createNotificationEmailUI} from './notification-email-ui.js';
+import {createAvatarCropper, loadImage} from './avatar-crop-ui.js';
 const $ = id => document.getElementById(id);
 let user = null, searchApp = null, registering = false, errorKey = '';
 let bindError = '', authGeneration = 0, forgotten = false;
+let avatarBusy = false, avatarStatus = '', avatarCropError = '', avatarPicking = false;
+let nicknameBusy = false, nicknameError = '';
 const api = createAuthenticatedRequest(() => signedOut('auth_expired'), apiRequest);
 const registrationEmail = createEmailChallenge({request: apiRequest});
 const bindingEmail = createEmailChallenge({request: api.fetch});
 const passwordUI = createPasswordUI({request: apiRequest, authenticatedRequest: api.fetch,
   getUser: () => user, onChanged: () => signedOut('password_changed')});
 const notificationUI = createNotificationEmailUI({request: api.fetch, getUser: () => user, onChange: email => searchApp?.setNotificationEmail(email)});
+const avatarCropper = createAvatarCropper({stage: $('avatar-crop-stage'), canvas: $('avatar-crop-canvas'), zoom: $('avatar-crop-zoom')});
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'], AVATAR_LIMIT = 5 * 1024 * 1024;
 function renderEmail(prefix, challenge) {
   const state = challenge.snapshot();
   const button = $(`${prefix}-send-code`);
@@ -63,6 +68,8 @@ function showPage() {
 }
 function refresh() {
   applyLanguage(document);
+  renderNicknameEditor();
+  renderAvatarUpload();
   syncNavMenus();  // page names in the dropdown toggles follow the language
   $('auth-language').value = getLanguage();
   $('auth-heading').textContent = t(forgotten ? 'password_reset_title' : registering ? 'auth_register' : 'auth_login');
@@ -100,8 +107,51 @@ function updateConfirmState() {
   if (value && !match) $('auth-confirm-password').setAttribute('aria-invalid', 'true');
   else $('auth-confirm-password').removeAttribute('aria-invalid');
 }
-function setAvatar(name) {
-  for (const id of ['user-avatar', 'account-avatar']) $(id).textContent = name.slice(0, 1).toUpperCase();
+function setAvatar(name, url) {
+  const [first = ''] = name;
+  const initial = first.toUpperCase();
+  for (const id of ['user-avatar', 'account-avatar']) {
+    const avatar = $(id);
+    avatar.textContent = initial;
+    if (!url) continue;
+    const image = document.createElement('img');
+    image.alt = '';
+    image.referrerPolicy = 'no-referrer';
+    image.addEventListener('load', () => {
+      if (user?.avatar_url === url) avatar.replaceChildren(image);
+    }, {once: true});
+    image.src = url;
+  }
+}
+function renderDisplayName() {
+  const name = user?.nickname ?? user?.username ?? '';
+  $('current-username').textContent = name;
+  $('account-username').textContent = name;
+  $('account-login-name').hidden = !user?.nickname;
+  $('account-login-username').textContent = user?.username ?? '';
+  setAvatar(name, user?.avatar_url);
+}
+function renderNicknameEditor() {
+  $('nickname-input').disabled = nicknameBusy;
+  $('nickname-cancel').disabled = nicknameBusy;
+  $('nickname-close').disabled = nicknameBusy;
+  $('nickname-save').disabled = !user || nicknameBusy;
+  $('nickname-save').textContent = t(nicknameBusy ? 'nickname_saving' : 'nickname_save');
+  $('nickname-error').textContent = nicknameError ? t(nicknameError) : '';
+}
+function resetNicknameEditor() {
+  nicknameBusy = false; nicknameError = '';
+  $('nickname-input').value = '';
+  $('nickname-dialog').close();
+}
+function renderAvatarUpload() {
+  $('avatar-upload').disabled = !user || avatarBusy || avatarPicking;
+  $('avatar-upload').setAttribute('aria-busy', String(avatarBusy));
+  $('avatar-upload-icon').className = avatarBusy ? 'bi bi-arrow-repeat spin' : 'bi bi-camera';
+  $('avatar-status').textContent = avatarStatus ? t(avatarStatus) : '';
+  for (const id of ['avatar-crop-confirm', 'avatar-crop-cancel', 'avatar-crop-close', 'avatar-crop-zoom']) $(id).disabled = avatarBusy;
+  $('avatar-crop-confirm-label').textContent = t(avatarBusy ? 'avatar_uploading' : 'avatar_crop_confirm');
+  $('avatar-crop-error').textContent = avatarCropError ? t(avatarCropError) : '';
 }
 function signedOut(message = '', clearToken = true) {
   forgotten = false;
@@ -109,8 +159,9 @@ function signedOut(message = '', clearToken = true) {
   yuyuteiClient.deactivate({clear: clearToken});
   if (clearToken) setToken(null);
   api.invalidate(); searchApp?.clearUser(); user = null;
+  avatarBusy = false; avatarStatus = ''; avatarCropError = ''; $('avatar-crop-dialog').close();
   registering = false; $('account-status').textContent = '';
-  $('current-username').textContent = ''; $('account-username').textContent = ''; $('account-created').textContent = ''; setAvatar('');
+  resetNicknameEditor(); renderDisplayName(); $('account-created').textContent = '';
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = message;
   location.hash = '#login'; showPage(); refresh();
 }
@@ -121,12 +172,12 @@ async function signedIn(value) {
   if (getToken() !== expectedToken) return;
   // The cart client must know the account before the search app reads its cart.
   user = value; yuyuteiClient.activateUser(user.id, api.fetch);
+  avatarBusy = false; avatarStatus = '';
   authGeneration++; resetEmails();
   searchApp.activateUser(user.id, api.fetch, user.email_verified ? user.email : null);
   notificationUI.load();
   $('account-status').textContent = '';
-  $('current-username').textContent = user.username;
-  $('account-username').textContent = user.username; setAvatar(user.username);
+  resetNicknameEditor(); renderDisplayName();
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = '';
   if (!['#account', '#favorites', '#cards', '#cart'].includes(location.hash)) location.hash = '#search';
   showPage(); refresh();
@@ -194,12 +245,89 @@ $('bind-email-form').addEventListener('submit', async event => {
     const result = await response.json();
     if (started !== authGeneration) return;
     if (!response.ok) bindError = authError(result.detail, response.status);
-    else {user = result; resetEmails(); notificationUI.load();}
+    else {user = {...user, email: result.email, email_verified: result.email_verified}; resetEmails(); notificationUI.load();}
   } catch (error) {
     if (started === authGeneration && error.name !== 'AbortError') bindError = 'auth_unavailable';
   } finally { $('bind-email-submit').disabled = false; refreshEmails(); }
 });
 setInterval(refreshEmails, 1000);
+$('nickname-edit').addEventListener('click', () => {
+  if (!user || nicknameBusy) return;
+  $('nickname-input').value = user.nickname ?? '';
+  nicknameError = ''; renderNicknameEditor(); $('nickname-dialog').showModal();
+});
+for (const id of ['nickname-cancel', 'nickname-close']) $(id).addEventListener('click', () => { if (!nicknameBusy) $('nickname-dialog').close(); });
+$('nickname-dialog').addEventListener('cancel', event => { if (nicknameBusy) event.preventDefault(); });
+$('nickname-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!user || nicknameBusy) return;
+  const nickname = $('nickname-input').value.trim();
+  const started = authGeneration;
+  nicknameBusy = true; nicknameError = ''; renderNicknameEditor();
+  try {
+    const response = await api.fetch('/api/auth/nickname', {method: 'PUT',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nickname: nickname || null})});
+    const result = await response.json();
+    if (started !== authGeneration) return;
+    if (response.ok) {
+      user.nickname = result.nickname;
+      renderDisplayName(); $('nickname-dialog').close();
+    } else nicknameError = response.status === 422 ? 'nickname_invalid' : 'nickname_failed';
+  } catch {
+    if (started === authGeneration) nicknameError = 'nickname_failed';
+  } finally {
+    if (started === authGeneration) { nicknameBusy = false; renderNicknameEditor(); }
+  }
+});
+$('avatar-upload').addEventListener('click', () => $('avatar-file').click());
+$('avatar-file').addEventListener('change', async event => {
+  const input = event.target, file = input.files[0];
+  input.value = '';
+  if (!user || !file || avatarBusy || avatarPicking) return;
+  avatarStatus = !AVATAR_TYPES.includes(file.type) ? 'avatar_invalid' : file.size > AVATAR_LIMIT ? 'avatar_too_large' : '';
+  if (avatarStatus) { renderAvatarUpload(); return; }
+  const started = authGeneration;
+  avatarPicking = true; renderAvatarUpload();
+  try {
+    const image = await loadImage(file);
+    if (started !== authGeneration) return;
+    avatarCropError = '';
+    $('avatar-crop-dialog').showModal();
+    avatarCropper.open(image);
+    $('avatar-crop-stage').focus();
+  } catch {
+    if (started === authGeneration) avatarStatus = 'avatar_invalid';
+  } finally { avatarPicking = false; renderAvatarUpload(); }
+});
+function closeAvatarCrop() { if (!avatarBusy) $('avatar-crop-dialog').close(); }
+for (const id of ['avatar-crop-cancel', 'avatar-crop-close']) $(id).addEventListener('click', closeAvatarCrop);
+$('avatar-crop-dialog').addEventListener('cancel', event => { if (avatarBusy) event.preventDefault(); });
+$('avatar-crop-dialog').addEventListener('close', () => { avatarCropper.clear(); avatarCropError = ''; renderAvatarUpload(); $('avatar-upload').focus(); });
+$('avatar-crop-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!user || avatarBusy) return;
+  const started = authGeneration;
+  avatarBusy = true; avatarCropError = ''; avatarStatus = ''; renderAvatarUpload();
+  try {
+    const blob = await avatarCropper.export();
+    if (!blob || !AVATAR_TYPES.includes(blob.type)) throw new Error('export failed');
+    const response = await api.fetch('/api/auth/avatar', {method: 'PUT', headers: {'Content-Type': blob.type}, body: blob});
+    const result = await response.json();
+    if (started !== authGeneration) return;
+    if (response.ok) {
+      user.avatar_url = result.avatar_url;
+      renderDisplayName();
+      avatarBusy = false; $('avatar-crop-dialog').close();
+    } else {
+      const errors = ['avatar_invalid', 'avatar_too_large', 'avatar_dimensions', 'avatar_storage_failed'];
+      avatarCropError = response.status === 429 ? 'avatar_rate_limited' : errors.includes(result.detail) ? result.detail : 'avatar_failed';
+    }
+  } catch {
+    if (started === authGeneration) avatarCropError = 'avatar_failed';
+  } finally {
+    if (started === authGeneration) { avatarBusy = false; renderAvatarUpload(); }
+  }
+});
 $('logout').addEventListener('click', async () => {
   yuyuteiClient.clearCredentials();
   $('logout').disabled = true;

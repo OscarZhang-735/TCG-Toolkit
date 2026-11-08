@@ -1,12 +1,17 @@
 from sqlalchemy import select, func, update
-from tcg_toolkit.db_models import FavoriteGroup, LoginSession, SchemaMigration, User
+from tcg_toolkit.db_models import AvatarCleanup, FavoriteGroup, LoginSession, SchemaMigration, User
 from auth_helpers import registration_body, register_user
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+import httpx
+from PIL import Image
 import pytest
 from fastapi.testclient import TestClient
 from tcg_toolkit.web import app
 from tcg_toolkit.auth.service import AuthService, DuplicateUsername, token_hash
+from tcg_toolkit.auth.avatar import cleanup_avatar
 from tcg_toolkit.auth.store import UserStore
+from tcg_toolkit.db_cli import SCHEMA_VERSION
 
 ORIGIN = "https://testserver"
 BODY = {"username": "Alice", "password": "a long password!"}
@@ -24,7 +29,9 @@ def test_register_session_logout_login(client):
     response = register_user(client, **BODY)
     assert response.status_code == 201
     user = response.json()["user"]
-    assert set(user) == {"id", "username", "created_at", "email", "email_verified"}
+    assert set(user) == {"id", "username", "nickname", "created_at", "email", "email_verified", "avatar_url"}
+    assert user["nickname"] is None
+    assert user["avatar_url"] is None
     assert user["username"] == "alice"
     assert "set-cookie" not in response.headers
     token = response.json()["token"]
@@ -36,7 +43,7 @@ def test_register_session_logout_login(client):
         digest = db.scalar(select(LoginSession.token_hash))
         assert encoded.startswith("$argon2id$") and BODY["password"] not in encoded
         assert digest == token_hash(token) and token != digest
-        assert db.scalar(select(func.max(SchemaMigration.version))) == 5
+        assert db.scalar(select(func.max(SchemaMigration.version))) == SCHEMA_VERSION
         assert db.scalars(select(FavoriteGroup).where(FavoriteGroup.user_id == user['id'])).all() == []
     assert AuthService(UserStore(store.conninfo)).current_user(token) == user
     assert client.post("/api/auth/logout", json={}).status_code == 204
@@ -163,3 +170,123 @@ def test_cookie_ignored_and_malformed_bearer(client):
 def test_build_version(client, monkeypatch):
     monkeypatch.setenv("TCG_BUILD_SHA", "a" * 40)
     assert client.get("/api/version").json() == {"sha": "a" * 40}
+
+
+def test_nicknames_can_repeat_preserve_case_and_are_not_login_identifiers(client):
+    alice = register_user(client, **BODY).json()
+    bob = register_user(client, 'bob').json()
+    path = '/api/auth/nickname'
+    assert client.put(path, json={'nickname': 'CardFan'}).status_code == 401
+    for account in (alice, bob):
+        client.headers['Authorization'] = 'Bearer ' + account['token']
+        assert client.put(path, json={'nickname': ' CardFan '}).json() == {'nickname': 'CardFan'}
+    assert client.put(path, json={'nickname': 'cardFan'}).json() == {'nickname': 'cardFan'}
+    assert client.get('/api/auth/me').json()['nickname'] == 'cardFan'
+
+    client.headers['Authorization'] = 'Bearer ' + alice['token']
+    assert client.get('/api/auth/me').json()['nickname'] == 'CardFan'
+    assert client.put(path, json={'nickname': 'x' * 33}).status_code == 422
+    assert client.put(path, json={'nickname': 'Ignored'}, headers={'Origin': 'https://evil.test'}).status_code == 403
+    assert client.post('/api/auth/login', json={**BODY, 'username': 'CardFan'}).status_code == 401
+    login = client.post('/api/auth/login', json={**BODY, 'username': 'ALICE'})
+    assert login.status_code == 200
+    assert login.json()['user']['nickname'] == 'CardFan'
+    client.headers['Authorization'] = 'Bearer ' + login.json()['token']
+    assert client.put(path, json={'nickname': '  '}).json() == {'nickname': None}
+    profile = client.get('/api/auth/me').json()
+    assert profile['nickname'] is None and profile['username'] == 'alice'
+
+
+def test_avatar_upload_persists_and_failed_replacement_preserves_it(client, monkeypatch):
+    monkeypatch.setenv('TCG_AVATAR_COS_URL', 'https://avatars.example.com/')
+    registered = register_user(client, **BODY).json()
+    client.headers['Authorization'] = 'Bearer ' + registered['token']
+    image = BytesIO()
+    Image.new('RGBA', (512, 256), 'red').save(image, format='PNG')
+    uploaded = []
+
+    def put(url, *, content, headers, **options):
+        assert url.startswith('https://avatars.example.com/tcgtoolkit/avatars/')
+        assert url.endswith('.webp')
+        assert headers['Content-Type'] == 'image/webp'
+        with Image.open(BytesIO(content)) as avatar:
+            assert avatar.format == 'WEBP' and avatar.size == (256, 128)
+        uploaded.append(url)
+        return httpx.Response(200 if len(uploaded) == 1 else 403, request=httpx.Request('PUT', url))
+
+    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', put)
+    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.delete', lambda *args, **kwargs: pytest.fail('Avatar was deleted'))
+    headers = {'Content-Type': 'image/png'}
+    response = client.put('/api/auth/avatar', content=image.getvalue(), headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {'avatar_url': uploaded[0]}
+    assert client.get('/api/auth/me').json()['avatar_url'] == uploaded[0]
+    login = client.post('/api/auth/login', json=BODY)
+    assert login.json()['user']['avatar_url'] == uploaded[0]
+    client.headers['Authorization'] = 'Bearer ' + login.json()['token']
+    response = client.put('/api/auth/avatar', content=image.getvalue(), headers=headers)
+    assert response.status_code == 502
+    assert uploaded[1] != uploaded[0]
+    assert client.get('/api/auth/me').json()['avatar_url'] == uploaded[0]
+    client.headers['Authorization'] = 'Bearer ' + register_user(client, 'bob').json()['token']
+    assert client.get('/api/auth/me').json()['avatar_url'] is None
+
+
+@pytest.mark.parametrize('first_delete_status', [204, 503])
+def test_avatar_replacement_cleans_up_after_commit(client, monkeypatch, first_delete_status):
+    monkeypatch.setenv('TCG_AVATAR_COS_URL', 'https://avatars.example.com')
+    registered = register_user(client, **BODY).json()
+    user_id = registered['user']['id']
+    client.headers['Authorization'] = 'Bearer ' + registered['token']
+    image = BytesIO()
+    Image.new('RGB', (32, 32), 'red').save(image, format='PNG')
+    store = app.state.auth.store
+    uploads, deletes = [], []
+
+    def put(url, **kwargs):
+        uploads.append(url)
+        return httpx.Response(200, request=httpx.Request('PUT', url))
+
+    def delete(url, **kwargs):
+        with store.session() as db:
+            assert db.get(User, user_id).avatar_url == uploads[-1]
+        deletes.append(url)
+        return httpx.Response(first_delete_status if len(deletes) == 1 else 404,
+                              request=httpx.Request('DELETE', url))
+
+    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', put)
+    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.delete', delete)
+    for _ in range(2):
+        response = client.put('/api/auth/avatar', content=image.getvalue(), headers={'Content-Type': 'image/png'})
+        assert response.status_code == 200
+    assert response.json()['avatar_url'] == uploads[1]
+    assert deletes == [uploads[0]]
+    if first_delete_status == 503:
+        with store.session() as db:
+            db.get(AvatarCleanup, uploads[0]).next_attempt_at = 0
+        with UserStore(store.conninfo) as restarted_store:
+            assert cleanup_avatar(restarted_store)
+        assert deletes == [uploads[0], uploads[0]]
+    with store.session() as db:
+        assert db.scalars(select(AvatarCleanup)).all() == []
+        assert db.get(User, user_id).avatar_url == uploads[1]
+
+
+def test_avatar_rejects_untrusted_or_invalid_uploads_before_cos(client, monkeypatch):
+    monkeypatch.setenv('TCG_AVATAR_COS_URL', 'https://avatars.example.com')
+    def unexpected_upload(*args, **kwargs):
+        pytest.fail('Invalid or unauthorized upload reached COS')
+
+    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', unexpected_upload)
+    path = '/api/auth/avatar'
+    headers = {'Content-Type': 'image/png'}
+    assert client.put(path, content=b'invalid', headers=headers).status_code == 401
+    client.headers['Authorization'] = 'Bearer ' + register_user(client, **BODY).json()['token']
+    assert client.put(path, content=b'invalid', headers={**headers, 'Origin': 'https://evil.test'}).status_code == 403
+    assert client.put(path, content=b'<svg/>', headers={'Content-Type': 'image/svg+xml'}).status_code == 415
+    assert client.put(path, content=b'invalid', headers=headers).status_code == 422
+    assert client.put(path, content=b'x' * (5 * 1024 * 1024 + 1), headers=headers).status_code == 413
+    monkeypatch.delenv('TCG_AVATAR_COS_URL')
+    response = client.put(path, content=b'invalid', headers=headers)
+    assert response.status_code == 503 and response.json()['detail'] == 'avatar_storage_failed'
+    assert client.get('/api/auth/me').json()['avatar_url'] is None

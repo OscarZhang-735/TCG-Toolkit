@@ -3,9 +3,13 @@ from collections import deque
 import os
 from threading import Lock
 import time
+from unicodedata import category
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
+from starlette.concurrency import run_in_threadpool
+from ..db_models import User
+from .avatar import AVATAR_LIMIT, AVATAR_TYPES, save_avatar
 from .service import AuthService, DuplicateUsername
 from .store import UserStore
 from .email_verification import normalize_email
@@ -16,6 +20,20 @@ router = APIRouter(prefix="/api/auth")
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=18)
+
+
+class NicknameInput(BaseModel):
+    nickname: str | None = Field(max_length=32)
+
+    @field_validator('nickname', mode='before')
+    @classmethod
+    def clean_nickname(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            if any(category(char) in ('Cc', 'Cs') for char in value):
+                raise ValueError('Nickname must contain displayable text')
+            return value or None
+        return value
 
 
 class EmailInput(BaseModel):
@@ -130,9 +148,13 @@ def current_user(request: Request):
     return user
 
 
-def write_guard(request: Request):
+def require_trusted_origin(request: Request):
     if request.headers.get("origin") not in request.app.state.auth_origins:
         raise HTTPException(403, detail="untrusted_origin")
+
+
+def write_guard(request: Request):
+    require_trusted_origin(request)
     if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
         raise HTTPException(415, detail="json_required")
 
@@ -218,3 +240,24 @@ def logout(request: Request):
 def me(response: Response, user=Depends(current_user)):
     response.headers["Cache-Control"] = "no-store"
     return user
+
+
+@router.put("/nickname", dependencies=[Depends(write_guard)])
+def change_nickname(body: NicknameInput, request: Request, user=Depends(current_user)):
+    with service(request).store.session() as db:
+        db.get(User, user['id']).nickname = body.nickname
+    return {'nickname': body.nickname}
+
+
+@router.put("/avatar", dependencies=[Depends(require_trusted_origin)])
+async def change_avatar(request: Request, user=Depends(current_user)):
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media_type not in AVATAR_TYPES:
+        raise HTTPException(415, detail="avatar_invalid")
+    request.app.state.auth_limiter.check(("avatar", user["id"]), 5)
+    content = bytearray()
+    async for chunk in request.stream():
+        if len(content) + len(chunk) > AVATAR_LIMIT:
+            raise HTTPException(413, detail="avatar_too_large")
+        content.extend(chunk)
+    return await run_in_threadpool(save_avatar, service(request).store, user["id"], content, media_type)

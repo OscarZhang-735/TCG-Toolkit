@@ -67,7 +67,10 @@ def test_new_game_controls(game):
     from bs4 import BeautifulSoup
     page = BeautifulSoup(client.get('/').text, 'html.parser')
     assert page.select_one(f'input[name="source"][value="{game}"][checked]')
-    assert page.select_one(f'input[data-role="game"][value="{game}"][checked]')
+    template = page.find('template', id='filter-panel')
+    assert template is not None
+    game_filter = template.find('input', attrs={'data-role': 'game', 'value': game})
+    assert game_filter is not None and game_filter.has_attr('checked')
 
 
 def test_sev_search_and_logo(monkeypatch):
