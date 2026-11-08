@@ -23,7 +23,7 @@ services:
       TCG_SUBSCRIPTIONS_ENABLED: "${TCG_SUBSCRIPTIONS_ENABLED:-true}"
       TCG_SITE_URL: "${TCG_SITE_URL:-}"
       RAPIDAPI_KEY: ${RAPIDAPI_KEY:-}
-      TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/proxy}"
+      TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/encrypted-proxy}"
       TCG_TRUSTED_ORIGINS: https://tcgtoolkit.rinne.love,https://oscarzhang-735.github.io
       API_DOMAIN: ${API_DOMAIN:?Set backend domain}
       FORWARDED_ALLOW_IPS: ${TCG_PROXY_IPS:?Set Docker bridge gateway}

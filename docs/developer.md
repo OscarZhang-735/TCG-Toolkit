@@ -45,7 +45,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_TRUSTED_ORIGINS` | 允许登录的访问地址，多个用逗号分隔，不含路径 | 空（不允许登录） |
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
-| `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/proxy` |
+| `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
 | `PGHOST` / `PGPORT` | PostgreSQL 地址；Compose 内使用服务名 | `db` / `5432`（Compose） |
 | `PGDATABASE` / `PGUSER` / `PGPASSWORD` | 应用数据库、非超级用户角色及密码 | Compose 默认库和角色为 `tcg`；密码必填 |
 | `TCG_PG_ADMIN_PASSWORD` | PostgreSQL 初始化管理员密码，仅传给 db | 必填 |
@@ -513,3 +513,9 @@ XLSX 文本不解析为公式，超过 15 位的数量以文本保留精度；�
 本地前端在 `TCG_ALLOW_PROXY_SWITCH=true` 时默认关闭代理，使用浏览器 `localStorage` 的 `tcg.proxy-enabled` 保存上次选择，刷新页面或重新登录后恢复。偏好按浏览器站点保存，不按账户区分。关闭此配置、使用远程 API 前端或无法读取开关能力时，保持服务端默认代理模式，不采用或覆盖浏览器偏好；实际代理地址仍由 `TCG_SEARCH_PROXY_URL` 决定，显式为空时直连。后台订阅检查不受浏览器开关影响。
 
 游游亭购物车使用与搜索相同的代理开关。代理需支持方法、正文、Cookie、CSRF 请求头、状态码和 Set-Cookie 的透传（Lite-Proxy 协议）；不会在代理失败时回退直连或自动重试购物车写入。Cookie 仍按游游亭域名维护，并仅保留在当前操作内。当前默认代理入口为 HTTP，该传输段不加密。
+
+## 加密代理接口
+
+设置 `TCG_PROXY_KEY_FILE` 为 32 字节原始密钥文件路径后，代理使用 `/encrypted-proxy`。`TCG_SEARCH_PROXY_URL` 可填写服务根地址或 `/encrypted-proxy` 地址，不再支持旧 `/proxy`。启用代理必须配置密钥文件，否则请求失败且不会发送网络请求；代理关闭时仍直连。加密失败不会回退明文或自动重试。
+
+协议与 lite-proxy v1 客户端一致：HKDF-SHA256 派生请求／响应密钥，AES-GCM 加密目标 URL、请求头、正文和响应，并校验响应 request_id。密钥不应提交到仓库；容器使用时需只读挂载密钥，并将容器内路径传入该环境变量。外层 HTTP 仍可暴露代理地址、流量大小及时间，加密不对代理运营方隐藏内容。

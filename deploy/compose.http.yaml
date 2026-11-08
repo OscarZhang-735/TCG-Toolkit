@@ -24,7 +24,7 @@ services:
       TCG_SUBSCRIPTIONS_ENABLED: "${TCG_SUBSCRIPTIONS_ENABLED:-true}"
       TCG_SITE_URL: "${TCG_SITE_URL:-}"
       RAPIDAPI_KEY: ${RAPIDAPI_KEY:-}
-      TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/proxy}"
+      TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/encrypted-proxy}"
       TCG_TRUSTED_ORIGINS: http://99.79.33.22:18080,https://oscarzhang-735.github.io
       FORWARDED_ALLOW_IPS: ""
     volumes:

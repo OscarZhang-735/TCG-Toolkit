@@ -23,7 +23,7 @@ services:
       TZ: "${TZ:?Set TZ to the host IANA timezone, e.g. America/Toronto}"
       TCG_ALLOW_PROXY_SWITCH: "${TCG_ALLOW_PROXY_SWITCH:-true}"
       RAPIDAPI_KEY: "${RAPIDAPI_KEY:-}"
-      TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/proxy}"
+      TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/encrypted-proxy}"
       TCG_TRUSTED_ORIGINS: "${TCG_TRUSTED_ORIGINS:-}"
       FORWARDED_ALLOW_IPS: "${TCG_PROXY_IPS:-127.0.0.1}"
     ports:
