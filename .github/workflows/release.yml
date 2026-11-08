@@ -10,7 +10,31 @@ concurrency:
   group: ${{ github.event_name == 'pull_request' && github.ref || 'production-release' }}
   cancel-in-progress: false
 jobs:
+  merge_origin:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.forced
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      skip_tests: ${{ steps.origin.outputs.skip_tests }}
+    steps:
+      - name: Check whether GitHub merged a pull request
+        id: origin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          skip_tests=false
+          if merged_shas=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --paginate \
+            --jq '.[] | select(.merged_at != null and .base.ref == "main") | .merge_commit_sha') &&
+            grep -Fxq -- "$GITHUB_SHA" <<< "$merged_shas"; then
+            skip_tests=true
+          fi
+          echo "skip_tests=$skip_tests" >> "$GITHUB_OUTPUT"
   test:
+    needs: merge_origin
+    if: ${{ !cancelled() && needs.merge_origin.outputs.skip_tests != 'true' }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -41,8 +65,11 @@ jobs:
       - run: python -m pytest -q
       - run: node --test tests/*.test.mjs
   build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: test
+    if: >-
+      ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+          (needs.test.result == 'success' ||
+           (needs.test.result == 'skipped' && needs.merge_origin.outputs.skip_tests == 'true')) }}
+    needs: [merge_origin, test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
