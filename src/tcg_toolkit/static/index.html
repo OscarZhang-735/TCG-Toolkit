@@ -66,9 +66,11 @@
 <main id="account-panel" hidden>
 <header><h1 data-i18n="auth_account"></h1></header>
 <section class="panel profile-card">
-<span class="avatar avatar-lg" id="account-avatar" aria-hidden="true"></span>
+<button id="avatar-upload" type="button" class="avatar-button" aria-haspopup="dialog" data-i18n-aria-label="avatar_upload" data-i18n-title="avatar_hint"><span class="avatar avatar-lg" id="account-avatar" aria-hidden="true"></span><span class="avatar-edit" aria-hidden="true"><i id="avatar-upload-icon" class="bi bi-camera"></i></span></button>
+<input id="avatar-file" type="file" accept="image/jpeg,image/png,image/webp" hidden/>
 <div class="profile-meta"><h2 id="account-username"></h2><p><i class="bi bi-calendar3"></i><span data-i18n="auth_created"></span><time id="account-created"></time></p></div>
 <div class="profile-actions">
+<span id="avatar-status" role="status" aria-live="polite"></span>
 <button id="logout" type="button" class="secondary"><i class="bi bi-box-arrow-right"></i><span data-i18n="auth_logout"></span></button>
 <span id="account-status" role="alert"></span>
 </div>
@@ -484,6 +486,19 @@
 <div class="dialog-actions">
 <button id="favorite-move-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
 <button id="favorite-move-save" type="submit"><i class="bi bi-folder-symlink"></i><span data-i18n="favorite_move_confirm"></span></button>
+</div>
+</form>
+</dialog>
+<dialog id="avatar-crop-dialog" class="form-dialog avatar-crop-dialog" aria-labelledby="avatar-crop-title">
+<form id="avatar-crop-form" novalidate>
+<div class="dialog-head"><h2 id="avatar-crop-title" data-i18n="avatar_crop_title"></h2><button type="button" id="avatar-crop-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<div id="avatar-crop-stage" class="avatar-crop-stage" tabindex="0" role="group" data-i18n-aria-label="avatar_crop_area" aria-describedby="avatar-crop-hint"><canvas id="avatar-crop-canvas"></canvas></div>
+<p id="avatar-crop-hint" class="sr-only" data-i18n="avatar_crop_hint"></p>
+<div class="avatar-zoom"><i class="bi bi-zoom-out" aria-hidden="true"></i><input id="avatar-crop-zoom" type="range" min="1" max="4" step="0.01" value="1" data-i18n-aria-label="avatar_zoom"/><i class="bi bi-zoom-in" aria-hidden="true"></i></div>
+<p id="avatar-crop-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="avatar-crop-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="avatar-crop-confirm" type="submit"><i class="bi bi-check-lg" aria-hidden="true"></i><span id="avatar-crop-confirm-label" data-i18n="avatar_crop_confirm"></span></button>
 </div>
 </form>
 </dialog>

@@ -355,6 +355,35 @@ header h1{margin-right:auto}header .currency-toolbar{margin-top:0}header #curren
   background: var(--color-primary); color: var(--color-on-primary); font-size: 14px; font-weight: 700;
 }
 .avatar-lg { width: 64px; height: 64px; font-size: 26px; }
+.avatar img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+#avatar-status:empty { display: none; }
+/* The account avatar doubles as the upload button. */
+.avatar-button { position: relative; flex: none; width: auto; height: auto; padding: 0; border: 0; border-radius: 50%; background: none; }
+.avatar-button:hover, .avatar-button:disabled:hover { background: none; border: 0; }
+.avatar-button:disabled { opacity: 1; cursor: progress; }
+.avatar-edit {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; color: var(--gray-0); font-size: 20px; opacity: 0; transition: opacity .15s;
+  background: color-mix(in srgb, var(--gray-900) 55%, transparent);
+}
+.avatar-button:hover .avatar-edit, .avatar-button:focus-visible .avatar-edit, .avatar-button[aria-busy=true] .avatar-edit { opacity: 1; }
+.avatar-crop-dialog { width: min(400px, 92vw); }
+.avatar-crop-stage {
+  position: relative; width: min(320px, 100%); aspect-ratio: 1; margin: 0 auto; overflow: hidden;
+  border-radius: var(--radius-md); background: var(--color-surface-sunken);
+  cursor: grab; touch-action: none; user-select: none;
+}
+.avatar-crop-stage.dragging { cursor: grabbing; }
+.avatar-crop-stage canvas { display: block; width: 100%; height: 100%; }
+.avatar-crop-stage::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 0 999px color-mix(in srgb, var(--gray-900) 50%, transparent), inset 0 0 0 2px color-mix(in srgb, var(--gray-0) 85%, transparent);
+}
+.avatar-crop-stage:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.avatar-zoom { display: flex; align-items: center; gap: 10px; width: min(320px, 100%); margin: 16px auto 0; color: var(--color-text-muted); }
+.avatar-zoom input[type=range] { flex: 1; height: 24px; padding: 0; border: 0; box-shadow: none; background: none; accent-color: var(--color-primary); cursor: pointer; }
+.avatar-zoom input[type=range]:focus { box-shadow: none; }
+.avatar-zoom input[type=range]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
 /* Sign-in page: standalone, no sidebar. */
 body.signed-out aside { display: none; }

@@ -6,6 +6,8 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
+from starlette.concurrency import run_in_threadpool
+from .avatar import AVATAR_LIMIT, AVATAR_TYPES, save_avatar
 from .service import AuthService, DuplicateUsername
 from .store import UserStore
 from .email_verification import normalize_email
@@ -222,3 +224,17 @@ def logout(request: Request):
 def me(response: Response, user=Depends(current_user)):
     response.headers["Cache-Control"] = "no-store"
     return user
+
+
+@router.put("/avatar", dependencies=[Depends(require_trusted_origin)])
+async def change_avatar(request: Request, user=Depends(current_user)):
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media_type not in AVATAR_TYPES:
+        raise HTTPException(415, detail="avatar_invalid")
+    request.app.state.auth_limiter.check(("avatar", user["id"]), 5)
+    content = bytearray()
+    async for chunk in request.stream():
+        if len(content) + len(chunk) > AVATAR_LIMIT:
+            raise HTTPException(413, detail="avatar_too_large")
+        content.extend(chunk)
+    return await run_in_threadpool(save_avatar, service(request).store, user["id"], content, media_type)

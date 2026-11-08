@@ -24,6 +24,7 @@ class User(Base):
     email_verified_at: Mapped[int | None]
     notification_email: Mapped[str | None]
     notification_email_verified_at: Mapped[int | None]
+    avatar_url: Mapped[str | None]
     __table_args__ = (Index("users_username", func.lower(username), unique=True),)
 
 
@@ -34,6 +35,13 @@ class LoginSession(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     expires_at: Mapped[int]
     __table_args__ = (Index("sessions_expiry", "expires_at"), Index("sessions_user", "user_id"))
+
+
+class AvatarCleanup(Base):
+    __tablename__ = "avatar_cleanup"
+
+    url: Mapped[str] = mapped_column(primary_key=True)
+    next_attempt_at: Mapped[int]
 
 
 class FavoriteGroup(Base):

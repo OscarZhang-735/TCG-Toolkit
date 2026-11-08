@@ -14,6 +14,7 @@ services:
       - "18080:8000"
     environment:
       <<: *database-env
+      TCG_AVATAR_COS_URL: "${TCG_AVATAR_COS_URL:-}"
       TCG_SMTP_HOST: "${TCG_SMTP_HOST:-}"
       TCG_SMTP_PORT: "${TCG_SMTP_PORT:-}"
       TCG_SMTP_USERNAME: "${TCG_SMTP_USERNAME:-}"

@@ -11,6 +11,7 @@ services:
     image: ${TCG_IMAGE:-tcg-toolkit:local}
     environment:
       <<: *database-env
+      TCG_AVATAR_COS_URL: "${TCG_AVATAR_COS_URL:-}"
       TCG_SMTP_HOST: "${TCG_SMTP_HOST:-}"
       TCG_SMTP_PORT: "${TCG_SMTP_PORT:-}"
       TCG_SMTP_USERNAME: "${TCG_SMTP_USERNAME:-}"

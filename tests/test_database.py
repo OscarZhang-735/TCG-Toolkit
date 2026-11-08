@@ -40,10 +40,10 @@ def test_fresh_schema_is_explicit_and_concurrent_migrations_run_once(empty_datab
     with pytest.raises(RuntimeError, match="schema"):
         UserStore(empty_database)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        assert list(pool.map(db_cli.migrate, [empty_database] * 2)) == [5, 5]
+        assert list(pool.map(db_cli.migrate, [empty_database] * 2)) == [db_cli.SCHEMA_VERSION] * 2
     with UserStore(empty_database) as store, store.session() as db:
         assert db.scalar(select(func.count()).select_from(User)) == 0
-        assert db.scalar(select(func.count()).select_from(SchemaMigration)) == 5
+        assert db.scalar(select(func.count()).select_from(SchemaMigration)) == db_cli.SCHEMA_VERSION
         assert not inspect(db.connection()).has_table('yuyutei_credentials')
 
 
@@ -62,7 +62,7 @@ def test_schema_two_upgrade_defaults_to_existing_registered_email(empty_database
         command.upgrade(db_cli.alembic_config(db), '0002')
         db.execute(User.__table__.insert().values(id='existing', username='existing', password_hash='hash',
                    created_at=1, email='existing@example.com', email_verified_at=1))
-    assert db_cli.migrate(empty_database) == 5
+    assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
     from tcg_toolkit.notification_email import notification_recipient
     with UserStore(empty_database) as store, store.session() as db:
         user = db.get(User, 'existing')
@@ -83,14 +83,14 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
         db.execute(OwnedCard.__table__.insert().values(id='card', user_id='legacy', game='wsr',
                    card_number='A-001', rarity='R', name='Saved card', quantity=3, notes='keep',
                    game_key='wsr', number_key='a-001', rarity_key='r', created_at=1, updated_at=1))
-    assert db_cli.migrate(empty_database) == 5
+    assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
     with UserStore(empty_database) as store, store.session() as db:
         assert db.get(User, 'legacy').username == 'alice'
         assert db.get(LoginSession, 'legacy-token').user_id == 'legacy'
         assert db.get(Favorite, 'favorite').snapshot == '{}'
         assert db.get(Favorite, 'favorite').group_id is None
         assert db.get(OwnedCard, 'card').quantity == 3
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0005'
+        assert MigrationContext.configure(db.connection()).get_current_revision() == '0007'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
@@ -110,9 +110,9 @@ def test_newer_schema_is_rejected():
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0006_failure.py').write_text(
+    (scripts / 'versions' / '0008_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0006'\ndown_revision='0005'\n"
+        "revision='0008'\ndown_revision='0007'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = db_cli.alembic_config
@@ -128,7 +128,7 @@ def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path
         assert db_cli.version(db) == 0
         assert not inspect(db).has_table('partial')
         assert not inspect(db).has_table('alembic_version')
-    assert db_cli.migrate(empty_database) == 5
+    assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
 
 
 def test_session_rolls_back_pending_and_flushed_changes():
@@ -197,7 +197,7 @@ def test_health_detects_database_failure_and_recovers(monkeypatch):
 
 def test_schema_check_cannot_pass_without_database_tables():
     with app.state.auth.store.session() as db:
-        db.execute(update(SchemaMigration).where(SchemaMigration.version == 5).values(version=999))
+        db.execute(update(SchemaMigration).where(SchemaMigration.version == db_cli.SCHEMA_VERSION).values(version=999))
     assert TestClient(app).get('/api/health').status_code == 503
 
 
@@ -213,14 +213,14 @@ def test_schema_three_keeps_historical_favorites_ungrouped(empty_database):
                  snapshot='{"price":123}', created_at=10+i, refreshed_at=20+i)
             for user in ('alice', 'bob') for i in range(2)])
         before = [dict(row) for row in db.execute(select(old_favorites).order_by(old_favorites.c.id)).mappings()]
-    assert db_cli.migrate(empty_database) == 5
+    assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
     with UserStore(empty_database) as store, store.session() as db:
         assert db.scalar(select(func.count()).select_from(FavoriteGroup)) == 0
         after = [dict(row) for row in db.execute(select(Favorite.__table__).order_by(Favorite.id)).mappings()]
         for row in after:
             assert row.pop('group_id') is None
         assert after == before
-    assert db_cli.migrate(empty_database) == 5
+    assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
 
 
 def test_schema_four_default_groups_become_ungrouped(empty_database):
@@ -237,7 +237,7 @@ def test_schema_four_default_groups_become_ungrouped(empty_database):
         db.execute(old_groups.insert().values(id='deck', user_id='alice', name='Deck', is_default=False, created_at=5))
         grouped = Table('favorites', MetaData(), autoload_with=db)
         db.execute(grouped.update().where(grouped.c.id == 'alice-1').values(group_id='deck'))
-    assert db_cli.migrate(empty_database) == 5
+    assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
     with UserStore(empty_database) as store, store.session() as db:
         assert [(row.id, row.name) for row in db.scalars(select(FavoriteGroup))] == [('deck', 'Deck')]
         assert {row.id: row.group_id for row in db.scalars(select(Favorite))} == {
