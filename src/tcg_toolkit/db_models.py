@@ -18,6 +18,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column()
+    nickname: Mapped[str | None]
     password_hash: Mapped[str]
     created_at: Mapped[int]
     email: Mapped[str | None] = mapped_column(unique=True)

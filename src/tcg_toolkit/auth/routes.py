@@ -3,10 +3,12 @@ from collections import deque
 import os
 from threading import Lock
 import time
+from unicodedata import category
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
+from ..db_models import User
 from .avatar import AVATAR_LIMIT, AVATAR_TYPES, save_avatar
 from .service import AuthService, DuplicateUsername
 from .store import UserStore
@@ -18,6 +20,20 @@ router = APIRouter(prefix="/api/auth")
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=18)
+
+
+class NicknameInput(BaseModel):
+    nickname: str | None = Field(max_length=32)
+
+    @field_validator('nickname', mode='before')
+    @classmethod
+    def clean_nickname(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            if any(category(char) in ('Cc', 'Cs') for char in value):
+                raise ValueError('Nickname must contain displayable text')
+            return value or None
+        return value
 
 
 class EmailInput(BaseModel):
@@ -224,6 +240,13 @@ def logout(request: Request):
 def me(response: Response, user=Depends(current_user)):
     response.headers["Cache-Control"] = "no-store"
     return user
+
+
+@router.put("/nickname", dependencies=[Depends(write_guard)])
+def change_nickname(body: NicknameInput, request: Request, user=Depends(current_user)):
+    with service(request).store.session() as db:
+        db.get(User, user['id']).nickname = body.nickname
+    return {'nickname': body.nickname}
 
 
 @router.put("/avatar", dependencies=[Depends(require_trusted_origin)])

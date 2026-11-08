@@ -16,7 +16,7 @@ SESSION_SECONDS = 7 * 24 * 60 * 60
 
 
 def public_user(user: User):
-    return {**{key: getattr(user, key) for key in ("id", "username", "created_at", "email", "avatar_url")},
+    return {**{key: getattr(user, key) for key in ("id", "username", "nickname", "created_at", "email", "avatar_url")},
             "email_verified": user.email_verified_at is not None}
 
 

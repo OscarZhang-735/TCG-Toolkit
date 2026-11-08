@@ -29,7 +29,8 @@ def test_register_session_logout_login(client):
     response = register_user(client, **BODY)
     assert response.status_code == 201
     user = response.json()["user"]
-    assert set(user) == {"id", "username", "created_at", "email", "email_verified", "avatar_url"}
+    assert set(user) == {"id", "username", "nickname", "created_at", "email", "email_verified", "avatar_url"}
+    assert user["nickname"] is None
     assert user["avatar_url"] is None
     assert user["username"] == "alice"
     assert "set-cookie" not in response.headers
@@ -169,6 +170,31 @@ def test_cookie_ignored_and_malformed_bearer(client):
 def test_build_version(client, monkeypatch):
     monkeypatch.setenv("TCG_BUILD_SHA", "a" * 40)
     assert client.get("/api/version").json() == {"sha": "a" * 40}
+
+
+def test_nicknames_can_repeat_preserve_case_and_are_not_login_identifiers(client):
+    alice = register_user(client, **BODY).json()
+    bob = register_user(client, 'bob').json()
+    path = '/api/auth/nickname'
+    assert client.put(path, json={'nickname': 'CardFan'}).status_code == 401
+    for account in (alice, bob):
+        client.headers['Authorization'] = 'Bearer ' + account['token']
+        assert client.put(path, json={'nickname': ' CardFan '}).json() == {'nickname': 'CardFan'}
+    assert client.put(path, json={'nickname': 'cardFan'}).json() == {'nickname': 'cardFan'}
+    assert client.get('/api/auth/me').json()['nickname'] == 'cardFan'
+
+    client.headers['Authorization'] = 'Bearer ' + alice['token']
+    assert client.get('/api/auth/me').json()['nickname'] == 'CardFan'
+    assert client.put(path, json={'nickname': 'x' * 33}).status_code == 422
+    assert client.put(path, json={'nickname': 'Ignored'}, headers={'Origin': 'https://evil.test'}).status_code == 403
+    assert client.post('/api/auth/login', json={**BODY, 'username': 'CardFan'}).status_code == 401
+    login = client.post('/api/auth/login', json={**BODY, 'username': 'ALICE'})
+    assert login.status_code == 200
+    assert login.json()['user']['nickname'] == 'CardFan'
+    client.headers['Authorization'] = 'Bearer ' + login.json()['token']
+    assert client.put(path, json={'nickname': '  '}).json() == {'nickname': None}
+    profile = client.get('/api/auth/me').json()
+    assert profile['nickname'] is None and profile['username'] == 'alice'
 
 
 def test_avatar_upload_persists_and_failed_replacement_preserves_it(client, monkeypatch):

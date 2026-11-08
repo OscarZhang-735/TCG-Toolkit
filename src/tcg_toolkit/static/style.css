@@ -354,7 +354,7 @@ header h1{margin-right:auto}header .currency-toolbar{margin-top:0}header #curren
   width: 32px; height: 32px; border-radius: 50%;
   background: var(--color-primary); color: var(--color-on-primary); font-size: 14px; font-weight: 700;
 }
-.avatar-lg { width: 64px; height: 64px; font-size: 26px; }
+.avatar-lg { width: 84px; height: 84px; font-size: 34px; }
 .avatar img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 #avatar-status:empty { display: none; }
 /* The account avatar doubles as the upload button. */
@@ -363,7 +363,7 @@ header h1{margin-right:auto}header .currency-toolbar{margin-top:0}header #curren
 .avatar-button:disabled { opacity: 1; cursor: progress; }
 .avatar-edit {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  border-radius: 50%; color: var(--gray-0); font-size: 20px; opacity: 0; transition: opacity .15s;
+  border-radius: 50%; color: var(--gray-0); font-size: 24px; opacity: 0; transition: opacity .15s;
   background: color-mix(in srgb, var(--gray-900) 55%, transparent);
 }
 .avatar-button:hover .avatar-edit, .avatar-button:focus-visible .avatar-edit, .avatar-button[aria-busy=true] .avatar-edit { opacity: 1; }
@@ -433,10 +433,19 @@ button.password-toggle:hover { border: 0; background: var(--color-hover); color:
 /* User centre */
 /* Same width as the other pages (see main). */
 .profile-card { display: flex; align-items: center; gap: 20px; padding: 24px; margin-bottom: 16px; }
-.profile-meta { flex: 1; min-width: 0; }
-.profile-meta h2 { font-size: 20px; overflow-wrap: anywhere; }
+.profile-meta { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 8px; }
+.profile-name { display: flex; align-items: center; gap: 8px; }
+.profile-name .icon-button { width: 28px; height: 28px; flex: none; }
+.nickname-dialog { width: min(420px, 92vw); }
+.nickname-dialog .field input { height: 42px; margin-top: 8px; font-size: 15px; }
+.nickname-dialog .field-hint { margin-top: 8px; }
+.nickname-dialog .dialog-actions { margin-top: 24px; }
+.profile-meta h2 { font-size: 20px; line-height: 28px; overflow-wrap: anywhere; }
 .profile-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
-.profile-meta p { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; font-size: 13px; color: var(--color-text-muted); }
+.profile-meta p { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; line-height: 20px; color: var(--color-text-muted); }
+.profile-meta p[hidden] { display: none; }
+#account-login-name { gap: 0; }
+#account-login-name bdi:not(:lang(zh)) { margin-inline-start: .35em; }
 .account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
 .account-card { position: relative; display: flex; flex-direction: column; gap: 14px; padding: 20px; }
 .account-card h2 { font-size: 15px; }

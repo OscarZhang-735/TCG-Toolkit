@@ -11,6 +11,7 @@ const $ = id => document.getElementById(id);
 let user = null, searchApp = null, registering = false, errorKey = '';
 let bindError = '', authGeneration = 0, forgotten = false;
 let avatarBusy = false, avatarStatus = '', avatarCropError = '', avatarPicking = false;
+let nicknameBusy = false, nicknameError = '';
 const api = createAuthenticatedRequest(() => signedOut('auth_expired'), apiRequest);
 const registrationEmail = createEmailChallenge({request: apiRequest});
 const bindingEmail = createEmailChallenge({request: api.fetch});
@@ -67,6 +68,7 @@ function showPage() {
 }
 function refresh() {
   applyLanguage(document);
+  renderNicknameEditor();
   renderAvatarUpload();
   syncNavMenus();  // page names in the dropdown toggles follow the language
   $('auth-language').value = getLanguage();
@@ -106,7 +108,8 @@ function updateConfirmState() {
   else $('auth-confirm-password').removeAttribute('aria-invalid');
 }
 function setAvatar(name, url) {
-  const initial = name.slice(0, 1).toUpperCase();
+  const [first = ''] = name;
+  const initial = first.toUpperCase();
   for (const id of ['user-avatar', 'account-avatar']) {
     const avatar = $(id);
     avatar.textContent = initial;
@@ -119,6 +122,27 @@ function setAvatar(name, url) {
     }, {once: true});
     image.src = url;
   }
+}
+function renderDisplayName() {
+  const name = user?.nickname ?? user?.username ?? '';
+  $('current-username').textContent = name;
+  $('account-username').textContent = name;
+  $('account-login-name').hidden = !user?.nickname;
+  $('account-login-username').textContent = user?.username ?? '';
+  setAvatar(name, user?.avatar_url);
+}
+function renderNicknameEditor() {
+  $('nickname-input').disabled = nicknameBusy;
+  $('nickname-cancel').disabled = nicknameBusy;
+  $('nickname-close').disabled = nicknameBusy;
+  $('nickname-save').disabled = !user || nicknameBusy;
+  $('nickname-save').textContent = t(nicknameBusy ? 'nickname_saving' : 'nickname_save');
+  $('nickname-error').textContent = nicknameError ? t(nicknameError) : '';
+}
+function resetNicknameEditor() {
+  nicknameBusy = false; nicknameError = '';
+  $('nickname-input').value = '';
+  $('nickname-dialog').close();
 }
 function renderAvatarUpload() {
   $('avatar-upload').disabled = !user || avatarBusy || avatarPicking;
@@ -137,7 +161,7 @@ function signedOut(message = '', clearToken = true) {
   api.invalidate(); searchApp?.clearUser(); user = null;
   avatarBusy = false; avatarStatus = ''; avatarCropError = ''; $('avatar-crop-dialog').close();
   registering = false; $('account-status').textContent = '';
-  $('current-username').textContent = ''; $('account-username').textContent = ''; $('account-created').textContent = ''; setAvatar('');
+  resetNicknameEditor(); renderDisplayName(); $('account-created').textContent = '';
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = message;
   location.hash = '#login'; showPage(); refresh();
 }
@@ -153,8 +177,7 @@ async function signedIn(value) {
   searchApp.activateUser(user.id, api.fetch, user.email_verified ? user.email : null);
   notificationUI.load();
   $('account-status').textContent = '';
-  $('current-username').textContent = user.username;
-  $('account-username').textContent = user.username; setAvatar(user.username, user.avatar_url);
+  resetNicknameEditor(); renderDisplayName();
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = '';
   if (!['#account', '#favorites', '#cards', '#cart'].includes(location.hash)) location.hash = '#search';
   showPage(); refresh();
@@ -228,6 +251,34 @@ $('bind-email-form').addEventListener('submit', async event => {
   } finally { $('bind-email-submit').disabled = false; refreshEmails(); }
 });
 setInterval(refreshEmails, 1000);
+$('nickname-edit').addEventListener('click', () => {
+  if (!user || nicknameBusy) return;
+  $('nickname-input').value = user.nickname ?? '';
+  nicknameError = ''; renderNicknameEditor(); $('nickname-dialog').showModal();
+});
+for (const id of ['nickname-cancel', 'nickname-close']) $(id).addEventListener('click', () => { if (!nicknameBusy) $('nickname-dialog').close(); });
+$('nickname-dialog').addEventListener('cancel', event => { if (nicknameBusy) event.preventDefault(); });
+$('nickname-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!user || nicknameBusy) return;
+  const nickname = $('nickname-input').value.trim();
+  const started = authGeneration;
+  nicknameBusy = true; nicknameError = ''; renderNicknameEditor();
+  try {
+    const response = await api.fetch('/api/auth/nickname', {method: 'PUT',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nickname: nickname || null})});
+    const result = await response.json();
+    if (started !== authGeneration) return;
+    if (response.ok) {
+      user.nickname = result.nickname;
+      renderDisplayName(); $('nickname-dialog').close();
+    } else nicknameError = response.status === 422 ? 'nickname_invalid' : 'nickname_failed';
+  } catch {
+    if (started === authGeneration) nicknameError = 'nickname_failed';
+  } finally {
+    if (started === authGeneration) { nicknameBusy = false; renderNicknameEditor(); }
+  }
+});
 $('avatar-upload').addEventListener('click', () => $('avatar-file').click());
 $('avatar-file').addEventListener('change', async event => {
   const input = event.target, file = input.files[0];
@@ -265,8 +316,7 @@ $('avatar-crop-form').addEventListener('submit', async event => {
     if (started !== authGeneration) return;
     if (response.ok) {
       user.avatar_url = result.avatar_url;
-      setAvatar(user.username, user.avatar_url);
-      avatarStatus = 'avatar_saved';
+      renderDisplayName();
       avatarBusy = false; $('avatar-crop-dialog').close();
     } else {
       const errors = ['avatar_invalid', 'avatar_too_large', 'avatar_dimensions', 'avatar_storage_failed'];

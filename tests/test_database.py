@@ -90,7 +90,7 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
         assert db.get(Favorite, 'favorite').snapshot == '{}'
         assert db.get(Favorite, 'favorite').group_id is None
         assert db.get(OwnedCard, 'card').quantity == 3
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0007'
+        assert MigrationContext.configure(db.connection()).get_current_revision() == '0008'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
@@ -110,9 +110,9 @@ def test_newer_schema_is_rejected():
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0008_failure.py').write_text(
+    (scripts / 'versions' / '0009_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0008'\ndown_revision='0007'\n"
+        "revision='0009'\ndown_revision='0008'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = db_cli.alembic_config
