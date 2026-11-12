@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.cards import XLSX_MEDIA_TYPE
+from tcg_toolkit.cards import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -50,6 +50,7 @@ def test_export_round_trip(client):
         'name': '中文 カード', 'notes': '=1+1\n备注 & <text>',
         'quantity': 9007199254740991, 'image_url': 'https://example.com/card.png'}).json()
     zero = client.post('/api/cards', json={**CARD, 'quantity': 0}).json()
+    saved, zero = ({key: row[key] for key in EXPORT_COLUMNS} for row in (saved, zero))
     assert client.get('/api/cards/export?format=json').json() == {'items': [zero, saved]}
     response = client.get('/api/cards/export?format=xlsx')
     assert response.status_code == 200
@@ -65,7 +66,8 @@ def test_export_long_text_offers_lossless_json(client):
     response = client.get('/api/cards/export?format=xlsx')
     assert response.status_code == 422
     assert response.json()['detail'] == 'export_xlsx_text_too_long'
-    assert client.get('/api/cards/export?format=json').json()['items'] == [saved]
+    assert client.get('/api/cards/export?format=json').json()['items'] == [
+        {key: saved[key] for key in EXPORT_COLUMNS}]
 
 
 def test_export_language_fields_and_games(client):

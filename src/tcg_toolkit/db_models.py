@@ -81,11 +81,25 @@ class Favorite(Base):
     )
 
 
+class CardGroup(Base):
+    __tablename__ = "card_groups"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str]
+    created_at: Mapped[int]
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", name="card_groups_user_id_id_key"),
+        UniqueConstraint("user_id", "name", name="card_groups_user_name_key"),
+    )
+
+
 class OwnedCard(Base):
     __tablename__ = "owned_cards"
 
     id: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    group_id: Mapped[str | None]
     game: Mapped[str]
     card_number: Mapped[str]
     rarity: Mapped[str]
@@ -102,6 +116,9 @@ class OwnedCard(Base):
     __table_args__ = (
         CheckConstraint(quantity >= 0),
         UniqueConstraint("user_id", "game_key", "number_key", "rarity_key"),
+        ForeignKeyConstraint(["user_id", "group_id"], ["card_groups.user_id", "card_groups.id"],
+                             name="owned_cards_user_group_fkey"),
+        Index("owned_cards_user_group", "user_id", "group_id"),
     )
 
 

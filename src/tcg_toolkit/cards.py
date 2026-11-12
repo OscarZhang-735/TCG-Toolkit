@@ -1,10 +1,10 @@
 """Private, manually maintained card inventory."""
-from sqlalchemy import select
+from sqlalchemy import select, update as sql_update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import is_unique_violation
-from .db_models import OwnedCard
+from .db_models import CardGroup, OwnedCard, User
 import time
 import uuid
 import json
@@ -63,8 +63,25 @@ class CardInput(BaseModel):
         return GAMES.get(value.casefold(), value) if info.field_name == 'game' else value
 
 
+class CardCreate(CardInput):
+    group_id: str | None = Field(default=None, min_length=1)
+
+
+class GroupName(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+    @field_validator('name', mode='before')
+    @classmethod
+    def trim_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class GroupTarget(BaseModel):
+    group_id: str | None = Field(min_length=1)
+
+
 def record(row: OwnedCard):
-    return {key: getattr(row, key) for key in ('id', 'game', 'card_number', 'rarity', 'name',
+    return {key: getattr(row, key) for key in ('id', 'group_id', 'game', 'card_number', 'rarity', 'name',
                                               'quantity', 'notes', 'image_url', 'created_at', 'updated_at')}
 
 
@@ -90,11 +107,76 @@ def conflict(db: Session, user_id, body):
         raise HTTPException(409, detail={'type': 'card_duplicate', 'id': card_id})
 
 
-@router.get('')
-def listing(request: Request, user=Depends(current_user)):
+def lock_user(db: Session, user_id):
+    # Serialize group deletion and membership writes before taking card locks.
+    db.execute(select(User.id).where(User.id == user_id).with_for_update()).one()
+
+
+def owned_group(db: Session, user_id, group_id):
+    row = db.scalar(select(CardGroup).where(CardGroup.user_id == user_id, CardGroup.id == group_id))
+    if row is None:
+        raise HTTPException(404, detail='card_group_not_found')
+    return row
+
+
+def group_record(row: CardGroup):
+    return {'id': row.id, 'name': row.name, 'created_at': row.created_at}
+
+
+def require_available_name(db: Session, user_id, name, group_id=None):
+    query = select(CardGroup.id).where(CardGroup.user_id == user_id, CardGroup.name == name)
+    if group_id is not None:
+        query = query.where(CardGroup.id != group_id)
+    if db.scalar(query) is not None:
+        raise HTTPException(409, detail='card_group_name_taken')
+
+
+@router.get('/groups')
+def groups(request: Request, user=Depends(current_user)):
     with request.app.state.auth.store.session() as db:
-        rows = db.scalars(select(OwnedCard).where(OwnedCard.user_id == user['id']).order_by(
-            OwnedCard.created_at.desc(), OwnedCard.sort_id.desc()))
+        rows = db.scalars(select(CardGroup).where(CardGroup.user_id == user['id']).order_by(
+            CardGroup.created_at, CardGroup.id))
+        return {'items': [group_record(row) for row in rows]}
+
+
+@router.post('/groups', status_code=201, dependencies=[Depends(write_guard)])
+def create_group(body: GroupName, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        lock_user(db, user['id'])
+        require_available_name(db, user['id'], body.name)
+        row = CardGroup(id=str(uuid.uuid4()), user_id=user['id'], name=body.name, created_at=int(time.time()))
+        db.add(row)
+        return group_record(row)
+
+
+@router.put('/groups/{group_id}', dependencies=[Depends(write_guard)])
+def rename_group(group_id: str, body: GroupName, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        lock_user(db, user['id'])
+        row = owned_group(db, user['id'], group_id)
+        require_available_name(db, user['id'], body.name, row.id)
+        row.name = body.name
+        return group_record(row)
+
+
+@router.delete('/groups/{group_id}', status_code=204, dependencies=[Depends(write_guard)])
+def remove_group(group_id: str, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        lock_user(db, user['id'])
+        row = owned_group(db, user['id'], group_id)
+        db.execute(sql_update(OwnedCard).where(OwnedCard.user_id == user['id'], OwnedCard.group_id == row.id)
+                   .values(group_id=None))
+        db.delete(row)
+
+
+@router.get('')
+def listing(request: Request, group_id: str | None = None, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        query = select(OwnedCard).where(OwnedCard.user_id == user['id'])
+        if group_id is not None:
+            owned_group(db, user['id'], group_id)
+            query = query.where(OwnedCard.group_id == group_id)
+        rows = db.scalars(query.order_by(OwnedCard.created_at.desc(), OwnedCard.sort_id.desc()))
         return {'items': [record(row) for row in rows]}
 
 
@@ -125,8 +207,9 @@ def export_cards(request: Request, format: Literal['xlsx', 'json'],
                  language: Literal['en', 'zh-CN'] | None = None,
                  fields: Annotated[list[Literal[EXPORT_COLUMNS]] | None, Query()] = None,
                  games: Annotated[list[str] | None, Query()] = None,
+                 group_id: str | None = None,
                  user=Depends(current_user)):
-    items = listing(request, user)['items']
+    items = listing(request, group_id=group_id, user=user)['items']
     if games is not None:
         wanted = {game.strip().casefold() for game in games}
         items = [item for item in items if item['game'].casefold() in wanted]
@@ -254,10 +337,13 @@ async def import_cards(request: Request, format: Literal['xlsx', 'json'], user=D
 
 
 @router.post('', status_code=201, dependencies=[Depends(write_guard)])
-def add(body: CardInput, request: Request, user=Depends(current_user)):
+def add(body: CardCreate, request: Request, user=Depends(current_user)):
     now = int(time.time())
     with request.app.state.auth.store.session() as db:
-        row = OwnedCard(id=str(uuid.uuid4()), user_id=user['id'], created_at=now, updated_at=now, **values(body))
+        lock_user(db, user['id'])
+        group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
+        row = OwnedCard(id=str(uuid.uuid4()), user_id=user['id'], group_id=group_id,
+                        created_at=now, updated_at=now, **values(body))
         try:
             with db.begin_nested():
                 db.add(row)
@@ -266,6 +352,16 @@ def add(body: CardInput, request: Request, user=Depends(current_user)):
             if is_unique_violation(exc):
                 conflict(db, user['id'], body)
             raise
+        return record(row)
+
+
+@router.put('/{card_id}/group', dependencies=[Depends(write_guard)])
+def move(card_id: str, body: GroupTarget, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        lock_user(db, user['id'])
+        group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
+        row = owned(db, user['id'], card_id, lock=True)
+        row.group_id = group_id
         return record(row)
 
 
