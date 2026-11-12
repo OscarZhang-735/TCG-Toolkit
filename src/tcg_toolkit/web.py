@@ -28,6 +28,7 @@ from .auth.routes import router as auth_router, current_user, initialize_auth
 from .auth.avatar import avatar_bucket, retry_avatar_cleanup
 from .favorites import router as favorites_router
 from .cards import router as cards_router
+from .prices import router as prices_router
 from .official import router as official_router
 from .yuyutei_cart import router as yuyutei_router
 from .product_details import router as product_router
@@ -84,6 +85,7 @@ async def validation_error(request, exc):
 app.include_router(auth_router)
 app.include_router(favorites_router)
 app.include_router(cards_router)
+app.include_router(prices_router)
 app.include_router(official_router)
 app.include_router(yuyutei_router)
 app.include_router(product_router)
@@ -119,7 +121,7 @@ async def request_proxy_mode(request, call_next):
 async def browser_cache_policy(request, call_next):
     response = await call_next(request)
     if any(request.url.path == path or request.url.path.startswith(path + '/')
-           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/subscriptions')):
+           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/subscriptions', '/api/prices')):
         response.headers['Cache-Control'] = 'no-store'
     elif not request.url.path.startswith('/api/'):
         # Static filenames are stable across releases; validate cached modules.

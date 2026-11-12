@@ -131,7 +131,14 @@ class BaseSearcher:
             image_url=image_url,
             rarity=self.parse_rarity(card, number),
             cart=self.parse_cart_target(card),
+            condition=self.parse_condition(card),
         )
+
+    def parse_condition(self, card: Tag) -> str | None:
+        nodes = card.select('input.cart_kizu')
+        if len(nodes) != 1:
+            return None
+        return {'0': 'normal', '1': 'damaged'}.get(str(nodes[0].get('value', '')).strip())
 
     def parse_cart_target(self, card: Tag) -> dict | None:
         def value(name):

@@ -145,6 +145,45 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 
 部署前执行 `tcg-db migrate`：迁移 `0004` 创建分组表和外键；`0005` 将 `group_id` 改为可空，把原默认组中的收藏改为未分组，删除默认组及 `is_default` 列，保留自定义组及其收藏，更新到 schema 5。历史收藏升级后均为未分组。回退沿用恢复匹配备份的流程。
 
+## 商户查价接口
+
+`GET /api/prices?merchant=yuyutei&game=ws&card_number=ABC-001` 查询指定商户的全部匹配报价。三个参数必填；卡号去除首尾空白后须为 1–100 字符，匹配时忽略大小写但保留完整编号及版本后缀。接口需要 Bearer 登录，响应均为 `Cache-Control: no-store`。
+
+首期商户为 `yuyutei`（游游亭），支持 `ws`、`wsr`、`pm`、`sev`、`lycee`、`chaos`。游戏输入兼容卡牌库的名称和别名，例如 `WS`、`Lycee`、`ChaosTCG`；响应使用标准小写标识。`ws_en`、`WS EN`、`sev_en`、`SEV EN` 和其他不支持的游戏会被拒绝，不会回退到日版查询。
+
+响应示例（示意价格）：
+
+```json
+{
+  "merchant": "yuyutei",
+  "game": "ws",
+  "card_number": "ABC-001",
+  "items": [{
+    "name": "Card",
+    "card_number": "ABC-001",
+    "rarity": "SR",
+    "price": 100,
+    "currency": "JPY",
+    "condition": "normal",
+    "stock_status": "in_stock",
+    "stock_quantity": 2,
+    "product_url": "https://yuyu-tei.jp/sell/ws/card/set/001"
+  }]
+}
+```
+
+接口遍历所有搜索分页，返回普通品相的挂牌价格，包括缺货商品；不同版本、稀有度分别返回，同一商品链接去重并保留首次出现的顺序。`rarity` 和 `stock_quantity` 可为 `null`，`stock_status` 为 `in_stock`、`out_of_stock` 或 `unknown`。明确标记为普通品相时使用搜索页报价；品相不明时通过商品详情确认普通品相报价。伤品排除，零价格保留。没有匹配商品时返回 200 和 `items: []`。
+
+`GET /api/prices/merchants` 返回当前商户能力：
+
+```json
+{"items":[{"id":"yuyutei","name":"游游亭","games":["ws","wsr","pm","sev","lycee","chaos"]}]}
+```
+
+错误的 `detail` 为：未知商户 422 `unsupported_merchant`；商户不支持该游戏 422 `unsupported_merchant_game`；上游请求失败 502 `price_source_unavailable`；页面或商品详情无法解析 502 `price_source_unreadable`；上游超时 504 `price_source_timeout`。缺少参数或卡号校验失败返回标准 422 校验错误。商户及游戏能力检查在请求上游前完成；必要分页或详情请求失败时整次查价失败，不返回部分结果。
+
+查价模块 `prices.py` 中的 `MERCHANTS` 注册表保存商户名称、支持的游戏标识及查询函数，后续商户按同一报价结构接入。游游亭复用现有搜索器、商品详情解析和代理配置。每次请求查询一个商户，不进行币种转换、最低价汇总或卡牌库写入，不需要数据库迁移。
+
 ## 卡牌库价格字段
 
 `POST /api/cards` 可在原卡牌字段中加入可选的 `price`，表示手动记录的单张价格，例如 `"price": 12.34`。允许数值或十进制数字字符串，范围为 0–999999999999.99，最多两位小数；负数、布尔值、非有限数和超出精度的输入返回 422。省略或传 `null` 表示尚未设置价格，零表示价格为 0。可选的 `currency` 指定单价币种，取值 `JPY`、`CNY`、`CAD`（不区分大小写，省略或 `null` 为 `JPY`），其他值返回 422；后端只保存原始金额和币种，不做换算。
