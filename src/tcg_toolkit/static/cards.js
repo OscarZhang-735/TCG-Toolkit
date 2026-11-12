@@ -23,19 +23,29 @@ export function rankOffers(items, rarity) {
   const match = item => Boolean(wanted) && (item.rarity ?? '').trim().toLowerCase() === wanted;
   return [...items].sort((a, b) => match(b) - match(a));
 }
+// The offer a bulk lookup uses for a card: same rarity (case-insensitive) and a currency the
+// library supports; among several, the lowest price, preferring offers in stock. null when none.
+export function pickOffer(items, rarity) {
+  const wanted = (rarity ?? '').trim().toLowerCase();
+  if (!wanted) return null;
+  const matches = items.filter(item => (item.rarity ?? '').trim().toLowerCase() === wanted &&
+    CURRENCIES.includes(item.currency) && Number.isFinite(item.price) && item.price >= 0);
+  const inStock = matches.filter(item => item.stock_status === 'in_stock');
+  return (inStock.length ? inStock : matches).reduce((best, item) => best && best.price <= item.price ? best : item, null);
+}
 const priceErrors = {price_source_timeout: 'price_lookup_timeout', price_source_unavailable: 'price_lookup_unavailable',
   price_source_unreadable: 'price_lookup_unreadable', unsupported_merchant_game: 'price_lookup_unsupported',
   unsupported_merchant: 'price_lookup_unsupported'};
-// Games each merchant can price: {yuyutei: Set(['ws', ...])}.
+// Merchants that can price cards: [{id, name, games: Set(['ws', ...])}].
 export async function fetchPriceMerchants(api, signal) {
   const response = await api('/api/prices/merchants', {cache: 'no-store', signal});
   if (!response.ok) throw new Error('price merchants failed');
   const data = await response.json();
-  return Object.fromEntries(data.items.map(item => [item.id, new Set(item.games)]));
+  return data.items.map(item => ({id: item.id, name: item.name, games: new Set(item.games)}));
 }
 // Resolves to the offers; failures throw with a translation key in error.key.
-export async function lookupPrices(api, {game, card_number}, signal) {
-  const query = new URLSearchParams({merchant: PRICE_MERCHANT, game: priceGame(game), card_number: card_number.trim()});
+export async function lookupPrices(api, {game, card_number}, signal, merchant = PRICE_MERCHANT) {
+  const query = new URLSearchParams({merchant, game: priceGame(game), card_number: card_number.trim()});
   const response = await api(`/api/prices?${query}`, {cache: 'no-store', signal});
   const data = await response.json().catch(() => null);
   if (!response.ok) throw Object.assign(new Error('price lookup failed'), {key: priceErrors[data?.detail] ?? 'price_lookup_failed'});
@@ -184,6 +194,21 @@ export function createCards(onChange) {
     if (stale(error.key)) load();
     return error.key || 'cards_failed';
   }
+  // Sets one card's unit price, keeping its other fields and group; resolves to an error key ('' on success).
+  async function setPrice(id, price, currency) {
+    const current = generation, row = state.records.find(card => card.id === id);
+    if (!state.ready || state.busy || !row) return 'cards_failed';
+    state.busy = true; onChange();
+    try {
+      const result = await call('/' + id, 'PUT', {...payload(draftOf(row)), price: Number(price).toFixed(2), currency});
+      if (current === generation) state.records = state.records.map(card => card.id === id ? result : card);
+      return '';
+    } catch (error) {
+      return failure(error, current);
+    } finally {
+      if (current === generation) {state.busy = false; onChange();}
+    }
+  }
   const createGroup = name => editGroup(async current => {
     const group = await call('/groups', 'POST', {name});
     if (current === generation) {state.groups.push(group); state.group = group.id;}
@@ -206,5 +231,5 @@ export function createCards(onChange) {
     state.group = id; onChange();
   }
   return {state, visible, clear, load, edit, importFile, save: () => mutate(), remove: id => mutate(id),
-    move, select, createGroup, renameGroup, deleteGroup, activate(api) {clear(); request = api; return load();}};
+    move, setPrice, select, createGroup, renameGroup, deleteGroup, activate(api) {clear(); request = api; return load();}};
 }

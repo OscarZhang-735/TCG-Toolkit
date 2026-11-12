@@ -1,5 +1,5 @@
 import {lookupSource, lookupItems} from './card-sources.js';
-import {createCards, filterCards, summarizeCards, yenPrice, CURRENCIES, PRICE_MERCHANT, priceGame, rankOffers, fetchPriceMerchants, lookupPrices} from './cards.js';
+import {createCards, filterCards, summarizeCards, yenPrice, CURRENCIES, PRICE_MERCHANT, priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} from './cards.js';
 import {fetchRate} from './currency.js';
 import {parseQuantity} from './cart.js';
 import {t, getLanguage} from './i18n.js';
@@ -374,6 +374,7 @@ function renderSelection(rows) {
   const idle = !selection.running && count > 0 && !state.busy && !state.loading;
   $('cards-bulk-move').disabled = !idle || !state.groups.length;
   $('cards-bulk-delete').disabled = !idle;
+  $('cards-bulk-price').disabled = !idle;
 }
 // Holdings stepper in the slot where favorites show the cart: − / typed number / +, styled like
 // the cart stepper. Typing survives re-renders until Enter or leaving the box saves it; Escape
@@ -698,8 +699,9 @@ export function clearCards() {
   $('cards-export-dialog').close();
   $('cards-import-dialog').close(); importResult = null;
   clearOfficial();
-  priceSupportController?.abort(); priceSupportController = null; priceSupport = {status: 'idle', games: new Set()};
+  priceSupportController?.abort(); priceSupportController = null; priceSupport = {status: 'idle', merchants: []};
   clearPriceLookup();
+  bulkPriceController?.abort(); bulkPriceController = null; bulkPrice = blankBulkPrice(); $('cards-price-dialog').close();
   filters = blankFilters(); $('cards-query').value = '';
   ratesGeneration++; displayCurrency = 'JPY'; rates = {JPY: 1}; ratesPending = new Set(); ratesFailed = new Set();
   selectionGeneration++; selection = blankSelection(); groups.close(); exportGroup = null;
@@ -813,18 +815,20 @@ $('card-card_number').addEventListener('keydown', event => {
 // Price lookup: the button beside the unit price asks YuYu-Tei (the only merchant for now) for every
 // offer on the entered game and number; clicking an offer fills in its price and currency. Which
 // games can be priced comes from /api/prices/merchants; for other games the button is disabled.
-let priceSupport = {status: 'idle', games: new Set()}, priceSupportController = null;
+let priceSupport = {status: 'idle', merchants: []}, priceSupportController = null;
+const merchantGames = id => priceSupport.merchants.find(merchant => merchant.id === id)?.games ?? null;
+const merchantName = merchant => merchant.id === 'yuyutei' ? t('merchant_yuyutei') : merchant.name;
 const blankPriceLookup = () => ({status: 'idle', items: [], error: '', chosen: '', cardNumber: ''});
 let priceLookup = blankPriceLookup(), priceLookupGeneration = 0, priceLookupController = null;
 // Loads once per account; a failed load is retried the next time the editor opens.
 function loadPriceSupport() {
   if (!officialAPI || priceSupport.status === 'loading' || priceSupport.status === 'ready') return;
   const controller = priceSupportController = new AbortController();
-  priceSupport = {status: 'loading', games: new Set()};
+  priceSupport = {status: 'loading', merchants: []};
   fetchPriceMerchants(officialAPI, controller.signal).then(
-    merchants => { if (controller === priceSupportController) priceSupport = {status: 'ready', games: merchants[PRICE_MERCHANT] ?? new Set()}; },
-    () => { if (controller === priceSupportController) priceSupport = {status: 'failed', games: new Set()}; })
-    .finally(() => { if (controller === priceSupportController) renderPriceLookup(); });
+    merchants => { if (controller === priceSupportController) priceSupport = {status: 'ready', merchants}; },
+    () => { if (controller === priceSupportController) priceSupport = {status: 'failed', merchants: []}; })
+    .finally(() => { if (controller === priceSupportController) { renderPriceLookup(); buildPriceSources(); } });
 }
 // Why the lookup cannot run for the current draft ('' when it can).
 function priceLookupBlock() {
@@ -832,7 +836,7 @@ function priceLookupBlock() {
   if (!game || !draft.card_number.trim()) return t('price_lookup_needs');
   if (priceSupport.status === 'failed') return t('price_lookup_support_failed');
   if (priceSupport.status !== 'ready') return t('price_lookup_support_loading');
-  if (!priceSupport.games.has(priceGame(game))) return t('price_lookup_unsupported', {game});
+  if (!merchantGames(PRICE_MERCHANT)?.has(priceGame(game))) return t('price_lookup_unsupported', {game});
   return '';
 }
 function clearPriceLookup() {
@@ -909,3 +913,121 @@ function renderPriceLookup() {
   $('price-lookup-results').hidden = status !== 'done' || !items.length;
 }
 $('card-price-lookup').addEventListener('click', runPriceLookup);
+
+// Bulk price lookup for the selected cards. The dialog picks the data source (YuYu-Tei by default)
+// and whether cards that already have a price get the looked-up one. Cards are priced one at a
+// time with pickOffer (same rarity, lowest price, in stock first); one lookup serves every
+// selected card with the same game and number. Cards that got a price, or kept the one they had,
+// are deselected; the rest (unsupported game, no matching offer, failures) stay selected.
+const OUTCOMES = ['updated', 'kept', 'unsupported', 'unmatched', 'failed'];
+const blankBulkPrice = () => ({phase: 'setup', merchant: PRICE_MERCHANT, replace: false, done: 0, total: 0, stopping: false,
+  counts: Object.fromEntries(OUTCOMES.map(outcome => [outcome, 0]))});
+let bulkPrice = blankBulkPrice(), bulkPriceController = null;
+const bulkPriceKeys = {updated: 'cards_bulk_price_updated', kept: 'cards_bulk_price_kept', unsupported: 'cards_bulk_price_unsupported',
+  unmatched: 'cards_bulk_price_unmatched', failed: 'cards_bulk_price_failed'};
+const bulkPriceIcons = {updated: 'bi-check-circle-fill', kept: 'bi-dash-circle', unsupported: 'bi-slash-circle',
+  unmatched: 'bi-question-circle', failed: 'bi-exclamation-circle'};
+// Source chips are rebuilt only when the merchant list changes, so keyboard focus survives renders.
+function buildPriceSources() {
+  const box = $('cards-price-sources');
+  box.replaceChildren(...priceSupport.merchants.map(merchant => {
+    const label = node('label', '', 'chip'), input = document.createElement('input');
+    input.type = 'radio'; input.name = 'price-source'; input.value = merchant.id;
+    label.append(input, icon('bi-check-lg'), node('span', merchantName(merchant)));
+    return label;
+  }));
+  if (!merchantGames(bulkPrice.merchant) && priceSupport.merchants.length) bulkPrice.merchant = priceSupport.merchants[0].id;
+  renderBulkPrice();
+}
+// What a run would do with the current choices: how many cards are looked up and skipped.
+function bulkPricePlan() {
+  const games = merchantGames(bulkPrice.merchant) ?? new Set(), plan = {count: 0, kept: 0, unsupported: 0};
+  for (const row of inventory.state.records.filter(card => selection.ids.has(card.id))) {
+    if (row.price != null && !bulkPrice.replace) plan.kept++;
+    else if (!games.has(priceGame(row.game))) plan.unsupported++;
+    else plan.count++;
+  }
+  return plan;
+}
+function renderBulkPrice() {
+  const {phase, counts, done, total, stopping} = bulkPrice, setup = phase === 'setup', running = phase === 'running';
+  const ready = priceSupport.status === 'ready';
+  for (const input of $('cards-price-sources').querySelectorAll('input')) { input.checked = input.value === bulkPrice.merchant; input.disabled = !setup; }
+  for (const input of $('cards-price-existing').querySelectorAll('input')) { input.checked = (input.value === 'replace') === bulkPrice.replace; input.disabled = !setup; }
+  const games = merchantGames(bulkPrice.merchant);
+  $('cards-price-source-hint').textContent = !ready ? t(priceSupport.status === 'failed' ? 'price_lookup_support_failed' : 'price_lookup_support_loading')
+    : games ? t('cards_bulk_price_games', {games: GAMES.filter(game => games.has(priceGame(game))).join(' · ')}) : '';
+  const plan = bulkPricePlan();
+  let summary = '';
+  if (setup && ready) {
+    summary = t('cards_bulk_price_plan', {count: number(plan.count)});
+    if (plan.kept) summary += ' · ' + t('cards_bulk_price_plan_kept', {count: number(plan.kept)});
+    if (plan.unsupported) summary += ' · ' + t('cards_bulk_price_plan_unsupported', {count: number(plan.unsupported)});
+  } else if (running) summary = t(stopping ? 'cards_bulk_price_stopping' : 'cards_bulk_price_progress', {done: number(done), total: number(total)});
+  else if (phase === 'done') summary = done < total ? t('cards_bulk_price_stopped', {count: number(total - done)}) : t('cards_bulk_price_done');
+  $('cards-price-summary').textContent = summary;
+  const lines = setup ? [] : OUTCOMES.filter(outcome => counts[outcome]).map(outcome => {
+    const line = node('li', '', `bulk-price-${outcome}`);
+    line.append(icon(bulkPriceIcons[outcome]), node('span', t(bulkPriceKeys[outcome], {count: number(counts[outcome])})));
+    return line;
+  });
+  if (phase === 'done' && selection.ids.size) lines.push(node('li', t('cards_bulk_price_left_selected'), 'bulk-price-note'));
+  $('cards-price-results').replaceChildren(...lines);
+  $('cards-price-results').hidden = !lines.length;
+  $('cards-price-cancel').hidden = !setup;
+  $('cards-price-start').hidden = !setup;
+  $('cards-price-start').disabled = !ready || !plan.count || inventory.state.busy || inventory.state.loading;
+  $('cards-price-stop').hidden = !running;
+  $('cards-price-stop').disabled = stopping;
+  $('cards-price-finish').hidden = phase !== 'done';
+  $('cards-price-close').disabled = running;
+}
+async function priceOne(id, {merchant, replace, games, offers, signal}) {
+  const row = inventory.state.records.find(card => card.id === id);
+  if (!row) return 'failed';
+  if (row.price != null && !replace) return 'kept';
+  const game = priceGame(row.game);
+  if (!games.has(game)) return 'unsupported';
+  const key = `${game}|${row.card_number.trim().toLowerCase()}`;
+  if (!offers.has(key)) offers.set(key, lookupPrices(officialAPI, row, signal, merchant));
+  let offer;
+  try { offer = pickOffer(await offers.get(key), row.rarity); } catch { return 'failed'; }
+  if (!offer) return 'unmatched';
+  if (row.price === offer.price && row.currency === offer.currency) return 'updated';
+  return await inventory.setPrice(id, offer.price, offer.currency) ? 'failed' : 'updated';
+}
+async function runBulkPrice() {
+  const ids = [...selection.ids], current = selectionGeneration, {merchant, replace} = bulkPrice, games = merchantGames(merchant);
+  if (selection.running || !ids.length || !games || bulkPrice.phase !== 'setup' || locked()) return;
+  const controller = bulkPriceController = new AbortController(), offers = new Map();
+  Object.assign(selection, {running: true, done: 0, total: ids.length, failed: 0});
+  Object.assign(bulkPrice, {phase: 'running', done: 0, total: ids.length});
+  render(); renderBulkPrice();
+  for (const id of ids) {
+    if (bulkPrice.stopping) break;
+    const outcome = await priceOne(id, {merchant, replace, games, offers, signal: controller.signal});
+    if (current !== selectionGeneration) return;
+    bulkPrice.counts[outcome]++;
+    if (outcome === 'updated' || outcome === 'kept') selection.ids.delete(id);
+    else if (outcome === 'failed') selection.failed++;
+    selection.done++; bulkPrice.done++;
+    render(); renderBulkPrice();
+  }
+  bulkPriceController = null;
+  selection.running = false; bulkPrice.phase = 'done';
+  render(); renderBulkPrice();
+}
+$('cards-bulk-price').addEventListener('click', () => {
+  if (!selection.ids.size || locked()) return;
+  bulkPrice = blankBulkPrice(); loadPriceSupport();
+  $('cards-price-dialog').showModal(); buildPriceSources();
+});
+$('cards-price-sources').addEventListener('change', event => { bulkPrice.merchant = event.target.value; renderBulkPrice(); });
+$('cards-price-existing').addEventListener('change', event => { bulkPrice.replace = event.target.value === 'replace'; renderBulkPrice(); });
+$('cards-price-start').addEventListener('click', runBulkPrice);
+$('cards-price-stop').addEventListener('click', () => { bulkPrice.stopping = true; renderBulkPrice(); });
+for (const id of ['cards-price-cancel', 'cards-price-finish', 'cards-price-close']) $(id).addEventListener('click', () => {
+  if (bulkPrice.phase !== 'running') $('cards-price-dialog').close();
+});
+// A running lookup is stopped with its own button, not Esc.
+$('cards-price-dialog').addEventListener('cancel', event => { if (bulkPrice.phase === 'running') event.preventDefault(); });

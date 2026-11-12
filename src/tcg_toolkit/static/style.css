@@ -823,6 +823,14 @@ button.official-card.chosen, button.official-card.chosen:hover { border-color: v
 .export-group[disabled] .chip { cursor: not-allowed; }
 .chip:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .export-summary { margin: 4px 0 0; font-size: 13px; color: var(--color-text-secondary); }
+/* Bulk price lookup dialog: matching rule, then the plan / progress line and per-outcome counts. */
+.bulk-price-rule { margin: -6px 0 14px; }
+.bulk-price-results { display: grid; gap: 6px; margin: 12px 0 0; padding: 12px 14px; list-style: none; font-size: 13px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.bulk-price-results li { display: flex; align-items: center; gap: 8px; }
+.bulk-price-results .bi { color: var(--color-text-muted); }
+.bulk-price-results .bulk-price-updated .bi { color: var(--color-text); }
+.bulk-price-results .bulk-price-failed { font-weight: 500; }
+.bulk-price-results .bulk-price-note { margin-top: 2px; font-size: 12px; color: var(--color-text-muted); }
 
 /* Owned quantity (from My cards) in search and favorites */
 td.owned-cell { font-weight: 600; }

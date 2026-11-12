@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const source = await readFile(new URL('../src/tcg_toolkit/static/cards.js', import.meta.url), 'utf8');
-const {createCards, filterCards, summarizeCards, yenPrice, priceGame, rankOffers, fetchPriceMerchants, lookupPrices} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const {createCards, filterCards, summarizeCards, yenPrice, priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const card = {id: 'one', game: 'WS', card_number: 'ABC-001', rarity: 'SR', name: 'First', quantity: 2, notes: 'Keep'};
 const reply = (data, status = 200) => ({ok: status < 400, status, json: async () => data});
 
@@ -220,7 +220,7 @@ test('price lookup requests YuYu-Tei and turns failures into translation keys', 
   const calls = [];
   const api = responses => async (url, options) => { calls.push({url, options}); return responses.shift(); };
   const merchants = await fetchPriceMerchants(api([reply({items: [{id: 'yuyutei', name: '游游亭', games: ['ws', 'lycee']}]})]));
-  assert.deepEqual([...merchants.yuyutei], ['ws', 'lycee']);
+  assert.deepEqual(merchants.map(({id, name, games}) => [id, name, [...games]]), [['yuyutei', '游游亭', ['ws', 'lycee']]]);
   assert.equal(calls.at(-1).url, '/api/prices/merchants');
   await assert.rejects(fetchPriceMerchants(api([reply({detail: 'x'}, 500)])));
   const offer = {name: 'Card', rarity: 'SR', price: 100, currency: 'JPY', product_url: 'https://yuyu-tei.jp/x'};
@@ -236,4 +236,38 @@ test('price lookup requests YuYu-Tei and turns failures into translation keys', 
   }
   const broken = {ok: false, status: 502, json: async () => { throw new SyntaxError('not json'); }};
   await assert.rejects(lookupPrices(api([broken]), {game: 'WS', card_number: 'A'}), error => error.key === 'price_lookup_failed');
+});
+
+test('bulk lookup picks the cheapest same-rarity offer, preferring stock', () => {
+  const offer = (price, rarity, stock_status = 'in_stock', currency = 'JPY') => ({price, rarity, stock_status, currency, product_url: `${rarity}-${price}`});
+  const offers = [offer(300, 'SR'), offer(120, 'sr', 'out_of_stock'), offer(200, 'SR'), offer(50, 'RR'), offer(10, 'SR', 'in_stock', 'USD')];
+  assert.equal(pickOffer(offers, ' sr ').product_url, 'SR-200');
+  // Without any in stock, the cheapest of the rest.
+  assert.equal(pickOffer([offer(300, 'SR', 'unknown'), offer(120, 'SR', 'out_of_stock')], 'SR').product_url, 'SR-120');
+  assert.equal(pickOffer([offer(0, 'SR', 'out_of_stock')], 'SR').price, 0);
+  assert.equal(pickOffer(offers, 'SP'), null);
+  assert.equal(pickOffer(offers, ''), null);
+  assert.equal(pickOffer([{...offer(5, null)}], 'SR'), null);
+  assert.equal(pickOffer([], 'SR'), null);
+});
+
+test('lookups can name another merchant; setPrice saves only price and currency', async () => {
+  const urls = [];
+  const lookupApi = async url => { urls.push(url); return reply({items: []}); };
+  await lookupPrices(lookupApi, {game: 'WS', card_number: 'A'}, undefined, 'other');
+  assert.equal(new URL(urls[0], 'http://local').searchParams.get('merchant'), 'other');
+  const priced = {...card, group_id: 'g1', price: 12.5, currency: 'CNY', image_url: 'https://img/x.png'};
+  const server = groupServer({cards: [priced], groups: decks}), cards = createCards(() => {});
+  await cards.activate(server.api);
+  assert.equal(await cards.setPrice('one', 1280, 'JPY'), '');
+  const sent = server.calls.at(-1);
+  assert.deepEqual([sent.method, sent.path], ['PUT', '/api/cards/one']);
+  assert.deepEqual(sent.body, {game: 'WS', card_number: 'ABC-001', rarity: 'SR', name: 'First', quantity: 2, price: '1280.00',
+    currency: 'JPY', notes: 'Keep', image_url: 'https://img/x.png'});
+  assert.equal('group_id' in sent.body, false);
+  assert.deepEqual([cards.state.records[0].price, cards.state.records[0].currency], ['1280.00', 'JPY']);
+  assert.equal(cards.state.busy, false);
+  assert.equal(await cards.setPrice('missing', 1, 'JPY'), 'cards_failed');
+  server.failNext(404, 'card_not_found');
+  assert.equal(await cards.setPrice('one', 1, 'JPY'), 'cards_missing');
 });
