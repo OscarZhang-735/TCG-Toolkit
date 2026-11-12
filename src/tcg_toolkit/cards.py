@@ -428,9 +428,17 @@ def move(card_id: str, body: GroupTarget, request: Request, user=Depends(current
 
 
 @router.put('/{card_id}', dependencies=[Depends(write_guard)])
-def update(card_id: str, body: CardInput, request: Request, user=Depends(current_user)):
+def update(card_id: str, body: CardCreate, request: Request, user=Depends(current_user)):
     with request.app.state.auth.store.session() as db:
+        # group_id is optional here: sent, it moves the card in the same write (null ungroups it);
+        # omitted, the card stays where it is. The user lock orders this against group deletion.
+        moving = 'group_id' in body.model_fields_set
+        if moving:
+            lock_user(db, user['id'])
+            group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
         row = owned(db, user['id'], card_id, lock=True)
+        if moving:
+            row.group_id = group_id
         try:
             with db.begin_nested():
                 for key, value in values(body).items():

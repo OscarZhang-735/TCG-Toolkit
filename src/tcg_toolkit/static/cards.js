@@ -41,7 +41,8 @@ const errorKeys = {card_group_name_taken: 'favorite_group_name_taken', card_grou
 const stale = key => key === 'favorite_group_missing' || key === 'cards_missing';
 export function createCards(onChange) {
   let request, generation = 0, controller = new AbortController();
-  // group is the selected group id (null shows every card); draftGroup is where a new card is added.
+  // group is the selected group id (null shows every card); draftGroup is the editor's group choice:
+  // the selected tab for a new card, the card's own group when editing.
   const initial = () => ({records: [], groups: [], group: null, groupBusy: false, ready: false, busy: false, loading: false,
     error: '', duplicate: '', editing: '', draft: blankCard(), draftGroup: null});
   const state = initial();
@@ -75,7 +76,7 @@ export function createCards(onChange) {
     const row = state.records.find(row => row.id === id);
     if (id && !row) return;
     state.editing = id; state.draft = row ? draftOf(row) : blankCard();
-    state.draftGroup = id ? null : state.group;
+    state.draftGroup = row ? row.group_id ?? null : state.group;
     state.error = ''; state.duplicate = ''; onChange();
   }
   async function mutate(removeId) {
@@ -83,7 +84,7 @@ export function createCards(onChange) {
     const current = generation, id = removeId || state.editing;
     state.busy = true; state.error = ''; state.duplicate = ''; onChange();
     try {
-      const body = removeId ? {} : id ? payload(state.draft) : {...payload(state.draft), group_id: state.draftGroup};
+      const body = removeId ? {} : {...payload(state.draft), group_id: state.draftGroup};
       const result = await call(id ? '/' + id : '', removeId ? 'DELETE' : id ? 'PUT' : 'POST', body);
       if (current !== generation) return;
       if (removeId) state.records = state.records.filter(row => row.id !== id);

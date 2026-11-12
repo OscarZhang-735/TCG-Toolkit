@@ -107,7 +107,7 @@ function groupServer({cards = [], groups = []} = {}) {
     if (pathname.startsWith('/api/cards/groups/') && options.method === 'DELETE') return reply(null, 204);
     if (pathname.endsWith('/group')) return reply({...cards.find(row => row.id === pathname.split('/')[3]), group_id: body.group_id});
     if (pathname === '/api/cards' && options.method === 'POST') return reply({...body, id: 'new', created_at: 2, updated_at: 2}, 201);
-    return reply({...cards[0], ...body});
+    return reply({...(cards.find(row => row.id === pathname.split('/')[3]) ?? cards[0]), ...body});
   };
   return {api, calls, failNext: (status, detail) => { fail = [status, detail]; }};
 }
@@ -124,10 +124,13 @@ test('groups load with cards; the selected group filters and receives new cards'
   Object.assign(cards.state.draft, {game: 'WS', card_number: 'NEW-1', rarity: 'R', name: 'New'});
   await cards.save();
   assert.equal(server.calls.at(-1).body.group_id, 'g1'); assert.equal(cards.state.records[0].group_id, 'g1');
-  // Editing sends only card fields; membership changes go through the move endpoint.
-  cards.edit('one'); assert.equal(cards.state.draftGroup, null);
-  cards.state.draft.quantity = 3; await cards.save();
-  assert.equal(server.calls.at(-1).method, 'PUT'); assert.equal('group_id' in server.calls.at(-1).body, false);
+  // Editing starts from the card's own group and saves the choice with the card fields.
+  cards.edit('one'); assert.equal(cards.state.draftGroup, 'g1');
+  cards.state.draft.quantity = 3; cards.state.draftGroup = 'g2'; await cards.save();
+  assert.deepEqual([server.calls.at(-1).method, server.calls.at(-1).body.group_id], ['PUT', 'g2']);
+  assert.equal(cards.state.records.find(row => row.id === 'one').group_id, 'g2');
+  assert.equal(cards.state.draftGroup, 'g1');
+  cards.edit('two'); assert.equal(cards.state.draftGroup, null);
   // A choice in the add dialog overrides the selected group, and null means ungrouped.
   cards.edit(); cards.state.draftGroup = null;
   Object.assign(cards.state.draft, {game: 'WS', card_number: 'NEW-2', rarity: 'R', name: 'Loose'});

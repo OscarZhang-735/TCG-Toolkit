@@ -194,10 +194,10 @@ function rarityOptions() {
   } else if (mapped) draft.rarity = match?.code ?? '';
   select.value = draft.rarity;
 }
-// New cards go into the group chosen here (the selected tab by default); edits keep their group.
+// The card's group: the selected tab by default for new cards, the current group when editing.
 function groupPicker() {
   const state = inventory.state, select = $('card-group');
-  $('card-group-field').hidden = Boolean(state.editing) || !state.groups.length;
+  $('card-group-field').hidden = !state.groups.length;
   const none = node('option', t('favorite_group_none')); none.value = '';
   select.replaceChildren(none, ...state.groups.map(group => { const option = node('option', group.name); option.value = group.id; return option; }));
   select.value = state.draftGroup ?? ''; select.disabled = state.busy;
@@ -249,11 +249,16 @@ function money(amount, currency, converted = false) {
   return new Intl.NumberFormat(getLanguage(), {style: 'currency', currency, currencyDisplay: 'code',
     minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2}).format(converted && whole ? Math.round(amount) : amount);
 }
-// The price in the display currency, with the entered amount underneath when it differs.
+// The price in the display currency with the entered amount underneath (also when the currencies
+// match). Unpriced cards show a placeholder in the display currency ("JPY -"); when the rate is
+// unknown only the entered amount is shown.
 function priceDisplay(row) {
-  const box = node('span', '', 'converted-price'), value = yen(row);
-  if (row.currency === displayCurrency || value == null) box.append(node('span', money(row.price, row.currency)));
-  else box.append(node('span', money(value * rates[displayCurrency], displayCurrency, true)), node('small', money(row.price, row.currency), 'original-price'));
+  const box = node('span', '', 'converted-price');
+  if (row.price == null) { box.append(node('span', `${displayCurrency} -`, 'muted')); return box; }
+  const value = yen(row), original = money(row.price, row.currency);
+  if (row.currency === displayCurrency) box.append(node('span', original), node('small', original, 'original-price'));
+  else if (value == null) box.append(node('span', original));
+  else box.append(node('span', money(value * rates[displayCurrency], displayCurrency, true)), node('small', original, 'original-price'));
   return box;
 }
 // Price range slider, as on the favorites page: thumbs step through the distinct yen values of the
@@ -434,7 +439,7 @@ function cardRow(row) {
   const product = node('div', '', 'product-summary');
   product.append(cardImage(row, {noReferrer: true}), node('span', row.name, 'cards-name'));
   cell(node('span', row.game, 'game-tag')); cell(rarityBadge(row)); cell(numberButton(row.card_number)); cell(product);
-  cell(row.price == null ? node('span', '—', 'muted') : priceDisplay(row), 'numeric');
+  cell(priceDisplay(row), 'numeric');
   cell(quantityStepper(row), 'cart-col'); cell(row.notes, 'cards-notes');
   cell(groupTag(row) ?? node('span', '—', 'muted'), 'group-col');
   cell(cardActions(row), 'action-col');
@@ -447,7 +452,7 @@ function cardTile(row) {
   const image = cardImage(row, {noReferrer: true});
   if (selection.active) { image.append(selectBox(row)); card.classList.toggle('selected', selection.ids.has(row.id)); }
   const bottom = node('div', '', 'card-bottom');
-  bottom.append(row.price == null ? node('span', '—', 'muted') : priceDisplay(row));
+  bottom.append(priceDisplay(row));
   const owned = node('div', '', 'card-cart');
   owned.append(node('span', t('cards_owned_column'), 'card-cart-label'), quantityStepper(row));
   card.append(top, image, node('span', row.name, 'card-name'), bottom, owned);
@@ -538,6 +543,7 @@ function render() {
   $('cards-stats').hidden = !state.ready || !groupRows.length;
   $('cards-kinds').textContent = number(stats.kinds);
   $('cards-quantity-total').textContent = number(stats.quantity);
+  renderValue(rows, stats.kinds);
   $('cards-by-game').replaceChildren(...chips(stats.games));
   $('cards-by-rarity').replaceChildren(...chips(stats.rarities));
   $('cards-count').hidden = !state.ready;
@@ -549,6 +555,20 @@ function render() {
   $('cards-grid').replaceChildren(...(cardsView === 'grid' ? rows.map(cardTile) : []));
   $('cards-empty').hidden = !state.ready || rows.length > 0;
   $('cards-empty').querySelector('h3').textContent = t(groupRows.length ? 'no_matching_results' : state.records.length ? 'cards_group_empty' : 'cards_empty_all');
+}
+// Total value of the owned cards on screen (same set as the card-type tile): unit price × quantity,
+// summed in yen and shown in the display currency. The note says how many card types had a
+// comparable price, e.g. 15/50; the rest (unpriced, or no exchange rate) are left out.
+function renderValue(rows, kinds) {
+  let total = 0, counted = 0;
+  for (const row of rows) {
+    const value = row.quantity > 0 ? yen(row) : null;
+    if (value != null) { total += value * row.quantity; counted++; }
+  }
+  $('cards-value-total').textContent = counted ? money(total * rates[displayCurrency], displayCurrency, true) : `${displayCurrency} -`;
+  const note = $('cards-value-counted');
+  note.textContent = t('cards_value_counted', {counted: number(counted), total: number(kinds)});
+  note.title = t('cards_value_counted_hint');
 }
 function confirmDelete(row) {
   pendingDelete = row.id;

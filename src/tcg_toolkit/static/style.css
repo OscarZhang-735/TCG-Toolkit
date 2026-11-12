@@ -644,7 +644,11 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 }
 .stat-label { font-size: 12px; color: var(--color-text-muted); }
 .stat-value { font-size: 26px; font-weight: 700; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.stat-note { font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#cards-value-total { white-space: nowrap; }
 .stat-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+/* Three stat tiles leave too little room beside them on mid-size windows; stack the breakdowns below. */
+@media (max-width: 1100px) { .cards-summary { grid-template-columns: 1fr; } }
 .stat-groups h3 { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
 .stat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .stat-chip {
@@ -718,7 +722,7 @@ button.row-action:hover { background: var(--color-hover); color: var(--color-tex
 .card-dialog .details-row { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
 .card-dialog .details-row .wide-2 { grid-column: span 2; }
 .card-dialog .details-row .wide { grid-column: 1 / -1; }
-/* Editing hides the group picker; the price then fills the rest of the quantity row. */
+/* Without any groups the picker is hidden; the price then fills the rest of the quantity row. */
 @media (min-width: 761px) { .card-dialog .details-row:has(#card-group-field[hidden]) .card-price-field { grid-column: span 3; } }
 .card-dialog .field select { margin-top: 6px; }
 /* Beats the generic .field > span label rule. */

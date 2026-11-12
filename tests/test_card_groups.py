@@ -72,9 +72,19 @@ def test_membership_filter_move_delete_and_edit_preserve_cards(client):
     assert client.put(path, json={'group_id': custom['id']}).json() == moved
     assert client.put(path, json={'group_id': None}).json() == saved
     client.put(path, json={'group_id': custom['id']})
-    # The existing editor sends only card fields, so it must retain membership.
+    # Edits that omit group_id (older clients) retain membership.
     edited = client.put(f"/api/cards/{saved['id']}", json={**CARD, 'quantity': 7, 'notes': 'Edited'}).json()
     assert edited['group_id'] == custom['id'] and edited['quantity'] == 7
+    # The editor may send group_id with the card fields: null ungroups, an id moves, '' is invalid.
+    edit = f"/api/cards/{saved['id']}"
+    assert client.put(edit, json={**CARD, 'group_id': ''}).status_code == 422
+    assert client.put(edit, json={**CARD, 'quantity': 8, 'group_id': None}).json()['group_id'] is None
+    edited = client.put(edit, json={**CARD, 'quantity': 7, 'notes': 'Edited', 'group_id': custom['id']}).json()
+    assert edited['group_id'] == custom['id'] and edited['quantity'] == 7
+    # A rejected edit (duplicate) leaves the group unchanged too.
+    response = client.put(edit, json={**CARD, 'card_number': 'ABC-002', 'group_id': None})
+    assert response.status_code == 409
+    assert client.get('/api/cards', params={'group_id': custom['id']}).json()['items'][-1]['id'] == saved['id']
     with UserStore(app.state.auth.store.conninfo) as store, store.session() as db:
         assert db.get(OwnedCard, saved['id']).group_id == custom['id']
         assert db.get(CardGroup, custom['id']).name == custom['name']
@@ -110,6 +120,7 @@ def test_group_ownership_and_database_constraints(client):
             ('PUT', f'/api/cards/groups/{group_id}', {'json': {'name': 'Other'}}),
             ('DELETE', f'/api/cards/groups/{group_id}', {'json': {}}),
             ('PUT', f"/api/cards/{bob_saved['id']}/group", {'json': {'group_id': group_id}}),
+            ('PUT', f"/api/cards/{bob_saved['id']}", {'json': {**CARD, 'group_id': group_id}}),
         ]:
             response = client.request(method, path, **kwargs)
             assert response.status_code == 404
