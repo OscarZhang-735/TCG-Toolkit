@@ -180,20 +180,22 @@ def listing(request: Request, group_id: str | None = None, user=Depends(current_
         return {'items': [record(row) for row in rows]}
 
 
-EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'notes',
+# 'group' holds the group name (not its ID), so files carry groups between accounts.
+EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'notes', 'group',
                   'image_url', 'id', 'created_at', 'updated_at')
 XLSX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 IMPORT_LIMIT = 10 * 1024 * 1024
 REQUIRED_COLUMNS = {key for key, field in CardInput.model_fields.items() if field.is_required()}
+IMPORT_COLUMNS = {*CardInput.model_fields, 'group'}
 EXPORT_WIDTHS = {'game': 20, 'card_number': 20, 'rarity': 20, 'name': 36, 'quantity': 18,
-                 'notes': 40, 'image_url': 40, 'id': 40, 'created_at': 20, 'updated_at': 20}
+                 'notes': 40, 'group': 24, 'image_url': 40, 'id': 40, 'created_at': 20, 'updated_at': 20}
 # XLSX headings are for people; JSON keys stay stable so files remain machine-readable.
 EXPORT_HEADINGS = {
     'en': {'sheet': 'Cards', 'game': 'Game', 'card_number': 'Number', 'rarity': 'Rarity', 'name': 'Name',
-           'quantity': 'Quantity', 'notes': 'Notes', 'image_url': 'Image URL', 'id': 'ID',
+           'quantity': 'Quantity', 'notes': 'Notes', 'group': 'Group', 'image_url': 'Image URL', 'id': 'ID',
            'created_at': 'Created at', 'updated_at': 'Updated at'},
     'zh-CN': {'sheet': '卡牌', 'game': '游戏', 'card_number': '编号', 'rarity': '稀有度', 'name': '名称',
-              'quantity': '拥有量', 'notes': '备注', 'image_url': '图片地址', 'id': 'ID',
+              'quantity': '拥有量', 'notes': '备注', 'group': '分组', 'image_url': '图片地址', 'id': 'ID',
               'created_at': '创建时间', 'updated_at': '更新时间'},
 }
 
@@ -210,12 +212,14 @@ def export_cards(request: Request, format: Literal['xlsx', 'json'],
                  group_id: str | None = None,
                  user=Depends(current_user)):
     items = listing(request, group_id=group_id, user=user)['items']
+    names = {row['id']: row['name'] for row in groups(request, user=user)['items']}
     if games is not None:
         wanted = {game.strip().casefold() for game in games}
         items = [item for item in items if item['game'].casefold() in wanted]
     # Canonical column order, regardless of the order fields were requested in.
     columns = [key for key in EXPORT_COLUMNS if fields is None or key in fields]
-    items = [{key: item[key] for key in columns} for item in items]
+    # Ungrouped cards export a null group (an empty XLSX cell).
+    items = [{key: names.get(item['group_id']) if key == 'group' else item[key] for key in columns} for item in items]
     headers = {'Content-Disposition': f'attachment; filename="cards.{format}"',
                'Cache-Control': 'no-store'}
     if format == 'json':
@@ -234,6 +238,8 @@ def export_cards(request: Request, format: Literal['xlsx', 'json'],
         for row_index, item in enumerate(items, 1):
             for column_index, key in enumerate(columns):
                 value = item[key]
+                if value is None:
+                    continue
                 # Excel preserves only 15 numeric digits; retain larger quantities as text.
                 if isinstance(value, int) and abs(value) < 10**15:
                     sheet.write_number(row_index, column_index, value)
@@ -272,19 +278,53 @@ def xlsx_import_rows(content):
                 raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line})
             item = {}
             for key, cell in zip(headers, cells):
-                if key not in CardInput.model_fields or cell.value is None:
+                if key not in IMPORT_COLUMNS or cell.value is None:
                     continue
                 if cell.data_type in ('f', 'e'):
                     raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line})
                 value = cell.value
                 if key == 'quantity' and isinstance(value, str) and value.isascii() and value.isdecimal():
                     value = int(value) if len(value) <= 16 else value
-                if key == 'card_number' and type(value) is int:
+                if key in ('card_number', 'group') and type(value) is int:
                     value = str(value)
                 item[key] = value
             yield line, item
     finally:
         workbook.close()
+
+
+def import_group_name(value):
+    """Group name from an import row; blank or missing means ungrouped."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError('Group must be text')
+    value = value.strip()
+    if len(value) > 100 or '\0' in value:
+        raise ValueError('Invalid group name')
+    value.encode('utf-8')
+    return value or None
+
+
+def assign_import_groups(db: Session, user_id, imported, wanted, now):
+    """Put newly imported cards into groups by name, creating missing groups in file order."""
+    members = {}
+    for card_id, name in wanted:
+        if name is not None and card_id in imported:
+            members.setdefault(name, []).append(card_id)
+    if not members:
+        return
+    existing = dict(db.execute(select(CardGroup.name, CardGroup.id).where(
+        CardGroup.user_id == user_id, CardGroup.name.in_(list(members)))).all())
+    missing = [name for name in members if name not in existing]
+    # New groups share one timestamp; sorted IDs keep their (created_at, id) order matching the file.
+    for name, group_id in zip(missing, sorted(str(uuid.uuid4()) for _ in missing)):
+        db.add(CardGroup(id=group_id, user_id=user_id, name=name, created_at=now))
+        existing[name] = group_id
+    db.flush()
+    for name, card_ids in members.items():
+        db.execute(sql_update(OwnedCard).where(OwnedCard.user_id == user_id, OwnedCard.id.in_(card_ids))
+                   .values(group_id=existing[name]))
 
 
 def import_card_rows(content, format, store, user_id):
@@ -298,10 +338,11 @@ def import_card_rows(content, format, store, user_id):
             rows = enumerate(items, 1)
         else:
             rows = xlsx_import_rows(content)
-        cards = []
+        cards, wanted = [], []
         for line, item in rows:
             try:
                 body = CardInput.model_validate(item)
+                group = import_group_name(item.get('group'))
                 fields = values(body)
                 for value in fields.values():
                     if isinstance(value, str):
@@ -310,7 +351,9 @@ def import_card_rows(content, format, store, user_id):
                         value.encode('utf-8')
             except (ValidationError, ValueError):
                 raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line}) from None
-            cards.append(dict(id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **fields))
+            card_id = str(uuid.uuid4())
+            cards.append(dict(id=card_id, user_id=user_id, created_at=now, updated_at=now, **fields))
+            wanted.append((card_id, group))
     except (BadZipFile, InvalidFileException, ParseError, DefusedXmlException, KeyError, IndexError,
             ValueError, TypeError, RecursionError, OSError):
         raise HTTPException(422, detail='cards_import_invalid') from None
@@ -318,9 +361,12 @@ def import_card_rows(content, format, store, user_id):
         return {'imported': 0, 'skipped': 0}
     statement = insert(OwnedCard).on_conflict_do_nothing(
         index_elements=['user_id', 'game_key', 'number_key', 'rarity_key']).returning(OwnedCard.id)
+    # Skipped duplicates keep their existing group; only new cards join the file's groups.
     with store.session() as db:
-        imported = len(db.scalars(statement, cards).all())
-    return {'imported': imported, 'skipped': len(cards) - imported}
+        lock_user(db, user_id)
+        imported = set(db.scalars(statement, cards).all())
+        assign_import_groups(db, user_id, imported, wanted, now)
+    return {'imported': len(imported), 'skipped': len(cards) - len(imported)}
 
 
 @router.post('/import', dependencies=[Depends(require_trusted_origin)])

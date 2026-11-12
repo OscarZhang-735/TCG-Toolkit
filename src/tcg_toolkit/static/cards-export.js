@@ -1,5 +1,5 @@
 // Columns the server can export, in file order.
-export const EXPORT_FIELDS = ['game', 'card_number', 'rarity', 'name', 'quantity', 'notes', 'image_url', 'id', 'created_at', 'updated_at'];
+export const EXPORT_FIELDS = ['game', 'card_number', 'rarity', 'name', 'quantity', 'notes', 'group', 'image_url', 'id', 'created_at', 'updated_at'];
 
 // Query string for /api/cards/export. Omitted games/fields/group mean "everything";
 // language only affects XLSX headings ('keys' keeps raw field names).

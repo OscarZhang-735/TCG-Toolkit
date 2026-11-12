@@ -15,16 +15,30 @@ ORIGIN = 'https://testserver'
 CARD = dict(game='ws', card_number='ABC-001', rarity='SR', name='Card', quantity=2, notes='Mine')
 
 
+def exported(row, group=None):
+    """Export record of an API card; group is its group name (None when ungrouped)."""
+    return {key: group if key == 'group' else row[key] for key in EXPORT_COLUMNS}
+
+
 def spreadsheet_rows(content):
+    """Sheet values by row; cells the file leaves out (empty values) read as None."""
     ns = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
     with ZipFile(BytesIO(content)) as archive:
         strings = ET.fromstring(archive.read('xl/sharedStrings.xml'))
         texts = [''.join(item.itertext()) for item in strings]
         sheet = ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
     assert sheet.findall('.//s:f', ns) == []
-    return [[texts[int(cell.find('s:v', ns).text)] if cell.get('t') == 's'
-             else int(cell.find('s:v', ns).text) for cell in row]
+
+    def column(reference):
+        index = 0
+        for letter in reference.rstrip('0123456789'):
+            index = index * 26 + ord(letter) - 64
+        return index - 1
+    rows = [{column(cell.get('r')): texts[int(cell.find('s:v', ns).text)] if cell.get('t') == 's'
+             else int(cell.find('s:v', ns).text) for cell in row}
             for row in sheet.findall('s:sheetData/s:row', ns)]
+    width = max((max(row, default=-1) + 1 for row in rows), default=0)
+    return [[row.get(index) for index in range(width)] for row in rows]
 
 
 @pytest.mark.parametrize('format', ['json', 'xlsx'])
@@ -50,7 +64,7 @@ def test_export_round_trip(client):
         'name': '中文 カード', 'notes': '=1+1\n备注 & <text>',
         'quantity': 9007199254740991, 'image_url': 'https://example.com/card.png'}).json()
     zero = client.post('/api/cards', json={**CARD, 'quantity': 0}).json()
-    saved, zero = ({key: row[key] for key in EXPORT_COLUMNS} for row in (saved, zero))
+    saved, zero = (exported(row) for row in (saved, zero))
     assert client.get('/api/cards/export?format=json').json() == {'items': [zero, saved]}
     response = client.get('/api/cards/export?format=xlsx')
     assert response.status_code == 200
@@ -67,7 +81,7 @@ def test_export_long_text_offers_lossless_json(client):
     assert response.status_code == 422
     assert response.json()['detail'] == 'export_xlsx_text_too_long'
     assert client.get('/api/cards/export?format=json').json()['items'] == [
-        {key: saved[key] for key in EXPORT_COLUMNS}]
+        exported(saved)]
 
 
 def test_export_language_fields_and_games(client):

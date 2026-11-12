@@ -55,7 +55,10 @@ const EXPORT_KEY = 'cardsExport';
 function loadExportSettings() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(EXPORT_KEY)) ?? {}; } catch { /* corrupt: use defaults */ }
-  const chosen = Array.isArray(saved.fields) ? EXPORT_FIELDS.filter(field => saved.fields.includes(field)) : [];
+  // Fields added after the settings were saved (not in saved.known) start out chosen.
+  const known = Array.isArray(saved.known) ? saved.known : EXPORT_FIELDS.filter(field => field !== 'group');
+  const chosen = Array.isArray(saved.fields)
+    ? EXPORT_FIELDS.filter(field => saved.fields.includes(field) || !known.includes(field)) : [];
   return {
     format: ['xlsx', 'json'].includes(saved.format) ? saved.format : 'xlsx',
     language: ['zh-CN', 'en', 'keys'].includes(saved.language) ? saved.language : getLanguage(),
@@ -63,7 +66,7 @@ function loadExportSettings() {
   };
 }
 let exportSettings = loadExportSettings();
-const saveExportSettings = () => localStorage.setItem(EXPORT_KEY, JSON.stringify(exportSettings));
+const saveExportSettings = () => localStorage.setItem(EXPORT_KEY, JSON.stringify({...exportSettings, known: EXPORT_FIELDS}));
 // Cards in the chosen export group (null: the whole library).
 const exportRecords = () => inventory.state.records.filter(row => exportGroup === null || row.group_id === exportGroup);
 // [key, label] for every game in the exported cards, sorted for display.
