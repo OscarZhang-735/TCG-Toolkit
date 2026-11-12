@@ -7,7 +7,7 @@ from sqlalchemy import select
 from tcg_toolkit.db_models import User, EmailChallenge
 from tcg_toolkit.web import app
 from tcg_toolkit.auth.email_verification import SMTPMailer
-from test_subscriptions import client, add, worker, emails, snapshot, DAY, login
+from test_subscriptions import client, add, worker, emails, snapshot, NOW, login
 
 PATH = '/api/subscriptions/notification-email'
 
@@ -39,16 +39,16 @@ def test_default_verify_change_reset_and_account_identity(client):
 def test_pending_digest_uses_latest_verified_recipient_and_reset(client):
     add(client)
     service = worker(lambda game, url: snapshot(url, price=200))
-    service.check_daily(DAY)
+    service.check_due()
     code = request_code(client)
     assert client.put(PATH, json=code).status_code == 200
     service.deliver_due()
     assert service.mailer.messages[0]['To'] == 'alerts@example.com'
     assert emails()[0].state == 'sent'
     client.request('DELETE', PATH, json={})
-    from datetime import timedelta
     service.fetcher = lambda game, url: snapshot(url, price=300)
-    service.check_daily(DAY + timedelta(days=1))
+    service.clock = lambda: NOW + 86400
+    service.check_due()
     service.deliver_due()
     assert service.mailer.messages[1]['To'] == 'alice@example.com'
 

@@ -1,7 +1,7 @@
-"""Local-noon checks and durable SMTP digests, serialized through PostgreSQL."""
+"""Hourly due checks and durable SMTP digests, serialized through PostgreSQL."""
 from collections import defaultdict
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.message import EmailMessage
 from .email_templates import digest_html, digest_subject, digest_titles, favorites_url
 import json
@@ -25,13 +25,12 @@ RETRY_DELAYS = (60, 300, 1800)
 CHANGE_FIELDS = ('price', 'stock_quantity', 'stock_status')
 
 
-def next_noon(now):
-    """Use a naive local datetime so timestamp() applies DST for the target day."""
-    local = datetime.fromtimestamp(now)
-    noon = local.replace(hour=12, minute=0, second=0, microsecond=0)
-    if noon <= local:
-        noon += timedelta(days=1)
-    return noon.timestamp()
+def next_hour(now):
+    """Find the next local hour boundary on the timeline, including DST folds."""
+    candidate = (int(now) // 60 + 1) * 60
+    while datetime.fromtimestamp(candidate).minute != 0:
+        candidate += 60
+    return candidate
 
 
 def digest_message(recipient, email_id, run_date, changes):
@@ -64,7 +63,7 @@ class SubscriptionWorker:
         self.clock = clock
         self.stopping = Event()
         self.thread = None
-        self.deadline = next_noon(clock())
+        self.deadline = clock()  # Scan overdue subscriptions immediately on startup.
 
     @contextmanager
     def exclusive(self):
@@ -81,30 +80,34 @@ class SubscriptionWorker:
                         conn.invalidate()  # Never return a locked connection to the pool.
                         raise
 
-    def check_daily(self, local_date):
+    def check_due(self):
         with self.exclusive() as acquired:
             if not acquired:
                 return None
+            started_at = int(self.clock())
             with self.store.session() as db:
-                if db.get(SubscriptionRun, local_date) is not None:
+                subscriptions = db.scalars(select(Subscription).where(
+                    Subscription.next_check_at <= started_at
+                ).order_by(Subscription.user_id, Subscription.id)).all()
+                if not subscriptions:
                     return False
-                db.add(SubscriptionRun(local_date=local_date, started_at=int(self.clock()), state='running'))
+                run_id = str(uuid.uuid4())
+                local_date = datetime.fromtimestamp(started_at).date()
+                db.add(SubscriptionRun(id=run_id, local_date=local_date, started_at=started_at, state='running'))
             try:
-                self._check_cards(local_date)
+                self._check_cards(subscriptions, run_id, local_date, started_at)
             except Exception as exc:
                 with self.store.session() as db:
-                    run = db.get(SubscriptionRun, local_date)
+                    run = db.get(SubscriptionRun, run_id)
                     run.state, run.last_error = 'failed', type(exc).__name__
                     run.finished_at = int(self.clock())
                 raise
             with self.store.session() as db:
-                run = db.get(SubscriptionRun, local_date)
+                run = db.get(SubscriptionRun, run_id)
                 run.state, run.finished_at = 'complete', int(self.clock())
             return True
 
-    def _check_cards(self, local_date):
-        with self.store.session() as db:
-            subscriptions = db.scalars(select(Subscription).order_by(Subscription.user_id, Subscription.id)).all()
+    def _check_cards(self, subscriptions, run_id, local_date, started_at):
         by_user, products = defaultdict(list), {}
         for row in subscriptions:
             by_user[row.user_id].append(row.id)
@@ -118,35 +121,37 @@ class SubscriptionWorker:
                 if (snapshot['stock_status'] == 'unknown' or snapshot['stock_quantity'] is None
                         or snapshot['price'] is None):
                     raise HTTPException(502, detail='product_unreadable')
-                products[(game, url)] = (snapshot, None, int(self.clock()))
+                products[(game, url)] = (snapshot, None)
             except HTTPException as exc:
-                products[(game, url)] = (None, str(exc.detail), int(self.clock()))
+                products[(game, url)] = (None, str(exc.detail))
                 errors += 1
         changed = 0
         for user_id, ids in by_user.items():
             if self.stopping.is_set():
                 raise InterruptedError('Subscription checks stopped')
             with self.store.session() as db:
-                rows = db.scalars(select(Subscription).where(Subscription.id.in_(ids))
+                rows = db.scalars(select(Subscription).where(Subscription.id.in_(ids),
+                                  Subscription.next_check_at <= started_at)
                                   .order_by(Subscription.id).with_for_update()).all()
                 changes = []
                 for row in rows:
-                    snapshot, error, checked_at = products[(row.game, row.product_url)]
-                    row.checked_at, row.last_error = checked_at, error
+                    snapshot, error = products[(row.game, row.product_url)]
+                    row.checked_at, row.last_error = started_at, error
+                    row.next_check_at = started_at + row.interval_hours * 3600
                     if error:
                         continue
                     before = json.loads(row.snapshot)
                     if any(before[key] != snapshot[key] for key in CHANGE_FIELDS):
                         changes.append(dict(subscription_id=row.id, before=before, after=snapshot,
-                                            checked_at=checked_at))
+                                            checked_at=started_at))
                     row.snapshot = json.dumps(snapshot)
                 if changes:
                     now = int(self.clock())
-                    db.add(SubscriptionEmail(id=str(uuid.uuid4()), user_id=user_id, run_date=local_date,
+                    db.add(SubscriptionEmail(id=str(uuid.uuid4()), user_id=user_id, run_id=run_id, run_date=local_date,
                            changes=json.dumps(changes), state='pending', created_at=now, next_attempt_at=now))
                     changed += len(changes)
-        logger.info('Subscription check date=%s cards=%d changes=%d source_errors=%d',
-                    local_date, len(products), changed, errors)
+        logger.info('Subscription check run=%s cards=%d changes=%d source_errors=%d',
+                    run_id, len(products), changed, errors)
 
     def deliver_due(self):
         with self.exclusive() as acquired:
@@ -194,15 +199,15 @@ class SubscriptionWorker:
     def tick(self):
         now = self.clock()
         if now >= self.deadline:
-            due_date = datetime.fromtimestamp(self.deadline).date()
-            # A suspended process that wakes on a later day must not backfill.
-            if datetime.fromtimestamp(now).date() == due_date:
-                # Delivery in another process may own the lock at noon. Keep
-                # the deadline until a daily record exists or this check runs.
-                if self.check_daily(due_date) is not None:
-                    self.deadline = next_noon(self.clock())
-            else:
-                self.deadline = next_noon(now)
+            # A busy worker retains the deadline and retries after releasing the lock.
+            # Failed rounds retry on the next hour; committed rows are no longer due.
+            try:
+                result = self.check_due()
+            except Exception:
+                self.deadline = next_hour(self.clock())
+                raise
+            if result is not None:
+                self.deadline = next_hour(self.clock())
         self.deliver_due()
 
     def _run(self):

@@ -164,13 +164,18 @@ class Subscription(Base):
     created_at: Mapped[int]
     checked_at: Mapped[int]
     last_error: Mapped[str | None]
-    __table_args__ = (UniqueConstraint("user_id", "game", "product_url"),)
+    interval_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
+    next_check_at: Mapped[int]
+    __table_args__ = (UniqueConstraint("user_id", "game", "product_url"),
+                      CheckConstraint("interval_hours >= 1", name="subscriptions_interval_hours_positive"),
+                      Index("subscriptions_due", "next_check_at"))
 
 
 class SubscriptionRun(Base):
     __tablename__ = "subscription_runs"
 
-    local_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    id: Mapped[str] = mapped_column(primary_key=True)
+    local_date: Mapped[date] = mapped_column(Date)
     started_at: Mapped[int]
     finished_at: Mapped[int | None]
     state: Mapped[str] = mapped_column()
@@ -183,7 +188,8 @@ class SubscriptionEmail(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    run_date: Mapped[date] = mapped_column(ForeignKey("subscription_runs.local_date"))
+    run_id: Mapped[str] = mapped_column(ForeignKey("subscription_runs.id"))
+    run_date: Mapped[date] = mapped_column(Date)
     changes: Mapped[str]
     state: Mapped[str] = mapped_column()
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -192,7 +198,7 @@ class SubscriptionEmail(Base):
     sent_at: Mapped[int | None]
     last_error: Mapped[str | None]
     __table_args__ = (
-        UniqueConstraint("user_id", "run_date"),
+        UniqueConstraint("user_id", "run_id"),
         CheckConstraint(state.in_(("pending", "sent", "failed", "cancelled"))),
         Index("subscription_emails_due", "state", "next_attempt_at"),
     )

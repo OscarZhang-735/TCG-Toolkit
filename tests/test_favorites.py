@@ -206,7 +206,7 @@ def test_membership_filter_move_and_delete_preserve_records(client):
     with app.state.auth.store.session() as db:
         row = db.get(Favorite, saved['id'])
         db.add(Subscription(id='sub', user_id=row.user_id, game=row.game, product_url=row.product_url,
-                            snapshot=row.snapshot, created_at=1, checked_at=1))
+                            snapshot=row.snapshot, created_at=1, checked_at=1, next_check_at=86401))
     assert client.request('DELETE', f"/api/favorites/groups/{custom['id']}", json={}).status_code == 204
     assert client.get('/api/favorites').json()['items'] == [{**other, 'group_id': None}, saved]
     with app.state.auth.store.session() as db:

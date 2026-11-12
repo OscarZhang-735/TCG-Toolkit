@@ -17,7 +17,12 @@ from .product_details import fetch_product_snapshot, normalize_product_url
 router = APIRouter(prefix='/api/subscriptions')
 
 
-class SubscribeInput(BaseModel):
+class IntervalInput(BaseModel):
+    interval_hours: int = Field(strict=True, ge=1, le=2147483647)
+
+
+class SubscribeInput(IntervalInput):
+    interval_hours: int = Field(default=24, strict=True, ge=1, le=2147483647)
     game: Game
     product_url: str = Field(max_length=512)
 
@@ -29,7 +34,8 @@ class SubscribeInput(BaseModel):
 
 def record(row):
     return dict(id=row.id, item=json.loads(row.snapshot), created_at=row.created_at,
-                checked_at=row.checked_at, last_error=row.last_error)
+                checked_at=row.checked_at, last_error=row.last_error,
+                interval_hours=row.interval_hours, next_check_at=row.next_check_at)
 
 
 @router.get('')
@@ -53,15 +59,28 @@ def add(body: SubscribeInput, request: Request, user=Depends(current_user)):
         row = db.scalar(query)
         if row is not None:
             return record(row)
-    snapshot = fetch_product_snapshot(body.game, body.product_url)
     now = int(time.time())
+    snapshot = fetch_product_snapshot(body.game, body.product_url)
     with store.session() as db:
         db.execute(insert(Subscription).values(
             id=str(uuid.uuid4()), user_id=user['id'], game=body.game.value,
             product_url=body.product_url, snapshot=json.dumps(snapshot),
-            created_at=now, checked_at=now,
+            created_at=now, checked_at=now, interval_hours=body.interval_hours,
+            next_check_at=now + body.interval_hours * 3600,
         ).on_conflict_do_nothing(index_elements=['user_id', 'game', 'product_url']))
         return record(db.scalar(query))
+
+
+@router.patch('/{subscription_id}', dependencies=[Depends(write_guard)])
+def update_interval(subscription_id: str, body: IntervalInput, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        row = db.scalar(select(Subscription).where(Subscription.id == subscription_id,
+                        Subscription.user_id == user['id']).with_for_update())
+        if row is None:
+            raise HTTPException(404, detail='subscription_not_found')
+        row.interval_hours = body.interval_hours
+        row.next_check_at = row.checked_at + body.interval_hours * 3600
+        return record(row)
 
 
 @router.delete('/{subscription_id}', status_code=204, dependencies=[Depends(write_guard)])
