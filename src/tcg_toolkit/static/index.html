@@ -222,7 +222,7 @@
 <div class="heading-left"><h2 id="cards-title"></h2><span class="count" id="cards-count" hidden></span><span id="cards-status" role="status" aria-live="polite"></span></div>
 <div class="heading-actions"><button id="cards-select" type="button" class="secondary compact" aria-pressed="false" disabled><i class="bi bi-check2-square"></i><span data-i18n="favorite_select"></span></button><button id="cards-import" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-upload" aria-hidden="true"></i><span data-i18n="cards_import"></span></button><button id="cards-export" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-download" aria-hidden="true"></i><span data-i18n="cards_export"></span></button><button id="cards-add" type="button" class="compact" disabled><i class="bi bi-plus-lg"></i><span data-i18n="cards_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
-<div id="cards-selection-bar" class="selection-bar" hidden><label class="select-all"><input id="cards-select-all" type="checkbox"/><span data-i18n="favorite_select_all"></span></label><span id="cards-selection-count" class="selection-count" role="status" aria-live="polite"></span><div class="selection-actions"><button id="cards-bulk-move" type="button" class="secondary compact"><i class="bi bi-folder-symlink"></i><span data-i18n="favorite_move"></span></button></div></div>
+<div id="cards-selection-bar" class="selection-bar" hidden><label class="select-all"><input id="cards-select-all" type="checkbox"/><span data-i18n="favorite_select_all"></span></label><span id="cards-selection-count" class="selection-count" role="status" aria-live="polite"></span><div class="selection-actions"><button id="cards-bulk-move" type="button" class="secondary compact"><i class="bi bi-folder-symlink"></i><span data-i18n="favorite_move"></span></button><button id="cards-bulk-delete" type="button" class="secondary compact"><i class="bi bi-trash3"></i><span data-i18n="cards_delete"></span></button></div></div>
 <button id="cards-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div class="panel filters" id="cards-filters" hidden>
 <div class="filter-top">
@@ -492,6 +492,14 @@
 <div class="dialog-actions">
 <button id="favorite-group-delete-cancel" type="button" class="secondary" autofocus data-i18n="detail_cancel"></button>
 <button id="favorite-group-delete-confirm" type="button"><i class="bi bi-trash3"></i><span data-i18n="favorite_group_delete"></span></button>
+</div>
+</dialog>
+<dialog id="cards-bulk-delete-dialog" class="form-dialog confirm-dialog" aria-labelledby="cards-bulk-delete-title" aria-describedby="cards-bulk-delete-message">
+<div class="dialog-head"><h2 id="cards-bulk-delete-title" data-i18n="cards_delete"></h2></div>
+<p id="cards-bulk-delete-message"></p>
+<div class="dialog-actions">
+<button id="cards-bulk-delete-cancel" type="button" class="secondary" autofocus data-i18n="detail_cancel"></button>
+<button id="cards-bulk-delete-confirm" type="button"><i class="bi bi-trash3"></i><span data-i18n="cards_delete"></span></button>
 </div>
 </dialog>
 <dialog id="favorites-bulk-remove-dialog" class="form-dialog confirm-dialog" aria-labelledby="favorites-bulk-remove-title" aria-describedby="favorites-bulk-remove-message">

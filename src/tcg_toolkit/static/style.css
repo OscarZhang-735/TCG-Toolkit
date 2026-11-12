@@ -172,7 +172,8 @@ th {
 }
 td { padding: 13px 18px; border-top: 1px solid var(--color-divider); font-size: 13px; line-height: 1.5; }
 tbody tr:hover { background: var(--color-surface-muted); }
-td:nth-child(4) { min-width: 230px; }
+/* The name column, wherever it sits: a leading select column would shift a positional rule. */
+td:has(> .product-summary) { min-width: 230px; }
 .mono { white-space: nowrap; color: var(--color-text-muted); font-family: var(--font-mono); font-size: 12px; }
 td a, .card-name { color: var(--color-text); text-decoration: none; }
 td a:hover, .card-name:hover { text-decoration: underline; }

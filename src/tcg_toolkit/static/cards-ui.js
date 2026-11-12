@@ -15,8 +15,9 @@ let officialAPI, officialGeneration = 0, officialController;
 const blankFilters = () => ({query: '', rarity: '', sort: 'original', hiddenGames: new Set()});
 let filters = blankFilters(), pendingDelete = null;
 const inventory = createCards(render);
-// Multi-select for moving many cards at once. Moves run one card at a time; cards that fail
-// stay selected so the move can be retried. selectionGeneration drops a run when the account changes.
+// Multi-select for moving or deleting many cards at once, as on the favorites page. Bulk actions
+// run one card at a time; finished cards are deselected and failed ones stay selected so the
+// action can be retried. selectionGeneration drops a run when the account changes.
 const blankSelection = () => ({active: false, ids: new Set(), running: false, done: 0, total: 0, failed: 0});
 let selection = blankSelection(), selectionGeneration = 0;
 const locked = () => inventory.state.busy || inventory.state.loading || selection.running;
@@ -269,29 +270,32 @@ function setSelecting(active) {
   if (selection.running) return;
   selection = {...blankSelection(), active}; render();
 }
-async function bulkMove(groupId) {
+// operation(id) resolves true when that card succeeded.
+async function runBulk(operation) {
   const ids = [...selection.ids], current = selectionGeneration;
   if (selection.running || !ids.length) return;
   Object.assign(selection, {running: true, done: 0, total: ids.length, failed: 0}); render();
   for (const id of ids) {
-    const error = await inventory.move(id, groupId);
+    const ok = await operation(id);
     if (current !== selectionGeneration) return;
-    if (error) selection.failed++; else selection.ids.delete(id);
+    if (ok) selection.ids.delete(id); else selection.failed++;
     selection.done++; render();
   }
   selection.running = false; render();
 }
+const bulkMove = groupId => runBulk(async id => !await inventory.move(id, groupId));
+const bulkDelete = () => runBulk(async id => {
+  await inventory.remove(id);
+  return !inventory.state.records.some(row => row.id === id);
+});
 function renderSelection(rows) {
   const state = inventory.state;
-  // Selecting only serves moves, so it needs at least one group.
-  if (!state.groups.length && selection.active && !selection.running) selection = blankSelection();
   // Keep only cards still shown, so a bulk move never touches a card hidden by the group or filters.
   const shown = new Set(rows.map(row => row.id));
   for (const id of selection.ids) if (!shown.has(id)) selection.ids.delete(id);
   const count = selection.ids.size;
   $('cards-panel').classList.toggle('selecting', selection.active);
   $('cards-selection-bar').hidden = !selection.active;
-  $('cards-select').hidden = !state.groups.length;
   $('cards-select').setAttribute('aria-pressed', String(selection.active));
   $('cards-select').querySelector('span').textContent = t(selection.active ? 'favorite_select_done' : 'favorite_select');
   $('cards-select').disabled = selection.running || !state.ready;
@@ -300,7 +304,9 @@ function renderSelection(rows) {
   $('cards-select-all').disabled = selection.running || !rows.length;
   $('cards-selection-count').textContent = selection.running ? t('favorite_bulk_progress', {done: number(selection.done), total: number(selection.total)})
     : t('favorite_selected_count', {count: number(count)}) + (selection.failed ? ' · ' + t('cards_bulk_failed', {count: number(selection.failed)}) : '');
-  $('cards-bulk-move').disabled = selection.running || !count || state.busy || state.loading;
+  const idle = !selection.running && count > 0 && !state.busy && !state.loading;
+  $('cards-bulk-move').disabled = !idle || !state.groups.length;
+  $('cards-bulk-delete').disabled = !idle;
 }
 // Clicking a quantity opens a small popup that changes only the quantity.
 function quantityButton(row, label, iconName = '') {
@@ -485,6 +491,13 @@ $('cards-bulk-move').addEventListener('click', () => {
   const count = selection.ids.size;
   if (count) groups.openBulkMove(count, bulkMove);
 });
+$('cards-bulk-delete').addEventListener('click', () => {
+  const count = selection.ids.size; if (!count) return;
+  $('cards-bulk-delete-message').textContent = t('cards_bulk_delete_message', {count: number(count)});
+  $('cards-bulk-delete-dialog').showModal();
+});
+$('cards-bulk-delete-cancel').addEventListener('click', () => $('cards-bulk-delete-dialog').close());
+$('cards-bulk-delete-confirm').addEventListener('click', () => { $('cards-bulk-delete-dialog').close(); bulkDelete(); });
 $('cards-form').addEventListener('submit', async event => {
   event.preventDefault();
   await inventory.save();
@@ -575,6 +588,7 @@ export function clearCards() {
   clearOfficial();
   filters = blankFilters(); $('cards-query').value = '';
   selectionGeneration++; selection = blankSelection(); groups.close(); exportGroup = null;
+  $('cards-bulk-delete-dialog').close();
   $('card-dialog').close(); $('cards-delete-dialog').close(); $('quantity-dialog').close(); inventory.clear();
 }
 export function activateCards(api) {officialAPI = api; clearCards(); inventory.activate(api);}
