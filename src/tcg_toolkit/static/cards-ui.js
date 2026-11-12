@@ -216,8 +216,11 @@ function visibleCards(records) {
 }
 // Game logos shown after the game name in filter chips (keys match gameKey()).
 const GAME_LOGOS = {ws: './game-ws-sticker.png', 'ws en': './game-ws-sticker.png', wsr: './game-wsr.webp', pm: './game-pm.webp', sev: './game-sev.png', 'sev en': './game-sev.png', lycee: './game-lycee.webp', chaostcg: './game-chaos.webp'};
+// As on the favorites page, every library game always has a chip; games saved earlier
+// under another name follow, so their cards can still be filtered.
 function gameChips() {
-  const games = new Map(inventory.visible().map(row => [row.game.toLowerCase(), row.game]));
+  const games = new Map(GAMES.map(game => [game.toLowerCase(), game]));
+  for (const row of inventory.visible()) if (!games.has(row.game.toLowerCase())) games.set(row.game.toLowerCase(), row.game);
   $('cards-game-chips').replaceChildren(...[...games].sort((a, b) => collator.compare(a[1], b[1])).map(([key, label]) => {
     const chip = node('label', '', 'chip'), input = document.createElement('input');
     input.type = 'checkbox'; input.checked = !filters.hiddenGames.has(key);
@@ -227,7 +230,6 @@ function gameChips() {
     if (logo) { const img = document.createElement('img'); img.className = 'chip-logo'; img.src = logo; img.alt = ''; img.setAttribute('aria-hidden', 'true'); chip.append(img); }
     return chip;
   }));
-  $('cards-game-chips').hidden = games.size < 2;
 }
 function cardActions(row) {
   const actions = node('div', '', 'row-actions'), disabled = locked();
