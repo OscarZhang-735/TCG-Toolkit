@@ -6,7 +6,7 @@ from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 
 from tcg_toolkit import subscriptions as api
-from tcg_toolkit.db_models import Subscription, SubscriptionEmail, SubscriptionRun
+from tcg_toolkit.db_models import Subscription, SubscriptionEmail, SubscriptionRun, User
 from tcg_toolkit.web import app
 from test_subscriptions import client, add, worker, emails, snapshot, login, NOW, URL, ORIGIN
 
@@ -19,59 +19,116 @@ def test_default_create_and_update_interval(client, monkeypatch):
         return snapshot()
     monkeypatch.setattr(api, 'fetch_product_snapshot', fetch)
     saved = client.post('/api/subscriptions', json={'game': 'wsr', 'product_url': URL}).json()
-    assert saved['interval_hours'] == 24
+    assert client.get('/api/subscriptions/settings').json() == {'interval_hours': 24, 'next_check_at': NOW + 86400}
+    assert 'interval_hours' not in saved
     assert saved['checked_at'] == NOW
     assert saved['next_check_at'] == NOW + 86400
     monkeypatch.setattr(api, 'fetch_product_snapshot', lambda *args: pytest.fail('unexpected fetch'))
-    assert add(client, interval_hours=1) == saved
-    path = '/api/subscriptions/' + saved['id']
+    assert add(client) == saved
+    path = '/api/subscriptions/settings'
     now[0] += 7200
-    changed = client.patch(path, json={'interval_hours': 1})
+    changed = client.put(path, json={'interval_hours': 1})
     assert changed.status_code == 200
     assert changed.headers['cache-control'] == 'no-store'
-    assert changed.json()['next_check_at'] == NOW + 3600  # Already due, no synchronous fetch.
-    assert client.patch(path, json={'interval_hours': 1}).json() == changed.json()
-    assert client.get('/api/subscriptions').json()['items'] == [changed.json()]
-    extended = client.patch(path, json={'interval_hours': 6}).json()
-    assert extended['next_check_at'] == NOW + 21600
+    # Already overdue: the next hourly scan picks it up.
+    assert changed.json() == {'interval_hours': 1, 'next_check_at': NOW + 3 * 3600}
+    assert client.get('/api/subscriptions').json()['items'][0]['next_check_at'] == NOW + 3600
+    assert client.put(path, json={'interval_hours': 1}).json() == changed.json()
+    assert client.get('/api/subscriptions').json()['items'][0]['next_check_at'] == NOW + 3600
+    extended = client.put(path, json={'interval_hours': 6}).json()
+    assert extended == {'interval_hours': 6, 'next_check_at': NOW + 21600}
+    assert client.get('/api/subscriptions').json()['items'][0]['next_check_at'] == NOW + 21600
     login(client, 'bob')
-    assert client.patch(path, json={'interval_hours': 1}).status_code == 404
-    assert client.patch('/api/subscriptions/missing', json={'interval_hours': 1}).status_code == 404
+    assert client.get(path).json() == {'interval_hours': 24, 'next_check_at': None}
+    assert client.patch('/api/subscriptions/' + saved['id'], json={'interval_hours': 1}).status_code == 405
 
 
 @pytest.mark.parametrize('interval', [0, -1, 1.5, 1.0, True, '6', None, 2147483648])
 def test_invalid_intervals(client, interval):
     saved = add(client)
-    assert client.patch('/api/subscriptions/' + saved['id'], json={'interval_hours': interval}).status_code == 422
+    assert client.put('/api/subscriptions/settings', json={'interval_hours': interval}).status_code == 422
     assert client.post('/api/subscriptions', json={
         'game': 'wsr', 'product_url': URL + '1', 'interval_hours': interval}).status_code == 422
     assert client.get('/api/subscriptions').json()['items'] == [saved]
 
 
 def test_update_guards_and_cors(client):
-    path = '/api/subscriptions/' + add(client)['id']
-    assert client.patch(path, json={'interval_hours': 1}, headers={'Origin': 'https://evil.example'}).status_code == 403
-    assert client.patch(path, content='{}', headers={'Content-Type': 'text/plain'}).status_code == 415
-    assert client.patch(path, json={}).status_code == 422
-    response = client.options(path, headers={'Origin': ORIGIN, 'Access-Control-Request-Method': 'PATCH',
+    path = '/api/subscriptions/settings'
+    assert client.put(path, json={'interval_hours': 1}, headers={'Origin': 'https://evil.example'}).status_code == 403
+    assert client.put(path, content='{}', headers={'Content-Type': 'text/plain'}).status_code == 415
+    assert client.put(path, json={}).status_code == 422
+    response = client.options(path, headers={'Origin': ORIGIN, 'Access-Control-Request-Method': 'PUT',
                                             'Access-Control-Request-Headers': 'content-type,authorization'})
     assert response.status_code == 200
     client.headers.pop('Authorization')
-    assert client.patch(path, json={'interval_hours': 1}).status_code == 401
+    assert client.put(path, json={'interval_hours': 1}).status_code == 401
 
 
 def test_database_rejects_zero_interval(client):
     saved = add(client)
     with pytest.raises(IntegrityError):
         with app.state.auth.store.session() as db:
-            db.get(Subscription, saved['id']).interval_hours = 0
+            row = db.get(Subscription, saved['id'])
+            db.get(User, row.user_id).subscription_interval_hours = 0
+
+
+def test_settings_apply_to_all_existing_and_future_subscriptions(client):
+    first = add(client)
+    second = add(client, URL + '1')
+    alice = client.headers['Authorization']
+    login(client, 'bob')
+    other = add(client)
+    bob = client.headers['Authorization']
+    client.headers['Authorization'] = alice
+    assert client.put('/api/subscriptions/settings', json={'interval_hours': 6}).status_code == 200
+    records = client.get('/api/subscriptions').json()['items']
+    assert {r['id'] for r in records} == {first['id'], second['id']}
+    assert all(r['next_check_at'] == r['checked_at'] + 21600 for r in records)
+    third = add(client, URL + '2')
+    assert third['next_check_at'] == third['checked_at'] + 21600
+    assert client.post('/api/subscriptions', json={
+        'game': 'wsr', 'product_url': URL + '3', 'interval_hours': 1}).status_code == 422
+    assert client.patch('/api/subscriptions/' + first['id'], json={'interval_hours': 1}).status_code == 405
+    client.headers['Authorization'] = bob
+    settings = client.get('/api/subscriptions/settings').json()
+    assert settings['interval_hours'] == 24
+    assert other['next_check_at'] <= settings['next_check_at'] < other['next_check_at'] + 3600
+    assert client.get('/api/subscriptions').json()['items'] == [other]
+
+
+def test_creation_uses_settings_changed_during_initial_fetch(client, monkeypatch):
+    def fetch(*args):
+        assert client.put('/api/subscriptions/settings', json={'interval_hours': 6}).status_code == 200
+        return snapshot()
+    monkeypatch.setattr(api, 'fetch_product_snapshot', fetch)
+    saved = add(client)
+    assert saved['next_check_at'] == saved['checked_at'] + 21600
+
+
+def test_account_setting_and_schedules_roll_back_together(client):
+    saved = add(client)
+    def fail_update(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith('UPDATE subscriptions SET'):
+            raise RuntimeError('schedule update failed')
+    engine = app.state.auth.store.engine
+    event.listen(engine, 'before_cursor_execute', fail_update)
+    try:
+        with pytest.raises(RuntimeError, match='schedule update failed'):
+            client.put('/api/subscriptions/settings', json={'interval_hours': 1})
+    finally:
+        event.remove(engine, 'before_cursor_execute', fail_update)
+    assert client.get('/api/subscriptions/settings').json()['interval_hours'] == 24
+    assert client.get('/api/subscriptions').json()['items'] == [saved]
 
 
 def test_mixed_intervals_and_same_day_digests(client, monkeypatch):
     start = int(datetime(2026, 11, 1, 0).timestamp())
     now = [start]
     monkeypatch.setattr(api.time, 'time', lambda: now[0])
-    saved = [add(client, URL + str(hours), hours) for hours in (1, 6, 24)]
+    saved = []
+    for hours in (1, 6, 24):
+        login(client, f'user{hours}')
+        saved.append(add(client, URL + str(hours), hours))
     calls = []
     def fetch(game, url):
         calls.append((now[0], url))
@@ -86,10 +143,10 @@ def test_mixed_intervals_and_same_day_digests(client, monkeypatch):
         service.tick()
         service.tick()  # No duplicate execution in the same hour.
     assert [sum(url == item['item']['product_url'] for _, url in calls) for item in saved] == [24, 4, 1]
-    assert len(emails()) == 24
+    assert len(emails()) == 29
     assert len({email.run_id for email in emails()}) == 24
     assert all(email.state == 'sent' for email in emails())
-    assert len(service.mailer.messages) == 24
+    assert len(service.mailer.messages) == 29
 
 
 def test_shared_product_leaves_not_due_subscription_untouched(client, monkeypatch):
@@ -116,7 +173,7 @@ def test_subscription_change_during_fetch(client, action):
         if action == 'cancel':
             assert client.request('DELETE', path, json={}).status_code == 204
         else:
-            assert client.patch(path, json={'interval_hours': 48 if action == 'extend' else 1}).status_code == 200
+            assert client.put('/api/subscriptions/settings', json={'interval_hours': 48 if action == 'extend' else 1}).status_code == 200
         return snapshot(url, price=200)
     worker(fetch).check_due()
     records = client.get('/api/subscriptions').json()['items']
@@ -148,7 +205,7 @@ def test_slow_fetch_keeps_next_hour_and_failure_interval(client, monkeypatch):
     def failed(*args):
         raise HTTPException(504, detail='product_timeout')
     service.fetcher = failed
-    client.patch('/api/subscriptions/' + saved['id'], json={'interval_hours': 6})
+    client.put('/api/subscriptions/settings', json={'interval_hours': 6})
     now[0] = start + 6 * 3600
     service.tick()
     record = client.get('/api/subscriptions').json()['items'][0]
@@ -192,3 +249,40 @@ def test_partial_user_commit_recovers_remaining_due_rows(client):
     assert len({email.user_id for email in emails()}) == 2
     with app.state.auth.store.session() as db:
         assert {run.state for run in db.scalars(select(SubscriptionRun))} == {'failed', 'complete'}
+
+
+def test_next_check_estimate_rounds_to_the_hourly_scan(client, monkeypatch):
+    start = int(datetime(2026, 11, 1, 10).timestamp())
+    monkeypatch.setattr(api.time, 'time', lambda: start + 25 * 60)  # Created at 10:25.
+    add(client, interval_hours=6)
+    add(client, URL + '1')
+    path = '/api/subscriptions/settings'
+    # The earliest due card (16:25) is first seen by the 17:00 scan.
+    assert client.get(path).json() == {'interval_hours': 6, 'next_check_at': start + 7 * 3600}
+    monkeypatch.setattr(api.time, 'time', lambda: start + 30 * 3600 + 600)  # Overdue: the next scan.
+    assert client.get(path).json()['next_check_at'] == start + 31 * 3600
+    monkeypatch.setattr(api.time, 'time', lambda: start + 31 * 3600)  # A scan is running right now.
+    assert client.get(path).json()['next_check_at'] == start + 31 * 3600
+    assert client.put(path, json={'interval_hours': 2147483647}).json()['interval_hours'] == 2147483647
+
+
+def test_scan_jitter_and_lock_waits_keep_the_hourly_cadence(client, monkeypatch):
+    start = int(datetime(2026, 11, 1, 10).timestamp())
+    monkeypatch.setattr(api.time, 'time', lambda: start - 3600)
+    add(client, interval_hours=1)
+    monkeypatch.setattr(api.time, 'time', lambda: now[0])
+    now = [start]
+    calls = []
+    service = worker(lambda game, url: calls.append(now[0]) or snapshot(url), now=now)
+    service.deadline = start
+    now[0] = start + 1  # Woke one second late.
+    service.tick()
+    record = client.get('/api/subscriptions').json()['items'][0]
+    assert record['checked_at'] == start and record['next_check_at'] == start + 3600
+    now[0] = start + 3600  # Exactly on time: still due.
+    service.tick()
+    now[0] = start + 2 * 3600 + 45  # Waited behind email delivery for 45 seconds.
+    service.tick()
+    assert calls == [start + 1, start + 3600, start + 2 * 3600 + 45]
+    assert client.get('/api/subscriptions').json()['items'][0]['next_check_at'] == start + 3 * 3600
+    assert client.get('/api/subscriptions/settings').json()['next_check_at'] == start + 3 * 3600

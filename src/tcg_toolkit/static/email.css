@@ -28,6 +28,29 @@
 .bind-email-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .notification-settings .password-help { margin: 0; }
 .notification-settings [hidden] { display: none; }
+/* Subscription check interval: summary + estimate in the head, presets and a unit-suffixed input below. */
+.subscription-settings .password-help { margin: 0; }
+.subscription-settings [hidden] { display: none; }
+#subscription-interval-summary { margin: 4px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-text-muted); }
+#subscription-interval-summary.bound { font-weight: 500; color: var(--color-text); }
+#subscription-next-check { display: flex; align-items: center; gap: 6px; margin: 2px 0 0; font-size: 12px; line-height: 1.6; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+#subscription-next-check .bi { flex: none; font-size: 12px; }
+#subscription-next-check.scheduled .bi { color: var(--color-success); }
+fieldset.interval-presets { min-width: 0; margin: 0; padding: 0; border: 0; }
+.interval-presets legend { padding: 0; font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
+.interval-presets .chips { margin-top: 8px; }
+.interval-presets .chip { position: relative; }
+.interval-presets .chip:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.interval-field { max-width: 240px; }
+.interval-input { position: relative; display: block; margin-top: 6px; }
+.email-settings .interval-input input { width: 100%; margin-top: 0; padding-right: 52px; font-variant-numeric: tabular-nums; }
+.interval-unit { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); font-size: 13px; color: var(--color-text-muted); pointer-events: none; }
+#subscription-settings-error:empty { display: none; }
+#subscription-settings-error {
+  margin: 0; padding: 10px 14px; font-size: 13px; color: var(--color-text);
+  background: var(--color-surface-muted); border: 1px solid var(--color-border-strong);
+  border-left: 3px solid var(--color-primary); border-radius: var(--radius-md);
+}
 @media (max-width: 640px) {
   .bind-email-fields { grid-template-columns: 1fr; }
   .bind-email-actions { flex-direction: column-reverse; }
@@ -86,3 +109,6 @@ fieldset.password-method { min-width: 0; margin: 0; padding: 0; border: 0; }
   .password-change-grid { grid-template-columns: 1fr; }
   .password-change-actions button { width: 100%; }
 }
+/* The unit label sits where the spinner would; arrows add nothing next to the presets. */
+#subscription-interval { -moz-appearance: textfield; appearance: textfield; }
+#subscription-interval::-webkit-inner-spin-button, #subscription-interval::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

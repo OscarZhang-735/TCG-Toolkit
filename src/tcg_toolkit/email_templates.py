@@ -109,8 +109,8 @@ def digest_html(run_date, changes):
     content = f'''<h1 style="margin:0;font-size:20px;line-height:1.4">{zh_title}</h1>{_en(en_title, 14)}
 <p style="margin:12px 0 8px;font-size:14px;line-height:1.7;color:{MUTED}">检查时间 Checked at：{escape(checked)}</p>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0">{''.join(cards)}</table>'''
-    footer = ('按各订阅的查询间隔检查卡牌，仅在价格或库存变化时发送。<br>'
-              'Cards are checked at their subscription intervals; emails are sent only when price or stock changes.<br>'
+    footer = ('按你设置的查询间隔检查订阅卡牌，仅在价格或库存变化时发送。<br>'
+              'Subscribed cards are checked at your chosen interval; emails are sent only when price or stock changes.<br>'
               f'<a href="{escape(favorites_url(), quote=True)}" style="color:{TEXT};font-weight:bold;text-decoration:underline">'
               '前往 TCG Toolkit 查看 · Open TCG Toolkit</a>')
     return frame(f'{zh_title} · {en_title}', f'{run_date} · {zh_title} · {en_title}', content, footer)

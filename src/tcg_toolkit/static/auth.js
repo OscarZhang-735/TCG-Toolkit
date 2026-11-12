@@ -5,6 +5,7 @@ import {yuyuteiClient} from './yuyutei-client.js';
 import {bindNavMenus, syncNavMenus} from './nav-menu.js';
 import {createEmailChallenge, authError} from './email-code.js';
 import {createPasswordUI} from './password-ui.js';
+import {createSubscriptionSettingsUI} from './subscription-settings-ui.js';
 import {createNotificationEmailUI} from './notification-email-ui.js';
 import {createAvatarCropper, loadImage} from './avatar-crop-ui.js';
 const $ = id => document.getElementById(id);
@@ -17,6 +18,7 @@ const registrationEmail = createEmailChallenge({request: apiRequest});
 const bindingEmail = createEmailChallenge({request: api.fetch});
 const passwordUI = createPasswordUI({request: apiRequest, authenticatedRequest: api.fetch,
   getUser: () => user, onChanged: () => signedOut('password_changed')});
+const subscriptionSettingsUI = createSubscriptionSettingsUI({request: api.fetch});
 const notificationUI = createNotificationEmailUI({request: api.fetch, getUser: () => user, onChange: email => searchApp?.setNotificationEmail(email)});
 const avatarCropper = createAvatarCropper({stage: $('avatar-crop-stage'), canvas: $('avatar-crop-canvas'), zoom: $('avatar-crop-zoom')});
 const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'], AVATAR_LIMIT = 5 * 1024 * 1024;
@@ -29,7 +31,7 @@ function renderEmail(prefix, challenge) {
     : state.expired ? t('email_code_expired') : state.challengeId ? t('email_sent') : '';
 }
 function refreshEmails() {
-  passwordUI.refresh(); notificationUI.refresh();
+  passwordUI.refresh(); notificationUI.refresh(); subscriptionSettingsUI.refresh();
   renderEmail('auth', registrationEmail); renderEmail('bind', bindingEmail);
   const verified = Boolean(user?.email_verified);
   $('account-email').textContent = user?.email || t('email_bind_intro');
@@ -53,6 +55,8 @@ function showPage() {
   $('cart-panel').hidden = !cart;
   $('favorites-panel').hidden = !favorites;
   const account = Boolean(user) && location.hash === '#account';
+  // Subscriptions may have changed elsewhere; refresh the next-check estimate.
+  if (account && $('account-panel').hidden) subscriptionSettingsUI.reload();
   document.body.classList.toggle('signed-out', !user);
   $('auth-panel').hidden = Boolean(user);
   $('search').hidden = !user || account || favorites || cards || cart;
@@ -155,6 +159,7 @@ function renderAvatarUpload() {
 }
 function signedOut(message = '', clearToken = true) {
   forgotten = false;
+  subscriptionSettingsUI.reset();
   authGeneration++; resetEmails();
   yuyuteiClient.deactivate({clear: clearToken});
   if (clearToken) setToken(null);
@@ -175,7 +180,7 @@ async function signedIn(value) {
   avatarBusy = false; avatarStatus = '';
   authGeneration++; resetEmails();
   searchApp.activateUser(user.id, api.fetch, user.email_verified ? user.email : null);
-  notificationUI.load();
+  notificationUI.load(); subscriptionSettingsUI.activate();
   $('account-status').textContent = '';
   resetNicknameEditor(); renderDisplayName();
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = '';

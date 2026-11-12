@@ -26,7 +26,9 @@ class User(Base):
     notification_email: Mapped[str | None]
     notification_email_verified_at: Mapped[int | None]
     avatar_url: Mapped[str | None]
-    __table_args__ = (Index("users_username", func.lower(username), unique=True),)
+    subscription_interval_hours: Mapped[int] = mapped_column(Integer, server_default="24")
+    __table_args__ = (Index("users_username", func.lower(username), unique=True),
+                     CheckConstraint("subscription_interval_hours >= 1", name="users_subscription_interval_positive"))
 
 
 class LoginSession(Base):
@@ -164,10 +166,8 @@ class Subscription(Base):
     created_at: Mapped[int]
     checked_at: Mapped[int]
     last_error: Mapped[str | None]
-    interval_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
     next_check_at: Mapped[int]
     __table_args__ = (UniqueConstraint("user_id", "game", "product_url"),
-                      CheckConstraint("interval_hours >= 1", name="subscriptions_interval_hours_positive"),
                       Index("subscriptions_due", "next_check_at"))
 
 

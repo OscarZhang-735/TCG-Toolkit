@@ -58,8 +58,10 @@ def login(client, username):
     return response.json()['user']['id']
 
 
-def add(client, url=URL, interval_hours=24):
-    response = client.post('/api/subscriptions', json=dict(game='wsr', product_url=url, interval_hours=interval_hours))
+def add(client, url=URL, interval_hours=None):
+    if interval_hours is not None:
+        assert client.put('/api/subscriptions/settings', json={'interval_hours': interval_hours}).status_code == 200
+    response = client.post('/api/subscriptions', json=dict(game='wsr', product_url=url))
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -360,7 +362,7 @@ def test_hourly_schedule_startup_and_missed_hours(monkeypatch):
     now = [before]
     service = worker(now=now)
     calls = []
-    monkeypatch.setattr(service, 'check_due', lambda: calls.append(now[0]) or True)
+    monkeypatch.setattr(service, 'check_due', lambda slot=None: calls.append(now[0]) or True)
     monkeypatch.setattr(service, 'deliver_due', lambda: None)
     service.tick()
     assert calls == [before]

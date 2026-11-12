@@ -22,6 +22,8 @@ from .notification_email import notification_recipient
 logger = logging.getLogger('uvicorn.error.subscriptions')
 LOCK_KEY = 894210612
 RETRY_DELAYS = (60, 300, 1800)
+# A scan that starts this late still counts as its scheduled hour (lock waits, wake-up jitter).
+SLOT_TOLERANCE = 600
 CHANGE_FIELDS = ('price', 'stock_quantity', 'stock_status')
 
 
@@ -31,6 +33,15 @@ def next_hour(now):
     while datetime.fromtimestamp(candidate).minute != 0:
         candidate += 60
     return candidate
+
+
+def scheduled_scan(due, now):
+    """Estimate the hourly scan that first sees a subscription due at `due`."""
+    moment = max(int(due), int(now))
+    try:
+        return next_hour(moment - 1)  # A boundary itself is a scan time.
+    except (OverflowError, OSError, ValueError):  # Beyond datetime's range.
+        return moment
 
 
 def digest_message(recipient, email_id, run_date, changes):
@@ -80,11 +91,14 @@ class SubscriptionWorker:
                         conn.invalidate()  # Never return a locked connection to the pool.
                         raise
 
-    def check_due(self):
+    def check_due(self, slot=None):
         with self.exclusive() as acquired:
             if not acquired:
                 return None
             started_at = int(self.clock())
+            # Anchor schedules to the planned hour, so a scan starting at HH:00:01
+            # does not push the next one past HH:00:00 and slip a whole hour.
+            slot = int(slot) if slot is not None and 0 <= started_at - int(slot) <= SLOT_TOLERANCE else started_at
             with self.store.session() as db:
                 subscriptions = db.scalars(select(Subscription).where(
                     Subscription.next_check_at <= started_at
@@ -95,7 +109,7 @@ class SubscriptionWorker:
                 local_date = datetime.fromtimestamp(started_at).date()
                 db.add(SubscriptionRun(id=run_id, local_date=local_date, started_at=started_at, state='running'))
             try:
-                self._check_cards(subscriptions, run_id, local_date, started_at)
+                self._check_cards(subscriptions, run_id, local_date, started_at, slot)
             except Exception as exc:
                 with self.store.session() as db:
                     run = db.get(SubscriptionRun, run_id)
@@ -107,7 +121,7 @@ class SubscriptionWorker:
                 run.state, run.finished_at = 'complete', int(self.clock())
             return True
 
-    def _check_cards(self, subscriptions, run_id, local_date, started_at):
+    def _check_cards(self, subscriptions, run_id, local_date, started_at, slot):
         by_user, products = defaultdict(list), {}
         for row in subscriptions:
             by_user[row.user_id].append(row.id)
@@ -130,20 +144,24 @@ class SubscriptionWorker:
             if self.stopping.is_set():
                 raise InterruptedError('Subscription checks stopped')
             with self.store.session() as db:
+                # Match settings/creation lock order: account, then subscriptions.
+                account = db.get(User, user_id, with_for_update=True)
+                if account is None:
+                    continue
                 rows = db.scalars(select(Subscription).where(Subscription.id.in_(ids),
                                   Subscription.next_check_at <= started_at)
                                   .order_by(Subscription.id).with_for_update()).all()
                 changes = []
                 for row in rows:
                     snapshot, error = products[(row.game, row.product_url)]
-                    row.checked_at, row.last_error = started_at, error
-                    row.next_check_at = started_at + row.interval_hours * 3600
+                    row.checked_at, row.last_error = slot, error
+                    row.next_check_at = slot + account.subscription_interval_hours * 3600
                     if error:
                         continue
                     before = json.loads(row.snapshot)
                     if any(before[key] != snapshot[key] for key in CHANGE_FIELDS):
                         changes.append(dict(subscription_id=row.id, before=before, after=snapshot,
-                                            checked_at=started_at))
+                                            checked_at=slot))
                     row.snapshot = json.dumps(snapshot)
                 if changes:
                     now = int(self.clock())
@@ -202,7 +220,7 @@ class SubscriptionWorker:
             # A busy worker retains the deadline and retries after releasing the lock.
             # Failed rounds retry on the next hour; committed rows are no longer due.
             try:
-                result = self.check_due()
+                result = self.check_due(self.deadline)
             except Exception:
                 self.deadline = next_hour(self.clock())
                 raise
