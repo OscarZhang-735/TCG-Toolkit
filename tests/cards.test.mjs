@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const source = await readFile(new URL('../src/tcg_toolkit/static/cards.js', import.meta.url), 'utf8');
-const {createCards, filterCards, summarizeCards, yenPrice} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const {createCards, filterCards, summarizeCards, yenPrice, priceGame, rankOffers, fetchPriceMerchants, lookupPrices} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const card = {id: 'one', game: 'WS', card_number: 'ABC-001', rarity: 'SR', name: 'First', quantity: 2, notes: 'Keep'};
 const reply = (data, status = 200) => ({ok: status < 400, status, json: async () => data});
 
@@ -205,4 +205,35 @@ test('thumbnail survives editing and save, and resets for a new card', async () 
   assert.equal(submitted.image_url, saved.image_url);
   assert.equal(cards.state.records[0].image_url, saved.image_url);
   assert.equal(cards.state.draft.image_url, '');
+});
+
+test('price lookup maps library games to merchant ids and ranks the draft rarity first', () => {
+  assert.deepEqual(['WS', 'WS EN', 'WSR', 'PM', 'SEV', 'SEV EN', 'Lycee', 'ChaosTCG', ' chaostcg ', 'Custom Game', ''].map(priceGame),
+    ['ws', 'ws_en', 'wsr', 'pm', 'sev', 'sev_en', 'lycee', 'chaos', 'chaos', 'custom_game', '']);
+  const offers = [{product_url: 'a', rarity: 'R'}, {product_url: 'b', rarity: 'sr'}, {product_url: 'c', rarity: null}, {product_url: 'd', rarity: 'SR'}];
+  assert.deepEqual(rankOffers(offers, ' SR ').map(offer => offer.product_url), ['b', 'd', 'a', 'c']);
+  assert.deepEqual(rankOffers(offers, '').map(offer => offer.product_url), ['a', 'b', 'c', 'd']);
+  assert.notEqual(rankOffers(offers, 'R'), offers);
+});
+
+test('price lookup requests YuYu-Tei and turns failures into translation keys', async () => {
+  const calls = [];
+  const api = responses => async (url, options) => { calls.push({url, options}); return responses.shift(); };
+  const merchants = await fetchPriceMerchants(api([reply({items: [{id: 'yuyutei', name: '游游亭', games: ['ws', 'lycee']}]})]));
+  assert.deepEqual([...merchants.yuyutei], ['ws', 'lycee']);
+  assert.equal(calls.at(-1).url, '/api/prices/merchants');
+  await assert.rejects(fetchPriceMerchants(api([reply({detail: 'x'}, 500)])));
+  const offer = {name: 'Card', rarity: 'SR', price: 100, currency: 'JPY', product_url: 'https://yuyu-tei.jp/x'};
+  assert.deepEqual(await lookupPrices(api([reply({items: [offer]})]), {game: 'ChaosTCG', card_number: ' AB/C-001 '}), [offer]);
+  const url = new URL(calls.at(-1).url, 'http://local');
+  assert.equal(url.pathname, '/api/prices');
+  assert.deepEqual(Object.fromEntries(url.searchParams), {merchant: 'yuyutei', game: 'chaos', card_number: 'AB/C-001'});
+  assert.equal(calls.at(-1).options.cache, 'no-store');
+  for (const [status, detail, key] of [[504, 'price_source_timeout', 'price_lookup_timeout'], [502, 'price_source_unavailable', 'price_lookup_unavailable'],
+    [502, 'price_source_unreadable', 'price_lookup_unreadable'], [422, 'unsupported_merchant_game', 'price_lookup_unsupported'],
+    [422, [{msg: 'bad'}], 'price_lookup_failed'], [500, undefined, 'price_lookup_failed']]) {
+    await assert.rejects(lookupPrices(api([reply({detail}, status)]), {game: 'WS', card_number: 'A'}), error => error.key === key);
+  }
+  const broken = {ok: false, status: 502, json: async () => { throw new SyntaxError('not json'); }};
+  await assert.rejects(lookupPrices(api([broken]), {game: 'WS', card_number: 'A'}), error => error.key === 'price_lookup_failed');
 });

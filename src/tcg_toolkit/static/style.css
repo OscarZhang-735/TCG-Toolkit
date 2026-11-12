@@ -671,6 +671,29 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 /* Outrank the generic field input/select margins below; the wrapper already carries it. */
 .cards-form-grid .field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
 .card-dialog .field .price-input select { width: auto; flex: none; margin-top: 0; }
+.card-dialog .price-input .price-lookup-button { flex: none; padding: 0 12px; gap: 6px; }
+/* Price lookup results, below the quantity / price row. */
+.price-lookup { padding: 12px 14px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+.price-lookup-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.price-lookup-head h3 { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+#price-lookup-status { font-size: 12px; color: var(--color-text-muted); }
+.price-lookup.failed #price-lookup-status { color: var(--color-text); font-weight: 500; }
+.price-offers { display: flex; flex-direction: column; gap: 6px; max-height: 240px; margin: 10px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.price-offer { display: flex; align-items: center; gap: 6px; }
+button.price-offer-pick {
+  flex: 1; min-width: 0; height: auto; min-height: 40px; padding: 6px 12px; justify-content: flex-start; gap: 10px;
+  color: var(--color-text); font-weight: 400; text-align: left; background: var(--color-surface); border-color: var(--color-border);
+}
+button.price-offer-pick:hover { background: var(--color-hover); border-color: var(--color-border-hover); }
+button.price-offer-pick:disabled:hover { background: var(--color-surface); border-color: var(--color-border); }
+button.price-offer-pick.chosen, button.price-offer-pick.chosen:hover { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); }
+.price-offer-name { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.price-offer-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.price-offer-match { flex: none; padding: 1px 6px; font-size: 11px; color: var(--color-text-muted); border: 1px solid var(--color-border-strong); border-radius: 999px; }
+.price-offer-price { min-width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
+.price-offer-pick > .bi:last-child { color: var(--color-text-muted); }
+.price-offer-link { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; border-radius: 50%; color: var(--color-text-muted); }
+.price-offer-link:hover { background: var(--color-hover); color: var(--color-text); }
 .card .row-actions button.row-action { width: 28px; height: 28px; font-size: 14px; }
 .card .cards-notes { max-width: none; min-width: 0; margin: -2px 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 #cards-panel td { overflow-wrap: anywhere; }

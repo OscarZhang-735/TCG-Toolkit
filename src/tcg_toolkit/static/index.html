@@ -388,8 +388,12 @@
 <label class="field wide-2"><span data-i18n="name"></span><input id="card-name" required type="text" autocomplete="off"/></label>
 <label class="field wide-2"><span data-i18n="rarity"></span><select id="card-rarity" required></select><input id="card-rarity-custom" type="text" autocomplete="off" hidden disabled/></label>
 <label class="field"><span data-i18n="cards_quantity"></span><input id="card-quantity" required type="number" min="0" step="1" max="9007199254740991" value="1"/></label>
-<label class="field wide-2 card-price-field"><span data-i18n="cards_price"></span><span class="price-input"><input id="card-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/><select id="card-currency" data-i18n-aria-label="cards_currency" data-i18n-title="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select></span></label>
+<label class="field wide-2 card-price-field"><span data-i18n="cards_price"></span><span class="price-input"><input id="card-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/><select id="card-currency" data-i18n-aria-label="cards_currency" data-i18n-title="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select><button id="card-price-lookup" type="button" class="secondary price-lookup-button"><i class="bi bi-tag"></i><span data-i18n="price_lookup"></span></button></span></label>
 <label class="field" id="card-group-field" hidden><span data-i18n="favorite_group_column"></span><select id="card-group"></select></label>
+<section id="price-lookup-panel" class="price-lookup wide" aria-live="polite" hidden>
+<div class="price-lookup-head"><h3><i class="bi bi-shop"></i><span data-i18n="price_lookup_title"></span></h3><span id="price-lookup-status"></span></div>
+<ul id="price-lookup-results" class="price-offers" hidden></ul>
+</section>
 <label class="field wide"><span data-i18n="cards_image_url"></span><input id="card-image_url" type="url" autocomplete="off"/></label>
 <label class="field wide"><span data-i18n="cards_notes"></span><textarea id="card-notes" rows="2"></textarea></label>
 </div>

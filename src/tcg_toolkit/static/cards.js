@@ -10,6 +10,37 @@ export function yenPrice(row, rates) {
   if (currency === 'JPY') return row.price;
   return rates[currency] ? row.price / rates[currency] : null;
 }
+// Price lookup (/api/prices). Merchants name games by lowercase id; library games use display
+// names (WS EN, ChaosTCG), so map one to the other. Only YuYu-Tei exists for now.
+export const PRICE_MERCHANT = 'yuyutei';
+export function priceGame(game) {
+  const id = (game ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+  return id === 'chaostcg' ? 'chaos' : id;
+}
+// Offers with the draft's rarity first, otherwise in the merchant's order.
+export function rankOffers(items, rarity) {
+  const wanted = (rarity ?? '').trim().toLowerCase();
+  const match = item => Boolean(wanted) && (item.rarity ?? '').trim().toLowerCase() === wanted;
+  return [...items].sort((a, b) => match(b) - match(a));
+}
+const priceErrors = {price_source_timeout: 'price_lookup_timeout', price_source_unavailable: 'price_lookup_unavailable',
+  price_source_unreadable: 'price_lookup_unreadable', unsupported_merchant_game: 'price_lookup_unsupported',
+  unsupported_merchant: 'price_lookup_unsupported'};
+// Games each merchant can price: {yuyutei: Set(['ws', ...])}.
+export async function fetchPriceMerchants(api, signal) {
+  const response = await api('/api/prices/merchants', {cache: 'no-store', signal});
+  if (!response.ok) throw new Error('price merchants failed');
+  const data = await response.json();
+  return Object.fromEntries(data.items.map(item => [item.id, new Set(item.games)]));
+}
+// Resolves to the offers; failures throw with a translation key in error.key.
+export async function lookupPrices(api, {game, card_number}, signal) {
+  const query = new URLSearchParams({merchant: PRICE_MERCHANT, game: priceGame(game), card_number: card_number.trim()});
+  const response = await api(`/api/prices?${query}`, {cache: 'no-store', signal});
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw Object.assign(new Error('price lookup failed'), {key: priceErrors[data?.detail] ?? 'price_lookup_failed'});
+  return data.items;
+}
 // Request body for a draft: the price goes as a decimal string so 12.34 stays exact; blank clears it.
 const payload = draft => ({...draft, price: String(draft.price ?? '').trim() || null});
 const draftOf = row => Object.fromEntries(Object.keys(blankCard()).map(k => [k,

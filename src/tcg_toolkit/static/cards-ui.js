@@ -1,5 +1,5 @@
 import {lookupSource, lookupItems} from './card-sources.js';
-import {createCards, filterCards, summarizeCards, yenPrice} from './cards.js';
+import {createCards, filterCards, summarizeCards, yenPrice, CURRENCIES, PRICE_MERCHANT, priceGame, rankOffers, fetchPriceMerchants, lookupPrices} from './cards.js';
 import {fetchRate} from './currency.js';
 import {parseQuantity} from './cart.js';
 import {t, getLanguage} from './i18n.js';
@@ -477,7 +477,7 @@ function iconButton(name, label, handler, disabled) {
   return button;
 }
 function openEditor(id = '') {
-  clearOfficial();
+  clearOfficial(); clearPriceLookup(); loadPriceSupport();
   inventory.edit(id);
   if (!editorOpen()) $('card-dialog').showModal();
   $('card-game').focus();
@@ -519,6 +519,7 @@ function render() {
   groupPicker();
   rarityOptions();
   officialButton();
+  renderPriceLookup();
   $('cards-save').disabled = !state.ready || state.busy || state.loading;
   $('cards-save').querySelector('.bi').className = `bi ${state.busy ? 'bi-arrow-repeat spin' : 'bi-check-lg'}`;
   $('cards-cancel').disabled = state.busy;
@@ -578,9 +579,11 @@ function confirmDelete(row) {
 for (const field of fields) $('card-' + field).addEventListener('input', event => {
   inventory.state.draft[field] = field === 'quantity' ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value;
   if (field === 'game') rarityOptions();
-  if (field === 'game' || field === 'card_number') {scheduleOfficial(); officialButton();}
+  if (field === 'game' || field === 'card_number') {scheduleOfficial(); officialButton(); clearPriceLookup();}
+  // Offers highlight the draft's rarity and the price taken from them.
+  if (['rarity', 'price', 'currency'].includes(field)) renderPriceLookup();
 });
-$('card-rarity-custom').addEventListener('input', event => { inventory.state.draft.rarity = event.target.value; });
+$('card-rarity-custom').addEventListener('input', event => { inventory.state.draft.rarity = event.target.value; renderPriceLookup(); });
 $('card-group').addEventListener('change', event => { inventory.state.draftGroup = event.target.value || null; });
 $('cards-export-group').addEventListener('change', event => {
   exportGroup = event.target.value || null; exportError = '';
@@ -668,7 +671,7 @@ $('cards-cancel').addEventListener('click', () => $('card-dialog').close());
 $('card-dialog-close').addEventListener('click', () => $('card-dialog').close());
 // Esc closes the dialog natively; block it while a save is in flight.
 $('card-dialog').addEventListener('cancel', event => { if (inventory.state.busy) event.preventDefault(); });
-$('card-dialog').addEventListener('close', () => { clearOfficial(); if (!inventory.state.busy) inventory.edit(); });
+$('card-dialog').addEventListener('close', () => { clearOfficial(); clearPriceLookup(); if (!inventory.state.busy) inventory.edit(); });
 $('cards-retry').addEventListener('click', () => inventory.load());
 $('cards-existing').addEventListener('click', () => openEditor(inventory.state.duplicate));
 $('cards-delete-cancel').addEventListener('click', () => $('cards-delete-dialog').close());
@@ -695,6 +698,8 @@ export function clearCards() {
   $('cards-export-dialog').close();
   $('cards-import-dialog').close(); importResult = null;
   clearOfficial();
+  priceSupportController?.abort(); priceSupportController = null; priceSupport = {status: 'idle', games: new Set()};
+  clearPriceLookup();
   filters = blankFilters(); $('cards-query').value = '';
   ratesGeneration++; displayCurrency = 'JPY'; rates = {JPY: 1}; ratesPending = new Set(); ratesFailed = new Set();
   selectionGeneration++; selection = blankSelection(); groups.close(); exportGroup = null;
@@ -702,7 +707,7 @@ export function clearCards() {
   quantityDrafts.clear(); savingQuantity = '';
   $('card-dialog').close(); $('cards-delete-dialog').close(); inventory.clear();
 }
-export function activateCards(api) {officialAPI = api; clearCards(); inventory.activate(api);}
+export function activateCards(api) {officialAPI = api; clearCards(); loadPriceSupport(); inventory.activate(api);}
 
 // Official card lookup: typing a number searches after a pause; the first five
 // matches show as large cards, and choosing one fills the rest of the form.
@@ -746,6 +751,8 @@ async function runOfficial() {
 }
 function chooseOfficial(item) {
   if (inventory.state.busy) return;
+  const draft = inventory.state.draft;
+  if (draft.game !== item.game || draft.card_number !== item.card_number) clearPriceLookup();
   Object.assign(inventory.state.draft, {game: item.game, card_number: item.card_number, name: item.name, rarity: item.rarity, image_url: item.image_url || ''});
   render();
   $('card-quantity').focus(); $('card-quantity').select();
@@ -803,3 +810,102 @@ $('card-card_number').addEventListener('keydown', event => {
   if (event.key === 'Enter' && supportsOfficial()) { event.preventDefault(); runOfficial(); }
 });
 
+// Price lookup: the button beside the unit price asks YuYu-Tei (the only merchant for now) for every
+// offer on the entered game and number; clicking an offer fills in its price and currency. Which
+// games can be priced comes from /api/prices/merchants; for other games the button is disabled.
+let priceSupport = {status: 'idle', games: new Set()}, priceSupportController = null;
+const blankPriceLookup = () => ({status: 'idle', items: [], error: '', chosen: '', cardNumber: ''});
+let priceLookup = blankPriceLookup(), priceLookupGeneration = 0, priceLookupController = null;
+// Loads once per account; a failed load is retried the next time the editor opens.
+function loadPriceSupport() {
+  if (!officialAPI || priceSupport.status === 'loading' || priceSupport.status === 'ready') return;
+  const controller = priceSupportController = new AbortController();
+  priceSupport = {status: 'loading', games: new Set()};
+  fetchPriceMerchants(officialAPI, controller.signal).then(
+    merchants => { if (controller === priceSupportController) priceSupport = {status: 'ready', games: merchants[PRICE_MERCHANT] ?? new Set()}; },
+    () => { if (controller === priceSupportController) priceSupport = {status: 'failed', games: new Set()}; })
+    .finally(() => { if (controller === priceSupportController) renderPriceLookup(); });
+}
+// Why the lookup cannot run for the current draft ('' when it can).
+function priceLookupBlock() {
+  const draft = inventory.state.draft, game = draft.game.trim();
+  if (!game || !draft.card_number.trim()) return t('price_lookup_needs');
+  if (priceSupport.status === 'failed') return t('price_lookup_support_failed');
+  if (priceSupport.status !== 'ready') return t('price_lookup_support_loading');
+  if (!priceSupport.games.has(priceGame(game))) return t('price_lookup_unsupported', {game});
+  return '';
+}
+function clearPriceLookup() {
+  priceLookupGeneration++; priceLookupController?.abort(); priceLookupController = null;
+  priceLookup = blankPriceLookup();
+  renderPriceLookup();
+}
+async function runPriceLookup() {
+  if (priceLookupBlock() || inventory.state.busy) return;
+  clearPriceLookup();
+  const generation = priceLookupGeneration, draft = inventory.state.draft;
+  priceLookupController = new AbortController();
+  priceLookup = {...blankPriceLookup(), status: 'loading', cardNumber: draft.card_number.trim()};
+  renderPriceLookup();
+  try {
+    const items = await lookupPrices(officialAPI, draft, priceLookupController.signal);
+    if (generation !== priceLookupGeneration || !editorOpen()) return;
+    priceLookup = {...priceLookup, status: 'done', items: rankOffers(items, inventory.state.draft.rarity)};
+  } catch (error) {
+    if (generation !== priceLookupGeneration || error.name === 'AbortError') return;
+    priceLookup = {...priceLookup, status: 'error', error: error.key ?? 'price_lookup_failed'};
+  }
+  renderPriceLookup();
+}
+function applyOffer(offer) {
+  if (inventory.state.busy || !CURRENCIES.includes(offer.currency)) return;
+  Object.assign(inventory.state.draft, {price: String(offer.price), currency: offer.currency});
+  priceLookup.chosen = offer.product_url;
+  render();
+  $('card-price').focus();
+}
+const stockIcons = {in_stock: 'bi-check-circle-fill', out_of_stock: 'bi-x-circle', unknown: 'bi-question-circle'};
+function stockBadge(offer) {
+  const status = stockIcons[offer.stock_status] ? offer.stock_status : 'unknown';
+  const badge = node('span', '', `badge ${status}`);
+  badge.append(icon(stockIcons[status]), t(status) + (offer.stock_quantity == null ? '' : ` (${offer.stock_quantity})`));
+  return badge;
+}
+function offerItem(offer) {
+  const draft = inventory.state.draft, price = money(offer.price, offer.currency);
+  const chosen = priceLookup.chosen === offer.product_url && draft.price === String(offer.price) && draft.currency === offer.currency;
+  const wanted = draft.rarity.trim().toLowerCase();
+  const match = Boolean(wanted) && (offer.rarity ?? '').trim().toLowerCase() === wanted;
+  const item = node('li', '', `price-offer${match ? ' match' : ''}`);
+  const pick = node('button', '', `price-offer-pick${chosen ? ' chosen' : ''}`); pick.type = 'button';
+  pick.disabled = inventory.state.busy || !CURRENCIES.includes(offer.currency);
+  pick.setAttribute('aria-pressed', String(chosen));
+  const label = t('price_lookup_use', {price, name: offer.name}); pick.setAttribute('aria-label', label); pick.title = label;
+  const rarity = offer.rarity ? node('span', offer.rarity, `rarity-tag tier-${rarityTier(draft.game, offer.rarity)}`) : node('span', '—', 'muted');
+  const name = node('span', '', 'price-offer-name'); name.append(node('span', offer.name));
+  if (match) name.append(node('span', t('price_lookup_match'), 'price-offer-match'));
+  pick.append(rarity, name, stockBadge(offer), node('strong', price, 'price-offer-price'), icon(chosen ? 'bi-check-lg' : 'bi-box-arrow-in-down-left'));
+  pick.addEventListener('click', () => applyOffer(offer));
+  const link = document.createElement('a');
+  link.className = 'price-offer-link'; link.href = offer.product_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+  link.title = t('price_lookup_open'); link.setAttribute('aria-label', t('price_lookup_open')); link.append(icon('bi-box-arrow-up-right'));
+  item.append(pick, link);
+  return item;
+}
+function renderPriceLookup() {
+  const state = inventory.state, block = priceLookupBlock(), {status, items, error, cardNumber} = priceLookup;
+  const button = $('card-price-lookup');
+  button.disabled = state.busy || status === 'loading' || Boolean(block);
+  button.title = block || t('price_lookup_button_title', {number: state.draft.card_number.trim()});
+  button.querySelector('.bi').className = `bi ${status === 'loading' ? 'bi-arrow-repeat spin' : 'bi-tag'}`;
+  const panel = $('price-lookup-panel');
+  panel.hidden = status === 'idle';
+  panel.classList.toggle('failed', status === 'error');
+  $('price-lookup-status').textContent = status === 'loading' ? t('price_lookup_loading')
+    : status === 'error' ? t(error, {game: state.draft.game.trim()})
+    : status === 'done' ? (items.length ? t('price_lookup_choose', {count: number(items.length)}) : t('price_lookup_empty', {number: cardNumber}))
+    : '';
+  $('price-lookup-results').replaceChildren(...(status === 'done' ? items.map(offerItem) : []));
+  $('price-lookup-results').hidden = status !== 'done' || !items.length;
+}
+$('card-price-lookup').addEventListener('click', runPriceLookup);
