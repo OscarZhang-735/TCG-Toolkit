@@ -90,7 +90,7 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
         assert db.get(Favorite, 'favorite').snapshot == '{}'
         assert db.get(Favorite, 'favorite').group_id is None
         assert db.get(OwnedCard, 'card').quantity == 3
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0011'
+        assert MigrationContext.configure(db.connection()).get_current_revision() == '0012'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
@@ -116,6 +116,7 @@ def test_schema_ten_keeps_historical_cards_ungrouped(empty_database):
         after = [dict(row) for row in db.execute(select(OwnedCard.__table__).order_by(OwnedCard.id)).mappings()]
         for row in after:
             assert row.pop('group_id') is None
+            assert row.pop('price') is None
         assert after == before
         db.add(CardGroup(id='deck', user_id='alice', name='Deck', created_at=1))
         db.flush()
@@ -123,6 +124,29 @@ def test_schema_ten_keeps_historical_cards_ungrouped(empty_database):
     assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
     with UserStore(empty_database) as store, store.session() as db:
         assert db.get(OwnedCard, 'alice-0').group_id == 'deck'
+
+
+def test_schema_eleven_adds_optional_price_preserving_cards(empty_database):
+    from decimal import Decimal
+
+    with Database(empty_database) as store, store.connect() as db:
+        command.upgrade(db_cli.alembic_config(db), '0011')
+        db.execute(User.__table__.insert().values(id='alice', username='alice', password_hash='hash', created_at=1))
+        db.execute(CardGroup.__table__.insert().values(id='deck', user_id='alice', name='Deck', created_at=1))
+        old_cards = Table('owned_cards', MetaData(), autoload_with=db)
+        db.execute(old_cards.insert().values(id='card', user_id='alice', group_id='deck', game='WS',
+                   card_number='ABC-001', rarity='SR', name='Saved', quantity=3, notes='Keep',
+                   game_key='ws', number_key='abc-001', rarity_key='sr', created_at=10, updated_at=20))
+        before = dict(db.execute(select(old_cards)).mappings().one())
+    assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
+    with UserStore(empty_database) as store, store.session() as db:
+        after = dict(db.execute(select(OwnedCard.__table__)).mappings().one())
+        assert after.pop('price') is None
+        assert after == before
+        db.get(OwnedCard, 'card').price = Decimal('12.34')
+    assert db_cli.migrate(empty_database) == db_cli.SCHEMA_VERSION
+    with UserStore(empty_database) as store, store.session() as db:
+        assert db.get(OwnedCard, 'card').price == Decimal('12.34')
 
 
 def test_schema_eight_preserves_subscriptions_runs_and_pending_mail(empty_database):
@@ -199,9 +223,9 @@ def test_schema_nine_resets_all_accounts_to_24_hours(empty_database):
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0012_failure.py').write_text(
+    (scripts / 'versions' / '0013_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0012'\ndown_revision='0011'\n"
+        "revision='0013'\ndown_revision='0012'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = db_cli.alembic_config

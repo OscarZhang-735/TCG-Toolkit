@@ -35,7 +35,7 @@ def spreadsheet_rows(content):
             index = index * 26 + ord(letter) - 64
         return index - 1
     rows = [{column(cell.get('r')): texts[int(cell.find('s:v', ns).text)] if cell.get('t') == 's'
-             else int(cell.find('s:v', ns).text) for cell in row}
+             else float(cell.find('s:v', ns).text) for cell in row}
             for row in sheet.findall('s:sheetData/s:row', ns)]
     width = max((max(row, default=-1) + 1 for row in rows), default=0)
     return [[row.get(index) for index in range(width)] for row in rows]

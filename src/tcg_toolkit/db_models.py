@@ -4,8 +4,9 @@ API/search models live in models.py. These entities are internal persistence
 objects; response serializers explicitly select public fields.
 """
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Double, ForeignKey, ForeignKeyConstraint, Identity, Index, Integer, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Double, ForeignKey, ForeignKeyConstraint, Identity, Index, Integer, Numeric, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -105,6 +106,7 @@ class OwnedCard(Base):
     rarity: Mapped[str]
     name: Mapped[str]
     quantity: Mapped[int] = mapped_column()
+    price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     notes: Mapped[str]
     game_key: Mapped[str]
     number_key: Mapped[str]
@@ -115,6 +117,7 @@ class OwnedCard(Base):
     sort_id: Mapped[int] = mapped_column(Identity(always=True))
     __table_args__ = (
         CheckConstraint(quantity >= 0),
+        CheckConstraint('price >= 0', name='owned_cards_price_nonnegative'),
         UniqueConstraint("user_id", "game_key", "number_key", "rarity_key"),
         ForeignKeyConstraint(["user_id", "group_id"], ["card_groups.user_id", "card_groups.id"],
                              name="owned_cards_user_group_fkey"),
