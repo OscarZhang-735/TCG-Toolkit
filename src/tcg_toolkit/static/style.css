@@ -172,7 +172,8 @@ th {
 }
 td { padding: 13px 18px; border-top: 1px solid var(--color-divider); font-size: 13px; line-height: 1.5; }
 tbody tr:hover { background: var(--color-surface-muted); }
-td:nth-child(4) { min-width: 230px; }
+/* The name column, wherever it sits: a leading select column would shift a positional rule. */
+td:has(> .product-summary) { min-width: 230px; }
 .mono { white-space: nowrap; color: var(--color-text-muted); font-family: var(--font-mono); font-size: 12px; }
 td a, .card-name { color: var(--color-text); text-decoration: none; }
 td a:hover, .card-name:hover { text-decoration: underline; }
@@ -408,11 +409,12 @@ button.password-toggle {
   background: transparent; color: var(--color-text-subtle); font-size: 15px;
 }
 button.password-toggle:hover { border: 0; background: var(--color-hover); color: var(--color-text); }
-/* Register and password reset: every field is required; the asterisk follows the input's required attribute. */
-.required-mark, :is(#auth-form.registering, #password-reset-form) .field:has(:required) > span:first-child::after { color: var(--color-required); font-weight: 600; }
-:is(#auth-form.registering, #password-reset-form) .field:has(:required) > span:first-child::after { content: "*"; margin-left: 3px; }
+/* Register, password reset and the card editor: the asterisk follows the input's required attribute. */
+.required-mark, :is(#auth-form.registering, #password-reset-form, #cards-form) .field:has(:required) > span:first-child::after { color: var(--color-required); font-weight: 600; }
+:is(#auth-form.registering, #password-reset-form, #cards-form) .field:has(:required) > span:first-child::after { content: "*"; margin-left: 3px; }
 .required-note { margin: -12px 0 -4px; font-size: 12px; color: var(--color-text-muted); text-align: right; }
 .required-note .required-mark { margin-right: 3px; }
+.cards-required-note { margin: -10px 0 10px; }
 .field-hint { display: block; margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
 .field-hint[hidden] { display: none; }
 #auth-error, #password-reset-error {
@@ -512,7 +514,7 @@ button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-
 .card-foot .group-tag { margin-right: 6px; }
 td.group-col { white-space: nowrap; }
 /* Multi-select: checkboxes and the action bar only show while selecting. */
-#favorites-panel:not(.selecting) .select-col { display: none; }
+#favorites-panel:not(.selecting) .select-col, #cards-panel:not(.selecting) .select-col { display: none; }
 th.select-col, td.select-col { width: 1%; padding-right: 0; }
 input.select-box { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--color-primary); }
 .card-image input.select-box { position: absolute; top: 12px; left: 12px; z-index: 3; width: 20px; height: 20px; }
@@ -527,7 +529,7 @@ tr.selected td { background: var(--color-hover); }
 .select-all input { width: 16px; height: 16px; margin: 0; accent-color: var(--color-primary); }
 .selection-count { font-size: 12px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 .selection-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-#favorites-select[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
+#favorites-select[aria-pressed=true], #cards-select[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 .favorite-add-menu {
   position: fixed; z-index: 50; min-width: 160px; max-width: 240px; max-height: 280px; overflow-y: auto; padding: 6px;
   background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
@@ -539,7 +541,7 @@ button.favorite-add-option {
   border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 13px; font-weight: 500;
 }
 button.favorite-add-option:hover, button.favorite-add-option:focus-visible { background: var(--color-hover); outline: none; }
-#favorites-list.without-groups .group-col { display: none; }
+#favorites-list.without-groups .group-col, #cards-table.without-groups .group-col { display: none; }
 #favorites-details[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 /* Always level with the update time; a status note, if any, goes on the line below. */
 .fav-time { display: inline-flex; align-items: center; gap: 5px; }
@@ -565,7 +567,7 @@ button.group-tab[aria-pressed=true]:disabled:hover { background: var(--color-pri
 button.group-tab[aria-pressed=true] .group-tab-count { background: color-mix(in srgb, var(--color-on-primary) 20%, transparent); color: var(--color-on-primary); }
 .group-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .group-actions .icon-button { width: 34px; height: 34px; }
-#favorite-group-name { margin-top: 6px; }
+.group-name-input { margin-top: 6px; }
 @media (max-width: 700px) {
   .group-bar { flex-direction: column; align-items: stretch; }
   .group-actions { justify-content: flex-end; }
@@ -642,7 +644,11 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 }
 .stat-label { font-size: 12px; color: var(--color-text-muted); }
 .stat-value { font-size: 26px; font-weight: 700; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.stat-note { font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#cards-value-total { white-space: nowrap; }
 .stat-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+/* Three stat tiles leave too little room beside them on mid-size windows; stack the breakdowns below. */
+@media (max-width: 1100px) { .cards-summary { grid-template-columns: 1fr; } }
 .stat-groups h3 { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
 .stat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .stat-chip {
@@ -652,12 +658,42 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 .stat-chip-label { font-weight: 600; overflow-wrap: anywhere; }
 .stat-chip-value { color: var(--color-text-muted); white-space: nowrap; }
 #cards-retry { margin-bottom: 14px; }
-.cards-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 220px)); gap: 16px; }
+.cards-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 1.6fr); gap: 16px; align-items: end; }
 #cards-table, #cards-grid { margin-top: 14px; }
 #cards-filters .chips:empty, #cards-filters .chips[hidden] { display: none; }
 .product-summary .cards-name { min-width: 0; }
-.cards-qty { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.card.out_of_stock .cards-qty { color: var(--color-text-subtle); }
+/* Notes, names and cell padding give way so price, holdings and group columns fit without horizontal scrolling. */
+#cards-table td.cards-notes { min-width: 64px; }
+#cards-table td:has(> .product-summary) { min-width: 190px; }
+#cards-table :is(th, td) { padding-left: 14px; }
+/* Unit price input with its currency picker on the same line. */
+.field > .price-input { display: flex; gap: 8px; margin-top: 6px; color: inherit; font-size: inherit; font-weight: inherit; }
+/* Outrank the generic field input/select margins below; the wrapper already carries it. */
+.cards-form-grid .field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
+.card-dialog .field .price-input select { width: auto; flex: none; margin-top: 0; }
+.card-dialog .price-input .price-lookup-button { flex: none; padding: 0 12px; gap: 6px; }
+/* Price lookup results, below the quantity / price row. */
+.price-lookup { padding: 12px 14px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+.price-lookup-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.price-lookup-head h3 { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+#price-lookup-status { font-size: 12px; color: var(--color-text-muted); }
+.price-lookup.failed #price-lookup-status { color: var(--color-text); font-weight: 500; }
+.price-offers { display: flex; flex-direction: column; gap: 6px; max-height: 240px; margin: 10px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.price-offer { display: flex; align-items: center; gap: 6px; }
+button.price-offer-pick {
+  flex: 1; min-width: 0; height: auto; min-height: 40px; padding: 6px 12px; justify-content: flex-start; gap: 10px;
+  color: var(--color-text); font-weight: 400; text-align: left; background: var(--color-surface); border-color: var(--color-border);
+}
+button.price-offer-pick:hover { background: var(--color-hover); border-color: var(--color-border-hover); }
+button.price-offer-pick:disabled:hover { background: var(--color-surface); border-color: var(--color-border); }
+button.price-offer-pick.chosen, button.price-offer-pick.chosen:hover { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); }
+.price-offer-name { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.price-offer-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.price-offer-match { flex: none; padding: 1px 6px; font-size: 11px; color: var(--color-text-muted); border: 1px solid var(--color-border-strong); border-radius: 999px; }
+.price-offer-price { min-width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
+.price-offer-pick > .bi:last-child { color: var(--color-text-muted); }
+.price-offer-link { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; border-radius: 50%; color: var(--color-text-muted); }
+.price-offer-link:hover { background: var(--color-hover); color: var(--color-text); }
 .card .row-actions button.row-action { width: 28px; height: 28px; font-size: 14px; }
 .card .cards-notes { max-width: none; min-width: 0; margin: -2px 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 #cards-panel td { overflow-wrap: anywhere; }
@@ -696,7 +732,7 @@ button.row-action:hover { background: var(--color-hover); color: var(--color-tex
 .confirm-dialog { width: min(420px, 92vw); }
 .confirm-dialog p { margin: 0; line-height: 1.6; color: var(--color-text-secondary); }
 .confirm-dialog p.dialog-error { margin-top: 16px; color: var(--color-text); }
-.confirm-dialog p.favorite-move-name { margin-bottom: 16px; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
+.confirm-dialog p.move-name { margin-bottom: 16px; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
 @media (max-width: 700px) {
   .cards-summary { grid-template-columns: 1fr; }
   .stat-groups, .cards-form-grid, .cards-filter-grid { grid-template-columns: 1fr; }
@@ -709,6 +745,8 @@ button.row-action:hover { background: var(--color-hover); color: var(--color-tex
 .card-dialog .details-row { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
 .card-dialog .details-row .wide-2 { grid-column: span 2; }
 .card-dialog .details-row .wide { grid-column: 1 / -1; }
+/* Without any groups the picker is hidden; the price then fills the rest of the quantity row. */
+@media (min-width: 761px) { .card-dialog .details-row:has(#card-group-field[hidden]) .card-price-field { grid-column: span 3; } }
 .card-dialog .field select { margin-top: 6px; }
 /* Beats the generic .field > span label rule. */
 .field > .official-number { display: flex; gap: 8px; margin-top: 6px; color: inherit; font-size: inherit; }
@@ -751,16 +789,6 @@ button.official-card.chosen, button.official-card.chosen:hover { border-color: v
 }
 @media (prefers-reduced-motion: reduce) { .official-card.skeleton { animation: none; } button.official-card:hover { transform: none; } }
 
-/* Quantity quick edit */
-button.cards-qty {
-  height: auto; padding: 4px 8px; margin: -4px -8px; gap: 6px;
-  background: transparent; border: 1px dashed transparent; border-radius: var(--radius-md);
-  color: inherit; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
-}
-button.cards-qty:hover { background: var(--color-hover); border-color: var(--color-border-strong); color: var(--color-text); }
-td.numeric button.cards-qty { margin-right: -8px; }
-td.muted button.cards-qty, .card.out_of_stock button.cards-qty { color: var(--color-text-subtle); }
-.quantity-dialog { width: min(380px, 92vw); }
 /* Import dialog: one drop zone stands in for the native file input. */
 .import-dialog { width: min(480px, 94vw); }
 .import-drop {
@@ -791,16 +819,18 @@ td.muted button.cards-qty, .card.out_of_stock button.cards-qty { color: var(--co
 .export-group .chips { margin-top: 8px; }
 .export-group .chip { position: relative; }
 .export-group[disabled] .chips { opacity: .5; }
+.export-group .export-select { width: 100%; margin-top: 8px; }
 .export-group[disabled] .chip { cursor: not-allowed; }
 .chip:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .export-summary { margin: 4px 0 0; font-size: 13px; color: var(--color-text-secondary); }
-.quantity-card { display: flex; align-items: center; gap: 8px; }
-.quantity-name { margin: 8px 0 18px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
-.quantity-stepper { display: flex; align-items: center; gap: 10px; }
-.quantity-stepper button { width: 44px; height: 44px; font-size: 18px; }
-.quantity-stepper input { flex: 1; height: 44px; font-size: 20px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
-.quantity-quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
-.quantity-quick button { font-variant-numeric: tabular-nums; }
+/* Bulk price lookup dialog: matching rule, then the plan / progress line and per-outcome counts. */
+.bulk-price-rule { margin: -6px 0 14px; }
+.bulk-price-results { display: grid; gap: 6px; margin: 12px 0 0; padding: 12px 14px; list-style: none; font-size: 13px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.bulk-price-results li { display: flex; align-items: center; gap: 8px; }
+.bulk-price-results .bi { color: var(--color-text-muted); }
+.bulk-price-results .bulk-price-updated .bi { color: var(--color-text); }
+.bulk-price-results .bulk-price-failed { font-weight: 500; }
+.bulk-price-results .bulk-price-note { margin-top: 2px; font-size: 12px; color: var(--color-text-muted); }
 
 /* Owned quantity (from My cards) in search and favorites */
 td.owned-cell { font-weight: 600; }

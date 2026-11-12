@@ -1,13 +1,14 @@
 """Private, manually maintained card inventory."""
-from sqlalchemy import select
+from sqlalchemy import select, update as sql_update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .database import is_unique_violation
-from .db_models import OwnedCard
+from .db_models import CardGroup, OwnedCard, User
 import time
 import uuid
 import json
+from decimal import Decimal
 from io import BytesIO
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -30,12 +31,18 @@ GAMES = {'ws': 'WS', 'ws_en': 'WS EN', 'ws en': 'WS EN', 'wsr': 'WSR', 'pm': 'PM
          'chaos': 'ChaosTCG', 'chaostcg': 'ChaosTCG'}
 
 
+# Currencies a unit price may be recorded in; the WebUI converts between them for display.
+CURRENCIES = ('JPY', 'CNY', 'CAD')
+
+
 class CardInput(BaseModel):
     game: str = Field(min_length=1)
     card_number: str = Field(min_length=1)
     rarity: str = Field(min_length=1)
     name: str = Field(min_length=1)
     quantity: int = Field(default=1, strict=True, ge=0, le=9007199254740991)
+    price: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    currency: Literal[CURRENCIES] = 'JPY'
     notes: str = ''
     image_url: str = ''
 
@@ -54,6 +61,14 @@ class CardInput(BaseModel):
         return value
 
 
+    @field_validator('currency', mode='before')
+    @classmethod
+    def currency_code(cls, value):
+        # Missing (null) means the default; codes are case-insensitive, e.g. "cny".
+        if value is None:
+            return 'JPY'
+        return value.strip().upper() if isinstance(value, str) else value
+
     @field_validator('game', 'card_number', 'rarity', 'name', 'notes')
     @classmethod
     def clean(cls, value, info):
@@ -63,9 +78,27 @@ class CardInput(BaseModel):
         return GAMES.get(value.casefold(), value) if info.field_name == 'game' else value
 
 
+class CardCreate(CardInput):
+    group_id: str | None = Field(default=None, min_length=1)
+
+
+class GroupName(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+    @field_validator('name', mode='before')
+    @classmethod
+    def trim_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class GroupTarget(BaseModel):
+    group_id: str | None = Field(min_length=1)
+
+
 def record(row: OwnedCard):
-    return {key: getattr(row, key) for key in ('id', 'game', 'card_number', 'rarity', 'name',
-                                              'quantity', 'notes', 'image_url', 'created_at', 'updated_at')}
+    return {**{key: getattr(row, key) for key in ('id', 'group_id', 'game', 'card_number', 'rarity', 'name',
+                                                'quantity', 'notes', 'image_url', 'created_at', 'updated_at')},
+            'price': float(row.price) if row.price is not None else None, 'currency': row.currency}
 
 
 def owned(db: Session, user_id, card_id, *, lock=False):
@@ -78,7 +111,7 @@ def owned(db: Session, user_id, card_id, *, lock=False):
 
 def values(body):
     return dict(game=body.game, card_number=body.card_number, rarity=body.rarity, name=body.name,
-                quantity=body.quantity, notes=body.notes, image_url=body.image_url,
+                quantity=body.quantity, price=body.price, currency=body.currency, notes=body.notes, image_url=body.image_url,
                 game_key=body.game.casefold(), number_key=body.card_number.casefold(), rarity_key=body.rarity.casefold())
 
 
@@ -90,28 +123,95 @@ def conflict(db: Session, user_id, body):
         raise HTTPException(409, detail={'type': 'card_duplicate', 'id': card_id})
 
 
-@router.get('')
-def listing(request: Request, user=Depends(current_user)):
+def lock_user(db: Session, user_id):
+    # Serialize group deletion and membership writes before taking card locks.
+    db.execute(select(User.id).where(User.id == user_id).with_for_update()).one()
+
+
+def owned_group(db: Session, user_id, group_id):
+    row = db.scalar(select(CardGroup).where(CardGroup.user_id == user_id, CardGroup.id == group_id))
+    if row is None:
+        raise HTTPException(404, detail='card_group_not_found')
+    return row
+
+
+def group_record(row: CardGroup):
+    return {'id': row.id, 'name': row.name, 'created_at': row.created_at}
+
+
+def require_available_name(db: Session, user_id, name, group_id=None):
+    query = select(CardGroup.id).where(CardGroup.user_id == user_id, CardGroup.name == name)
+    if group_id is not None:
+        query = query.where(CardGroup.id != group_id)
+    if db.scalar(query) is not None:
+        raise HTTPException(409, detail='card_group_name_taken')
+
+
+@router.get('/groups')
+def groups(request: Request, user=Depends(current_user)):
     with request.app.state.auth.store.session() as db:
-        rows = db.scalars(select(OwnedCard).where(OwnedCard.user_id == user['id']).order_by(
-            OwnedCard.created_at.desc(), OwnedCard.sort_id.desc()))
+        rows = db.scalars(select(CardGroup).where(CardGroup.user_id == user['id']).order_by(
+            CardGroup.created_at, CardGroup.id))
+        return {'items': [group_record(row) for row in rows]}
+
+
+@router.post('/groups', status_code=201, dependencies=[Depends(write_guard)])
+def create_group(body: GroupName, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        lock_user(db, user['id'])
+        require_available_name(db, user['id'], body.name)
+        row = CardGroup(id=str(uuid.uuid4()), user_id=user['id'], name=body.name, created_at=int(time.time()))
+        db.add(row)
+        return group_record(row)
+
+
+@router.put('/groups/{group_id}', dependencies=[Depends(write_guard)])
+def rename_group(group_id: str, body: GroupName, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        lock_user(db, user['id'])
+        row = owned_group(db, user['id'], group_id)
+        require_available_name(db, user['id'], body.name, row.id)
+        row.name = body.name
+        return group_record(row)
+
+
+@router.delete('/groups/{group_id}', status_code=204, dependencies=[Depends(write_guard)])
+def remove_group(group_id: str, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        lock_user(db, user['id'])
+        row = owned_group(db, user['id'], group_id)
+        db.execute(sql_update(OwnedCard).where(OwnedCard.user_id == user['id'], OwnedCard.group_id == row.id)
+                   .values(group_id=None))
+        db.delete(row)
+
+
+@router.get('')
+def listing(request: Request, group_id: str | None = None, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        query = select(OwnedCard).where(OwnedCard.user_id == user['id'])
+        if group_id is not None:
+            owned_group(db, user['id'], group_id)
+            query = query.where(OwnedCard.group_id == group_id)
+        rows = db.scalars(query.order_by(OwnedCard.created_at.desc(), OwnedCard.sort_id.desc()))
         return {'items': [record(row) for row in rows]}
 
 
-EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'notes',
+# 'group' holds the group name (not its ID), so files carry groups between accounts.
+EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'price', 'currency', 'notes', 'group',
                   'image_url', 'id', 'created_at', 'updated_at')
 XLSX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 IMPORT_LIMIT = 10 * 1024 * 1024
 REQUIRED_COLUMNS = {key for key, field in CardInput.model_fields.items() if field.is_required()}
-EXPORT_WIDTHS = {'game': 20, 'card_number': 20, 'rarity': 20, 'name': 36, 'quantity': 18,
-                 'notes': 40, 'image_url': 40, 'id': 40, 'created_at': 20, 'updated_at': 20}
+IMPORT_COLUMNS = {*CardInput.model_fields, 'group'}
+EXPORT_WIDTHS = {'game': 20, 'card_number': 20, 'rarity': 20, 'name': 36, 'quantity': 18, 'price': 18, 'currency': 12,
+                 'notes': 40, 'group': 24, 'image_url': 40, 'id': 40, 'created_at': 20, 'updated_at': 20}
 # XLSX headings are for people; JSON keys stay stable so files remain machine-readable.
 EXPORT_HEADINGS = {
     'en': {'sheet': 'Cards', 'game': 'Game', 'card_number': 'Number', 'rarity': 'Rarity', 'name': 'Name',
-           'quantity': 'Quantity', 'notes': 'Notes', 'image_url': 'Image URL', 'id': 'ID',
+           'quantity': 'Quantity', 'price': 'Price', 'currency': 'Currency', 'notes': 'Notes', 'group': 'Group', 'image_url': 'Image URL', 'id': 'ID',
            'created_at': 'Created at', 'updated_at': 'Updated at'},
     'zh-CN': {'sheet': '卡牌', 'game': '游戏', 'card_number': '编号', 'rarity': '稀有度', 'name': '名称',
-              'quantity': '拥有量', 'notes': '备注', 'image_url': '图片地址', 'id': 'ID',
+              'quantity': '拥有量', 'price': '价格', 'currency': '币种', 'notes': '备注', 'group': '分组', 'image_url': '图片地址', 'id': 'ID',
               'created_at': '创建时间', 'updated_at': '更新时间'},
 }
 
@@ -125,14 +225,17 @@ def export_cards(request: Request, format: Literal['xlsx', 'json'],
                  language: Literal['en', 'zh-CN'] | None = None,
                  fields: Annotated[list[Literal[EXPORT_COLUMNS]] | None, Query()] = None,
                  games: Annotated[list[str] | None, Query()] = None,
+                 group_id: str | None = None,
                  user=Depends(current_user)):
-    items = listing(request, user)['items']
+    items = listing(request, group_id=group_id, user=user)['items']
+    names = {row['id']: row['name'] for row in groups(request, user=user)['items']}
     if games is not None:
         wanted = {game.strip().casefold() for game in games}
         items = [item for item in items if item['game'].casefold() in wanted]
     # Canonical column order, regardless of the order fields were requested in.
     columns = [key for key in EXPORT_COLUMNS if fields is None or key in fields]
-    items = [{key: item[key] for key in columns} for item in items]
+    # Ungrouped cards export a null group (an empty XLSX cell).
+    items = [{key: names.get(item['group_id']) if key == 'group' else item[key] for key in columns} for item in items]
     headers = {'Content-Disposition': f'attachment; filename="cards.{format}"',
                'Cache-Control': 'no-store'}
     if format == 'json':
@@ -151,8 +254,10 @@ def export_cards(request: Request, format: Literal['xlsx', 'json'],
         for row_index, item in enumerate(items, 1):
             for column_index, key in enumerate(columns):
                 value = item[key]
+                if value is None:
+                    continue
                 # Excel preserves only 15 numeric digits; retain larger quantities as text.
-                if isinstance(value, int) and abs(value) < 10**15:
+                if isinstance(value, (int, float)) and abs(value) < 10**15:
                     sheet.write_number(row_index, column_index, value)
                 else:
                     # Explicit strings preserve card numbers and never execute formulas.
@@ -189,19 +294,53 @@ def xlsx_import_rows(content):
                 raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line})
             item = {}
             for key, cell in zip(headers, cells):
-                if key not in CardInput.model_fields or cell.value is None:
+                if key not in IMPORT_COLUMNS or cell.value is None:
                     continue
                 if cell.data_type in ('f', 'e'):
                     raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line})
                 value = cell.value
                 if key == 'quantity' and isinstance(value, str) and value.isascii() and value.isdecimal():
                     value = int(value) if len(value) <= 16 else value
-                if key == 'card_number' and type(value) is int:
+                if key in ('card_number', 'group') and type(value) is int:
                     value = str(value)
                 item[key] = value
             yield line, item
     finally:
         workbook.close()
+
+
+def import_group_name(value):
+    """Group name from an import row; blank or missing means ungrouped."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError('Group must be text')
+    value = value.strip()
+    if len(value) > 100 or '\0' in value:
+        raise ValueError('Invalid group name')
+    value.encode('utf-8')
+    return value or None
+
+
+def assign_import_groups(db: Session, user_id, imported, wanted, now):
+    """Put newly imported cards into groups by name, creating missing groups in file order."""
+    members = {}
+    for card_id, name in wanted:
+        if name is not None and card_id in imported:
+            members.setdefault(name, []).append(card_id)
+    if not members:
+        return
+    existing = dict(db.execute(select(CardGroup.name, CardGroup.id).where(
+        CardGroup.user_id == user_id, CardGroup.name.in_(list(members)))).all())
+    missing = [name for name in members if name not in existing]
+    # New groups share one timestamp; sorted IDs keep their (created_at, id) order matching the file.
+    for name, group_id in zip(missing, sorted(str(uuid.uuid4()) for _ in missing)):
+        db.add(CardGroup(id=group_id, user_id=user_id, name=name, created_at=now))
+        existing[name] = group_id
+    db.flush()
+    for name, card_ids in members.items():
+        db.execute(sql_update(OwnedCard).where(OwnedCard.user_id == user_id, OwnedCard.id.in_(card_ids))
+                   .values(group_id=existing[name]))
 
 
 def import_card_rows(content, format, store, user_id):
@@ -215,10 +354,11 @@ def import_card_rows(content, format, store, user_id):
             rows = enumerate(items, 1)
         else:
             rows = xlsx_import_rows(content)
-        cards = []
+        cards, wanted = [], []
         for line, item in rows:
             try:
                 body = CardInput.model_validate(item)
+                group = import_group_name(item.get('group'))
                 fields = values(body)
                 for value in fields.values():
                     if isinstance(value, str):
@@ -227,7 +367,9 @@ def import_card_rows(content, format, store, user_id):
                         value.encode('utf-8')
             except (ValidationError, ValueError):
                 raise HTTPException(422, detail={'code': 'cards_import_row', 'row': line}) from None
-            cards.append(dict(id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **fields))
+            card_id = str(uuid.uuid4())
+            cards.append(dict(id=card_id, user_id=user_id, created_at=now, updated_at=now, **fields))
+            wanted.append((card_id, group))
     except (BadZipFile, InvalidFileException, ParseError, DefusedXmlException, KeyError, IndexError,
             ValueError, TypeError, RecursionError, OSError):
         raise HTTPException(422, detail='cards_import_invalid') from None
@@ -235,9 +377,12 @@ def import_card_rows(content, format, store, user_id):
         return {'imported': 0, 'skipped': 0}
     statement = insert(OwnedCard).on_conflict_do_nothing(
         index_elements=['user_id', 'game_key', 'number_key', 'rarity_key']).returning(OwnedCard.id)
+    # Skipped duplicates keep their existing group; only new cards join the file's groups.
     with store.session() as db:
-        imported = len(db.scalars(statement, cards).all())
-    return {'imported': imported, 'skipped': len(cards) - imported}
+        lock_user(db, user_id)
+        imported = set(db.scalars(statement, cards).all())
+        assign_import_groups(db, user_id, imported, wanted, now)
+    return {'imported': len(imported), 'skipped': len(cards) - len(imported)}
 
 
 @router.post('/import', dependencies=[Depends(require_trusted_origin)])
@@ -254,10 +399,13 @@ async def import_cards(request: Request, format: Literal['xlsx', 'json'], user=D
 
 
 @router.post('', status_code=201, dependencies=[Depends(write_guard)])
-def add(body: CardInput, request: Request, user=Depends(current_user)):
+def add(body: CardCreate, request: Request, user=Depends(current_user)):
     now = int(time.time())
     with request.app.state.auth.store.session() as db:
-        row = OwnedCard(id=str(uuid.uuid4()), user_id=user['id'], created_at=now, updated_at=now, **values(body))
+        lock_user(db, user['id'])
+        group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
+        row = OwnedCard(id=str(uuid.uuid4()), user_id=user['id'], group_id=group_id,
+                        created_at=now, updated_at=now, **values(body))
         try:
             with db.begin_nested():
                 db.add(row)
@@ -269,13 +417,34 @@ def add(body: CardInput, request: Request, user=Depends(current_user)):
         return record(row)
 
 
-@router.put('/{card_id}', dependencies=[Depends(write_guard)])
-def update(card_id: str, body: CardInput, request: Request, user=Depends(current_user)):
+@router.put('/{card_id}/group', dependencies=[Depends(write_guard)])
+def move(card_id: str, body: GroupTarget, request: Request, user=Depends(current_user)):
     with request.app.state.auth.store.session() as db:
+        lock_user(db, user['id'])
+        group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
         row = owned(db, user['id'], card_id, lock=True)
+        row.group_id = group_id
+        return record(row)
+
+
+@router.put('/{card_id}', dependencies=[Depends(write_guard)])
+def update(card_id: str, body: CardCreate, request: Request, user=Depends(current_user)):
+    with request.app.state.auth.store.session() as db:
+        # group_id is optional here: sent, it moves the card in the same write (null ungroups it);
+        # omitted, the card stays where it is. The user lock orders this against group deletion.
+        moving = 'group_id' in body.model_fields_set
+        if moving:
+            lock_user(db, user['id'])
+            group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
+        row = owned(db, user['id'], card_id, lock=True)
+        if moving:
+            row.group_id = group_id
         try:
             with db.begin_nested():
                 for key, value in values(body).items():
+                    # Older clients omit price/currency; keep the stored values then.
+                    if key in ('price', 'currency') and key not in body.model_fields_set:
+                        continue
                     setattr(row, key, value)
                 row.updated_at = int(time.time())
                 db.flush()

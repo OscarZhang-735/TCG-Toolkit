@@ -25,6 +25,9 @@ test('export settings become query parameters', () => {
   assert.equal(exportQuery({format: 'json', fields: ['name', 'game']}), 'format=json&fields=game&fields=name');
   assert.equal(exportQuery({format: 'json', fields: [...EXPORT_FIELDS]}), 'format=json');
   assert.equal(exportQuery({format: 'json', games: ['WS EN', 'PM']}), 'format=json&games=WS+EN&games=PM');
+  // A group limits the export to its cards; null exports the whole library.
+  assert.equal(exportQuery({format: 'json', group: 'g1'}), 'format=json&group_id=g1');
+  assert.equal(exportQuery({format: 'json', group: null}), 'format=json');
 });
 
 test('failed downloads report errors instead of saving error responses', async () => {

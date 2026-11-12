@@ -34,9 +34,12 @@ class SearchItem:
     rarity: str | None = None
     # YuYu-Tei cart identity from the hidden cart_* fields: gid, ver, cid, kizu.
     cart: dict | None = None
+    # Explicit source condition for price lookup; not part of the search API.
+    condition: str | None = None
 
     def to_dict(self) -> dict:
         result = asdict(self)
+        result.pop('condition')
         result["game"] = self.game.value
         result["stock_status"] = self.stock_status.value
         return result

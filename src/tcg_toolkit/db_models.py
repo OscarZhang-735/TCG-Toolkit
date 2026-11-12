@@ -4,8 +4,9 @@ API/search models live in models.py. These entities are internal persistence
 objects; response serializers explicitly select public fields.
 """
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Double, ForeignKey, ForeignKeyConstraint, Identity, Index, Integer, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, Double, ForeignKey, ForeignKeyConstraint, Identity, Index, Integer, Numeric, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -81,16 +82,32 @@ class Favorite(Base):
     )
 
 
+class CardGroup(Base):
+    __tablename__ = "card_groups"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str]
+    created_at: Mapped[int]
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", name="card_groups_user_id_id_key"),
+        UniqueConstraint("user_id", "name", name="card_groups_user_name_key"),
+    )
+
+
 class OwnedCard(Base):
     __tablename__ = "owned_cards"
 
     id: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    group_id: Mapped[str | None]
     game: Mapped[str]
     card_number: Mapped[str]
     rarity: Mapped[str]
     name: Mapped[str]
     quantity: Mapped[int] = mapped_column()
+    price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(server_default='JPY')
     notes: Mapped[str]
     game_key: Mapped[str]
     number_key: Mapped[str]
@@ -101,7 +118,12 @@ class OwnedCard(Base):
     sort_id: Mapped[int] = mapped_column(Identity(always=True))
     __table_args__ = (
         CheckConstraint(quantity >= 0),
+        CheckConstraint('price >= 0', name='owned_cards_price_nonnegative'),
+        CheckConstraint("currency IN ('JPY', 'CNY', 'CAD')", name='owned_cards_currency_known'),
         UniqueConstraint("user_id", "game_key", "number_key", "rarity_key"),
+        ForeignKeyConstraint(["user_id", "group_id"], ["card_groups.user_id", "card_groups.id"],
+                             name="owned_cards_user_group_fkey"),
+        Index("owned_cards_user_group", "user_id", "group_id"),
     )
 
 

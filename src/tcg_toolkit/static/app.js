@@ -1,5 +1,5 @@
 import {createProxySettings} from './proxy-settings.js';
-import {clearCards, activateCards, ownedQuantity} from './cards-ui.js';
+import {clearCards, activateCards, ownedQuantity, setCardsCurrency} from './cards-ui.js';
 import {createFavorites, cardKey} from './favorites.js';
 import {bindFavoriteGroups} from './favorite-groups-ui.js';
 import {createSelection} from './favorite-selection.js';
@@ -48,7 +48,7 @@ $('currency').addEventListener('change', async () => {
   const target = $('currency').value, request = ++currencyRequest;
   displayCurrency = 'JPY'; exchangeRate = 1;
   currencyStatus = null;
-  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render();
+  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render(); setCardsCurrency(displayCurrency, exchangeRate);
   try {
     let fetchedAt = null;
     const rate = await fetchRate(target, requestAPI, value => { fetchedAt = value; });
@@ -59,7 +59,7 @@ $('currency').addEventListener('change', async () => {
     if (request !== currencyRequest) return;
     $('currency').value = 'JPY'; currencyStatus = null;
   }
-  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render();
+  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render(); setCardsCurrency(displayCurrency, exchangeRate);
 });
 const proxySettings = createProxySettings();
 // Effective subscription recipient (custom notification email or verified account email).

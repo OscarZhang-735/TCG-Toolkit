@@ -1,19 +1,31 @@
 import {lookupSource, lookupItems} from './card-sources.js';
-import {createCards, filterCards, summarizeCards} from './cards.js';
+import {createCards, filterCards, summarizeCards, yenPrice, CURRENCIES, PRICE_MERCHANT, priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} from './cards.js';
+import {fetchRate} from './currency.js';
+import {parseQuantity} from './cart.js';
 import {t, getLanguage} from './i18n.js';
 import {rarityBadge, cardImage, markOrientation} from './card-view.js';
 import {numberButton} from './copy-number.js';
 import {setNavCount} from './nav-count.js';
 import {EXPORT_FIELDS, fetchCardExport, downloadCardExport} from './cards-export.js';
 import {raritiesForGame, rarityCategories, findRarity, rarityTier, rarityDescription} from './rarities.js';
+import {bindGroups} from './group-ui.js';
+import {priceSteps, sliderIndex, sliderBound} from './logic.js';
 const $ = id => document.getElementById(id);
-const fields = ['game', 'card_number', 'rarity', 'name', 'quantity', 'notes', 'image_url'];
+const fields = ['game', 'card_number', 'rarity', 'name', 'quantity', 'price', 'currency', 'notes', 'image_url'];
 // List/grid choice is shared with search and favorites (app.js owns the toggle).
 const currentView = () => localStorage.getItem('view') === 'grid' ? 'grid' : 'list';
 let officialAPI, officialGeneration = 0, officialController;
-const blankFilters = () => ({query: '', rarity: '', sort: 'original', hiddenGames: new Set()});
+const blankFilters = () => ({query: '', rarity: '', sort: 'original', hiddenGames: new Set(), priceMin: null, priceMax: null});
 let filters = blankFilters(), pendingDelete = null;
 const inventory = createCards(render);
+// Multi-select for moving or deleting many cards at once, as on the favorites page. Bulk actions
+// run one card at a time; finished cards are deselected and failed ones stay selected so the
+// action can be retried. selectionGeneration drops a run when the account changes.
+const blankSelection = () => ({active: false, ids: new Set(), running: false, done: 0, total: 0, failed: 0});
+let selection = blankSelection(), selectionGeneration = 0;
+const locked = () => inventory.state.busy || inventory.state.loading || selection.running;
+const groups = bindGroups(inventory, {prefix: 'cards', deleteMessage: 'cards_group_delete_message', locked});
+const groupName = id => inventory.state.groups.find(group => group.id === id)?.name ?? null;
 let importResult = null;
 function renderImport() {
   const {ready, busy, loading} = inventory.state;
@@ -42,12 +54,15 @@ function renderImport() {
 }
 // Export settings: format, heading language and fields are remembered; the games
 // start from the page's game filter each time the dialog opens.
-let exportController = null, exportError = '', exportHiddenGames = new Set();
+let exportController = null, exportError = '', exportHiddenGames = new Set(), exportGroup = null;
 const EXPORT_KEY = 'cardsExport';
 function loadExportSettings() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(EXPORT_KEY)) ?? {}; } catch { /* corrupt: use defaults */ }
-  const chosen = Array.isArray(saved.fields) ? EXPORT_FIELDS.filter(field => saved.fields.includes(field)) : [];
+  // Fields added after the settings were saved (not in saved.known) start out chosen.
+  const known = Array.isArray(saved.known) ? saved.known : EXPORT_FIELDS.filter(field => !['group', 'price', 'currency'].includes(field));
+  const chosen = Array.isArray(saved.fields)
+    ? EXPORT_FIELDS.filter(field => saved.fields.includes(field) || !known.includes(field)) : [];
   return {
     format: ['xlsx', 'json'].includes(saved.format) ? saved.format : 'xlsx',
     language: ['zh-CN', 'en', 'keys'].includes(saved.language) ? saved.language : getLanguage(),
@@ -55,16 +70,19 @@ function loadExportSettings() {
   };
 }
 let exportSettings = loadExportSettings();
-const saveExportSettings = () => localStorage.setItem(EXPORT_KEY, JSON.stringify(exportSettings));
-// [key, label] for every game in the library, sorted for display.
-const exportGames = () => [...new Map(inventory.state.records.map(row => [row.game.toLowerCase(), row.game]))]
+const saveExportSettings = () => localStorage.setItem(EXPORT_KEY, JSON.stringify({...exportSettings, known: EXPORT_FIELDS}));
+// Cards in the chosen export group (null: the whole library).
+const exportRecords = () => inventory.state.records.filter(row => exportGroup === null || row.group_id === exportGroup);
+// [key, label] for every game in the exported cards, sorted for display.
+const exportGames = () => [...new Map(exportRecords().map(row => [row.game.toLowerCase(), row.game]))]
   .sort((a, b) => collator.compare(a[1], b[1]));
 function renderExport() {
   const state = inventory.state;
   $('cards-export').disabled = !state.ready || state.loading || state.busy;
   const busy = Boolean(exportController), {format, fields: chosenFields} = exportSettings;
   const games = exportGames(), chosenGames = games.filter(([key]) => !exportHiddenGames.has(key));
-  const cards = state.records.filter(row => !exportHiddenGames.has(row.game.toLowerCase())).length;
+  const cards = exportRecords().filter(row => !exportHiddenGames.has(row.game.toLowerCase())).length;
+  $('cards-export-group-field').hidden = !state.groups.length; $('cards-export-group-field').disabled = busy;
   document.querySelectorAll('input[name="export-format"]').forEach(input => { input.checked = input.value === format; });
   document.querySelectorAll('input[name="export-language"]').forEach(input => { input.checked = input.value === exportSettings.language; });
   $('cards-export-format').closest('fieldset').disabled = busy;
@@ -76,7 +94,8 @@ function renderExport() {
   $('cards-export-games-all').textContent = t(chosenGames.length === games.length ? 'cards_export_clear_all' : 'cards_export_select_all');
   $('cards-export-fields-all').textContent = t(chosenFields.length === EXPORT_FIELDS.length ? 'cards_export_clear_all' : 'cards_export_select_all');
   $('cards-export-summary').textContent = t('cards_export_summary', {cards: number(cards), fields: number(chosenFields.length)});
-  const problem = games.length && !chosenGames.length ? 'cards_export_need_game' : !chosenFields.length ? 'cards_export_need_field' : '';
+  const problem = games.length && !chosenGames.length ? 'cards_export_need_game' : !chosenFields.length ? 'cards_export_need_field'
+    : !cards ? 'cards_group_empty' : '';
   const message = problem || exportError;
   $('cards-export-error').textContent = !busy && message ? t(message) : '';
   const confirm = $('cards-export-confirm');
@@ -91,6 +110,13 @@ function exportChip(value, label, checked, onChange) {
   chip.append(input, icon('bi-check-lg'), node('span', label));
   return chip;
 }
+function exportGroupOptions() {
+  const all = node('option', t('favorite_group_all')); all.value = '';
+  $('cards-export-group').replaceChildren(all, ...inventory.state.groups.map(group => {
+    const option = node('option', group.name); option.value = group.id; return option;
+  }));
+  $('cards-export-group').value = exportGroup ?? '';
+}
 function exportChips() {
   $('cards-export-games').replaceChildren(...exportGames().map(([key, label]) => exportChip(key, label, !exportHiddenGames.has(key),
     checked => { if (checked) exportHiddenGames.delete(key); else exportHiddenGames.add(key); })));
@@ -103,7 +129,8 @@ function exportChips() {
 }
 function openExport() {
   if ($('cards-export').disabled) return;
-  exportError = '';
+  exportError = ''; exportGroup = inventory.state.group;
+  exportGroupOptions();
   const known = new Set(exportGames().map(([key]) => key));
   exportHiddenGames = new Set([...filters.hiddenGames].filter(key => known.has(key)));
   exportChips(); renderExport();
@@ -116,7 +143,7 @@ async function runExport() {
   const games = exportHiddenGames.size ? exportGames().filter(([key]) => !exportHiddenGames.has(key)).map(([, label]) => label) : null;
   exportController = controller; exportError = ''; renderExport();
   try {
-    const blob = await fetchCardExport(officialAPI, {format, language, games, fields: chosenFields}, controller.signal);
+    const blob = await fetchCardExport(officialAPI, {format, language, games, fields: chosenFields, group: exportGroup}, controller.signal);
     if (exportController === controller) { exportController = null; downloadCardExport(blob, format); $('cards-export-dialog').close(); }
   } catch (error) {
     if (exportController === controller && error.name !== 'AbortError') {
@@ -167,29 +194,104 @@ function rarityOptions() {
   } else if (mapped) draft.rarity = match?.code ?? '';
   select.value = draft.rarity;
 }
+// The card's group: the selected tab by default for new cards, the current group when editing.
+function groupPicker() {
+  const state = inventory.state, select = $('card-group');
+  $('card-group-field').hidden = !state.groups.length;
+  const none = node('option', t('favorite_group_none')); none.value = '';
+  select.replaceChildren(none, ...state.groups.map(group => { const option = node('option', group.name); option.value = group.id; return option; }));
+  select.value = state.draftGroup ?? ''; select.disabled = state.busy;
+}
 function options(id, field) {
   const select = $(id), value = filters[field];
-  const labels = new Map(inventory.state.records.map(row => [row[field].toLowerCase(), row[field]]));
+  const labels = new Map(inventory.visible().map(row => [row[field].toLowerCase(), row[field]]));
   const all = node('option', t('cards_all')); all.value = '';
   select.replaceChildren(all, ...[...labels.values()].sort().map(label => {const option = node('option', label); option.value = label; return option;}));
   if (value && ![...select.options].some(option => option.value === value)) {const option = node('option', value); option.value = value; select.append(option);}
   select.value = value;
 }
 const collator = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+// Prices sort by their yen value; cards without a comparable price sort last in both directions.
 function sortCards(rows, sort) {
   if (sort === 'original') return rows;
   const [key, direction] = sort.split(':'), sign = direction === 'desc' ? -1 : 1;
-  return [...rows].sort((a, b) => sign * (key === 'quantity' ? a.quantity - b.quantity : collator.compare(a[key], b[key])));
+  return [...rows].sort((a, b) => {
+    if (key === 'price') {
+      const x = yen(a), y = yen(b);
+      return x == null || y == null ? (x == null) - (y == null) : sign * (x - y);
+    }
+    return sign * (key === 'quantity' ? a.quantity - b.quantity : collator.compare(a[key], b[key]));
+  });
+}
+// Prices follow the sidebar's display currency, like shop prices: app.js reports its choice, and
+// rates for the currencies cards were entered in are fetched here. rates[code] is how much of that
+// currency one yen buys. Cards whose rate cannot be fetched show only their own amount and are left
+// out of the price slider and price sort.
+let displayCurrency = 'JPY', rates = {JPY: 1}, ratesPending = new Set(), ratesFailed = new Set(), ratesGeneration = 0;
+const yen = row => yenPrice(row, rates);
+export function setCardsCurrency(currency, rate) {
+  displayCurrency = currency; rates[currency] = rate; ratesFailed.delete(currency);
+  render();
+}
+function loadRates(rows) {
+  for (const currency of new Set(rows.filter(row => row.price != null).map(row => row.currency))) {
+    if (currency in rates || ratesPending.has(currency) || ratesFailed.has(currency)) continue;
+    const generation = ratesGeneration;
+    ratesPending.add(currency);
+    fetchRate(currency, officialAPI).then(rate => { if (generation === ratesGeneration) rates[currency] = rate; },
+      () => { if (generation === ratesGeneration) ratesFailed.add(currency); })
+      .finally(() => { if (generation === ratesGeneration) { ratesPending.delete(currency); render(); } });
+  }
+}
+// Converted amounts round like shop prices (whole yen); entered amounts keep their cents.
+function money(amount, currency, converted = false) {
+  const whole = currency === 'JPY' && (converted || Number.isInteger(amount));
+  return new Intl.NumberFormat(getLanguage(), {style: 'currency', currency, currencyDisplay: 'code',
+    minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2}).format(converted && whole ? Math.round(amount) : amount);
+}
+// The price in the display currency with the entered amount underneath (also when the currencies
+// match). Unpriced cards show a placeholder in the display currency ("JPY -"); when the rate is
+// unknown only the entered amount is shown.
+function priceDisplay(row) {
+  const box = node('span', '', 'converted-price');
+  if (row.price == null) { box.append(node('span', `${displayCurrency} -`, 'muted')); return box; }
+  const value = yen(row), original = money(row.price, row.currency);
+  if (row.currency === displayCurrency) box.append(node('span', original), node('small', original, 'original-price'));
+  else if (value == null) box.append(node('span', original));
+  else box.append(node('span', money(value * rates[displayCurrency], displayCurrency, true)), node('small', original, 'original-price'));
+  return box;
+}
+// Price range slider, as on the favorites page: thumbs step through the distinct yen values of the
+// current group's prices, a thumb at either end means no limit, and labels use the display currency.
+let steps = [];
+const priceLabel = value => money(value * rates[displayCurrency], displayCurrency, true);
+function priceSlider(rows) {
+  steps = priceSteps(rows.map(row => ({price: yen(row)})).filter(row => row.price != null));
+  const lo = $('cards-price-min'), hi = $('cards-price-max'), last = Math.max(steps.length - 1, 0);
+  for (const input of [lo, hi]) { input.max = last; input.disabled = steps.length < 2; }
+  lo.value = sliderIndex(steps, filters.priceMin, 'min');
+  hi.value = sliderIndex(steps, filters.priceMax, 'max');
+  const a = Number(lo.value), b = Number(hi.value), percent = index => last ? index / last * 100 : 0;
+  $('cards-price-fill').style.left = `${percent(a)}%`;
+  $('cards-price-fill').style.right = `${100 - (last ? percent(b) : 100)}%`;
+  // Keep the min thumb reachable when both thumbs meet at the right end.
+  lo.classList.toggle('on-top', a > last / 2);
+  const open = filters.priceMin === null && filters.priceMax === null;
+  $('cards-price-label').textContent = open ? t('any_price') : `${priceLabel(steps[a])} – ${priceLabel(steps[b])}`;
+  $('cards-price-range').classList.toggle('active', !open);
 }
 function visibleCards(records) {
-  const rows = filterCards(records, {query: filters.query, rarity: filters.rarity})
+  const rows = filterCards(records, {query: filters.query, rarity: filters.rarity, min: filters.priceMin, max: filters.priceMax, priceOf: yen})
     .filter(row => !filters.hiddenGames.has(row.game.toLowerCase()));
   return sortCards(rows, filters.sort);
 }
 // Game logos shown after the game name in filter chips (keys match gameKey()).
 const GAME_LOGOS = {ws: './game-ws-sticker.png', 'ws en': './game-ws-sticker.png', wsr: './game-wsr.webp', pm: './game-pm.webp', sev: './game-sev.png', 'sev en': './game-sev.png', lycee: './game-lycee.webp', chaostcg: './game-chaos.webp'};
+// As on the favorites page, every library game always has a chip; games saved earlier
+// under another name follow, so their cards can still be filtered.
 function gameChips() {
-  const games = new Map(inventory.state.records.map(row => [row.game.toLowerCase(), row.game]));
+  const games = new Map(GAMES.map(game => [game.toLowerCase(), game]));
+  for (const row of inventory.visible()) if (!games.has(row.game.toLowerCase())) games.set(row.game.toLowerCase(), row.game);
   $('cards-game-chips').replaceChildren(...[...games].sort((a, b) => collator.compare(a[1], b[1])).map(([key, label]) => {
     const chip = node('label', '', 'chip'), input = document.createElement('input');
     input.type = 'checkbox'; input.checked = !filters.hiddenGames.has(key);
@@ -199,58 +301,148 @@ function gameChips() {
     if (logo) { const img = document.createElement('img'); img.className = 'chip-logo'; img.src = logo; img.alt = ''; img.setAttribute('aria-hidden', 'true'); chip.append(img); }
     return chip;
   }));
-  $('cards-game-chips').hidden = games.size < 2;
 }
 function cardActions(row) {
-  const actions = node('div', '', 'row-actions'), locked = inventory.state.busy || inventory.state.loading;
-  actions.append(iconButton('bi-pencil', t('cards_edit'), () => openEditor(row.id), locked),
-    iconButton('bi-trash3', t('cards_delete'), () => confirmDelete(row), locked));
+  const actions = node('div', '', 'row-actions'), disabled = locked();
+  if (inventory.state.groups.length) actions.append(iconButton('bi-folder-symlink', t('favorite_move'), () => openMove(row), disabled || inventory.state.groupBusy));
+  actions.append(iconButton('bi-pencil', t('cards_edit'), () => openEditor(row.id), disabled),
+    iconButton('bi-trash3', t('cards_delete'), () => confirmDelete(row), disabled));
   return actions;
 }
-// Clicking a quantity opens a small popup that changes only the quantity.
-function quantityButton(row, label, iconName = '') {
-  const button = node('button', '', 'cards-qty'); button.type = 'button';
-  if (iconName) button.append(icon(iconName));
-  button.append(label);
-  button.title = t('cards_quantity_edit'); button.setAttribute('aria-label', `${t('cards_quantity_edit')}: ${row.name} (${row.quantity})`);
-  button.disabled = inventory.state.busy || inventory.state.loading;
-  button.addEventListener('click', () => openQuantity(row));
-  return button;
+function openMove(row) {
+  groups.openMove(row.name, row.group_id ?? '', groupId => inventory.move(row.id, groupId),
+    () => inventory.state.busy, () => inventory.state.records.some(card => card.id === row.id));
 }
-let quantityTarget = null;
-function openQuantity(row) {
-  if (inventory.state.busy) return;
-  quantityTarget = row.id;
-  $('quantity-card').replaceChildren(node('span', row.game, 'game-tag'), rarityBadge(row), numberButton(row.card_number));
-  $('quantity-name').textContent = row.name;
-  $('quantity-input').value = row.quantity; $('quantity-error').textContent = '';
-  $('quantity-dialog').showModal();
-  $('quantity-input').focus(); $('quantity-input').select();
+// Ungrouped cards get no tag.
+function groupTag(row) {
+  const name = groupName(row.group_id);
+  if (!name) return null;
+  const tag = node('span', name, 'group-tag'); tag.title = name;
+  return tag;
 }
-function stepQuantity(delta) {
-  const input = $('quantity-input'), value = Math.max(0, (Number.parseInt(input.value, 10) || 0) + delta);
-  input.value = value; input.focus();
+// Checkbox for multi-select; only shown while selecting.
+function selectBox(row) {
+  const box = node('input', '', 'select-box'); box.type = 'checkbox';
+  box.checked = selection.ids.has(row.id); box.disabled = selection.running;
+  box.setAttribute('aria-label', t('favorite_select_card', {name: row.name}));
+  box.addEventListener('click', event => event.stopPropagation());
+  box.addEventListener('change', () => {
+    if (selection.running) return;
+    if (!selection.ids.delete(row.id)) selection.ids.add(row.id);
+    render();
+  });
+  return box;
 }
-async function saveQuantity() {
-  const value = Number($('quantity-input').value);
-  if (!$('quantity-input').checkValidity() || !Number.isInteger(value)) { $('quantity-error').textContent = t('cards_invalid'); return; }
-  const row = inventory.state.records.find(card => card.id === quantityTarget);
-  if (!row) { $('quantity-dialog').close(); return; }
-  if (value === row.quantity) { $('quantity-dialog').close(); return; }
+function setSelecting(active) {
+  if (selection.running) return;
+  selection = {...blankSelection(), active}; render();
+}
+// operation(id) resolves true when that card succeeded.
+async function runBulk(operation) {
+  const ids = [...selection.ids], current = selectionGeneration;
+  if (selection.running || !ids.length) return;
+  Object.assign(selection, {running: true, done: 0, total: ids.length, failed: 0}); render();
+  for (const id of ids) {
+    const ok = await operation(id);
+    if (current !== selectionGeneration) return;
+    if (ok) selection.ids.delete(id); else selection.failed++;
+    selection.done++; render();
+  }
+  selection.running = false; render();
+}
+const bulkMove = groupId => runBulk(async id => !await inventory.move(id, groupId));
+const bulkDelete = () => runBulk(async id => {
+  await inventory.remove(id);
+  return !inventory.state.records.some(row => row.id === id);
+});
+function renderSelection(rows) {
+  const state = inventory.state;
+  // Keep only cards still shown, so a bulk move never touches a card hidden by the group or filters.
+  const shown = new Set(rows.map(row => row.id));
+  for (const id of selection.ids) if (!shown.has(id)) selection.ids.delete(id);
+  const count = selection.ids.size;
+  $('cards-panel').classList.toggle('selecting', selection.active);
+  $('cards-selection-bar').hidden = !selection.active;
+  $('cards-select').setAttribute('aria-pressed', String(selection.active));
+  $('cards-select').querySelector('span').textContent = t(selection.active ? 'favorite_select_done' : 'favorite_select');
+  $('cards-select').disabled = selection.running || !state.ready;
+  $('cards-select-all').checked = count > 0 && count === rows.length;
+  $('cards-select-all').indeterminate = count > 0 && count < rows.length;
+  $('cards-select-all').disabled = selection.running || !rows.length;
+  $('cards-selection-count').textContent = selection.running ? t('favorite_bulk_progress', {done: number(selection.done), total: number(selection.total)})
+    : t('favorite_selected_count', {count: number(count)}) + (selection.failed ? ' · ' + t('cards_bulk_failed', {count: number(selection.failed)}) : '');
+  const idle = !selection.running && count > 0 && !state.busy && !state.loading;
+  $('cards-bulk-move').disabled = !idle || !state.groups.length;
+  $('cards-bulk-delete').disabled = !idle;
+  $('cards-bulk-price').disabled = !idle;
+}
+// Holdings stepper in the slot where favorites show the cart: − / typed number / +, styled like
+// the cart stepper. Typing survives re-renders until Enter or leaving the box saves it; Escape
+// restores the saved quantity. Errors appear in the page status line.
+const quantityDrafts = new Map();
+let savingQuantity = '';
+async function setQuantity(row, value) {
+  if (locked() || value === row.quantity) return;
+  savingQuantity = row.id;
   inventory.edit(row.id); inventory.state.draft.quantity = value;
-  $('quantity-save').disabled = true;
   await inventory.save();
-  $('quantity-save').disabled = false;
-  if (inventory.state.error) { $('quantity-error').textContent = t(inventory.state.error); inventory.edit(); return; }
-  $('quantity-dialog').close();
+  savingQuantity = ''; render();
 }
+function quantityStepper(row) {
+  const box = node('div', '', 'cart-controls'), quantity = row.quantity, disabled = locked();
+  const stepper = node('div', '', `cart-stepper${quantity ? ' active' : ''}`);
+  stepper.setAttribute('role', 'group'); stepper.setAttribute('aria-label', t('cards_owned', {quantity: number(quantity)}));
+  const step = (iconName, key, off, delta) => {
+    const button = node('button', '', 'cart-step'); button.type = 'button'; button.append(icon(iconName));
+    button.setAttribute('aria-label', t(key)); button.title = t(key); button.disabled = off;
+    button.addEventListener('click', () => setQuantity(row, quantity + delta));
+    return button;
+  };
+  let count;
+  if (savingQuantity === row.id) { count = node('span', '', 'cart-qty'); count.append(icon('bi-arrow-repeat spin')); }
+  else {
+    count = document.createElement('input');
+    count.className = 'cart-qty'; count.inputMode = 'numeric'; count.autocomplete = 'off';
+    count.setAttribute('aria-label', t('cards_quantity_input')); count.title = t('cards_quantity_input');
+    count.value = String(quantity); count.disabled = disabled;
+    const draft = quantityDrafts.get(row.id);
+    if (draft && !disabled) {
+      count.value = draft.value;
+      requestAnimationFrame(() => { if (count.isConnected) { count.focus(); count.setSelectionRange(draft.start, draft.end); } });
+    }
+    const remember = () => quantityDrafts.set(row.id, {value: count.value, start: count.selectionStart, end: count.selectionEnd});
+    const commit = () => {
+      quantityDrafts.delete(row.id);
+      const value = parseQuantity(count.value);
+      if (value === null || value === quantity) { count.value = String(quantity); return; }
+      setQuantity(row, value);
+    };
+    count.addEventListener('focus', () => { if (!quantityDrafts.has(row.id)) count.select(); });
+    count.addEventListener('input', remember);
+    count.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { event.preventDefault(); commit(); count.blur(); }
+      else if (event.key === 'Escape') { quantityDrafts.delete(row.id); count.value = String(quantity); count.blur(); }
+      else queueMicrotask(remember);
+    });
+    // A blur caused by the list redrawing is not a commit; the new box takes over the draft.
+    count.addEventListener('blur', () => { if (count.isConnected && quantityDrafts.has(row.id)) commit(); });
+  }
+  stepper.append(step('bi-dash-lg', 'cards_quantity_decrease', disabled || !quantity, -1), count,
+    step('bi-plus-lg', 'cards_quantity_increase', disabled, 1));
+  box.append(stepper);
+  return box;
+}
+// List and grid follow the favorites layout; the holdings stepper takes the cart's place.
 function cardRow(row) {
   const tr = document.createElement('tr');
   const cell = (child, className = '') => {const td = node('td', '', className); td.append(child); tr.append(td);};
+  cell(selectBox(row), 'select-col'); tr.classList.toggle('selected', selection.ids.has(row.id));
   const product = node('div', '', 'product-summary');
   product.append(cardImage(row, {noReferrer: true}), node('span', row.name, 'cards-name'));
   cell(node('span', row.game, 'game-tag')); cell(rarityBadge(row)); cell(numberButton(row.card_number)); cell(product);
-  cell(quantityButton(row, number(row.quantity)), `numeric${row.quantity ? '' : ' muted'}`); cell(row.notes, 'cards-notes');
+  cell(priceDisplay(row), 'numeric');
+  cell(quantityStepper(row), 'cart-col'); cell(row.notes, 'cards-notes');
+  cell(groupTag(row) ?? node('span', '—', 'muted'), 'group-col');
   cell(cardActions(row), 'action-col');
   return tr;
 }
@@ -258,10 +450,18 @@ function cardTile(row) {
   const card = node('article', '', `card${row.quantity ? '' : ' out_of_stock'}`);
   const tags = node('div', '', 'card-tags'); tags.append(node('span', row.game, 'game-tag'), rarityBadge(row));
   const top = node('div', '', 'card-top'); top.append(tags, numberButton(row.card_number));
-  const quantity = quantityButton(row, t('cards_owned', {quantity: number(row.quantity)}), 'bi-collection');
-  const bottom = node('div', '', 'card-bottom'); bottom.append(quantity, cardActions(row));
-  card.append(top, cardImage(row, {noReferrer: true}), node('span', row.name, 'card-name'), bottom);
+  const image = cardImage(row, {noReferrer: true});
+  if (selection.active) { image.append(selectBox(row)); card.classList.toggle('selected', selection.ids.has(row.id)); }
+  const bottom = node('div', '', 'card-bottom');
+  bottom.append(priceDisplay(row));
+  const owned = node('div', '', 'card-cart');
+  owned.append(node('span', t('cards_owned_column'), 'card-cart-label'), quantityStepper(row));
+  card.append(top, image, node('span', row.name, 'card-name'), bottom, owned);
   if (row.notes) card.append(node('p', row.notes, 'cards-notes'));
+  // Footer as on the favorites page: card actions on the left, its group in the bottom-right corner.
+  const foot = node('div', '', 'card-foot'); foot.append(cardActions(row));
+  const tag = groupTag(row); if (tag) foot.append(tag);
+  card.append(foot);
   return card;
 }
 function chips(groups) {
@@ -278,7 +478,7 @@ function iconButton(name, label, handler, disabled) {
   return button;
 }
 function openEditor(id = '') {
-  clearOfficial();
+  clearOfficial(); clearPriceLookup(); loadPriceSupport();
   inventory.edit(id);
   if (!editorOpen()) $('card-dialog').showModal();
   $('card-game').focus();
@@ -317,8 +517,10 @@ function render() {
     input.disabled = state.busy;
   }
   $('card-dialog-title').textContent = t(state.editing ? 'cards_edit_title' : 'cards_add');
+  groupPicker();
   rarityOptions();
   officialButton();
+  renderPriceLookup();
   $('cards-save').disabled = !state.ready || state.busy || state.loading;
   $('cards-save').querySelector('.bi').className = `bi ${state.busy ? 'bi-arrow-repeat spin' : 'bi-check-lg'}`;
   $('cards-cancel').disabled = state.busy;
@@ -328,25 +530,47 @@ function render() {
   $('cards-status').textContent = state.loading ? t('cards_loading') : !open && state.error ? t(state.error) : '';
   $('cards-retry').hidden = state.ready || !state.error || state.loading;
   $('cards-add').disabled = !state.ready;
-  options('cards-rarity-filter', 'rarity'); gameChips();
+  if (state.ready) loadRates(state.records);
+  options('cards-rarity-filter', 'rarity'); gameChips(); priceSlider(inventory.visible());
   $('cards-sort').value = filters.sort;
-  const rows = visibleCards(state.records), stats = summarizeCards(rows), cardsView = currentView();
+  groups.render();
+  const groupRows = inventory.visible(), group = groups.selected();
+  const rows = visibleCards(groupRows), stats = summarizeCards(rows), cardsView = currentView();
+  renderSelection(rows);
+  $('cards-title').textContent = group ? group.name : t('cards_list');
+  // Without any groups the group column would only hold dashes.
+  $('cards-table').classList.toggle('without-groups', !state.groups.length);
   // Whole library, not the current filter: total copies owned.
   setNavCount($('cards-nav-count'), state.ready ? summarizeCards(state.records).quantity : 0);
-  $('cards-stats').hidden = !state.ready || !state.records.length;
+  $('cards-stats').hidden = !state.ready || !groupRows.length;
   $('cards-kinds').textContent = number(stats.kinds);
   $('cards-quantity-total').textContent = number(stats.quantity);
+  renderValue(rows, stats.kinds);
   $('cards-by-game').replaceChildren(...chips(stats.games));
   $('cards-by-rarity').replaceChildren(...chips(stats.rarities));
   $('cards-count').hidden = !state.ready;
-  $('cards-count').textContent = t('counts', {matching: number(rows.length), loaded: number(state.records.length)});
-  $('cards-filters').hidden = !state.ready || !state.records.length;
+  $('cards-count').textContent = t('counts', {matching: number(rows.length), loaded: number(groupRows.length)});
+  $('cards-filters').hidden = !state.ready || !groupRows.length;
   $('cards-rows').replaceChildren(...(cardsView === 'list' ? rows.map(cardRow) : []));
   $('cards-table').hidden = !rows.length || cardsView !== 'list';
   $('cards-grid').hidden = !rows.length || cardsView !== 'grid';
   $('cards-grid').replaceChildren(...(cardsView === 'grid' ? rows.map(cardTile) : []));
   $('cards-empty').hidden = !state.ready || rows.length > 0;
-  $('cards-empty').querySelector('h3').textContent = t(state.records.length ? 'no_matching_results' : 'cards_empty_all');
+  $('cards-empty').querySelector('h3').textContent = t(groupRows.length ? 'no_matching_results' : state.records.length ? 'cards_group_empty' : 'cards_empty_all');
+}
+// Total value of the owned cards on screen (same set as the card-type tile): unit price × quantity,
+// summed in yen and shown in the display currency. The note says how many card types had a
+// comparable price, e.g. 15/50; the rest (unpriced, or no exchange rate) are left out.
+function renderValue(rows, kinds) {
+  let total = 0, counted = 0;
+  for (const row of rows) {
+    const value = row.quantity > 0 ? yen(row) : null;
+    if (value != null) { total += value * row.quantity; counted++; }
+  }
+  $('cards-value-total').textContent = counted ? money(total * rates[displayCurrency], displayCurrency, true) : `${displayCurrency} -`;
+  const note = $('cards-value-counted');
+  note.textContent = t('cards_value_counted', {counted: number(counted), total: number(kinds)});
+  note.title = t('cards_value_counted_hint');
 }
 function confirmDelete(row) {
   pendingDelete = row.id;
@@ -356,9 +580,35 @@ function confirmDelete(row) {
 for (const field of fields) $('card-' + field).addEventListener('input', event => {
   inventory.state.draft[field] = field === 'quantity' ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value;
   if (field === 'game') rarityOptions();
-  if (field === 'game' || field === 'card_number') {scheduleOfficial(); officialButton();}
+  if (field === 'game' || field === 'card_number') {scheduleOfficial(); officialButton(); clearPriceLookup();}
+  // Offers highlight the draft's rarity and the price taken from them.
+  if (['rarity', 'price', 'currency'].includes(field)) renderPriceLookup();
 });
-$('card-rarity-custom').addEventListener('input', event => { inventory.state.draft.rarity = event.target.value; });
+$('card-rarity-custom').addEventListener('input', event => { inventory.state.draft.rarity = event.target.value; renderPriceLookup(); });
+$('card-group').addEventListener('change', event => { inventory.state.draftGroup = event.target.value || null; });
+$('cards-export-group').addEventListener('change', event => {
+  exportGroup = event.target.value || null; exportError = '';
+  const known = new Set(exportGames().map(([key]) => key));
+  exportHiddenGames = new Set([...exportHiddenGames].filter(key => known.has(key)));
+  exportChips(); renderExport();
+});
+$('cards-select').addEventListener('click', () => setSelecting(!selection.active));
+$('cards-select-all').addEventListener('change', event => {
+  if (selection.running) return;
+  for (const row of visibleCards(inventory.visible())) event.target.checked ? selection.ids.add(row.id) : selection.ids.delete(row.id);
+  render();
+});
+$('cards-bulk-move').addEventListener('click', () => {
+  const count = selection.ids.size;
+  if (count) groups.openBulkMove(count, bulkMove);
+});
+$('cards-bulk-delete').addEventListener('click', () => {
+  const count = selection.ids.size; if (!count) return;
+  $('cards-bulk-delete-message').textContent = t('cards_bulk_delete_message', {count: number(count)});
+  $('cards-bulk-delete-dialog').showModal();
+});
+$('cards-bulk-delete-cancel').addEventListener('click', () => $('cards-bulk-delete-dialog').close());
+$('cards-bulk-delete-confirm').addEventListener('click', () => { $('cards-bulk-delete-dialog').close(); bulkDelete(); });
 $('cards-form').addEventListener('submit', async event => {
   event.preventDefault();
   await inventory.save();
@@ -422,7 +672,7 @@ $('cards-cancel').addEventListener('click', () => $('card-dialog').close());
 $('card-dialog-close').addEventListener('click', () => $('card-dialog').close());
 // Esc closes the dialog natively; block it while a save is in flight.
 $('card-dialog').addEventListener('cancel', event => { if (inventory.state.busy) event.preventDefault(); });
-$('card-dialog').addEventListener('close', () => { clearOfficial(); if (!inventory.state.busy) inventory.edit(); });
+$('card-dialog').addEventListener('close', () => { clearOfficial(); clearPriceLookup(); if (!inventory.state.busy) inventory.edit(); });
 $('cards-retry').addEventListener('click', () => inventory.load());
 $('cards-existing').addEventListener('click', () => openEditor(inventory.state.duplicate));
 $('cards-delete-cancel').addEventListener('click', () => $('cards-delete-dialog').close());
@@ -431,26 +681,35 @@ $('cards-delete-dialog').addEventListener('close', () => { pendingDelete = null;
 for (const [id, field] of [['cards-query', 'query'], ['cards-rarity-filter', 'rarity'], ['cards-sort', 'sort']]) {
   $(id).addEventListener(field === 'query' ? 'input' : 'change', event => {filters[field] = event.target.value; render();});
 }
+for (const [input, edge] of [[$('cards-price-min'), 'min'], [$('cards-price-max'), 'max']]) {
+  input.addEventListener('input', () => {
+    const lo = $('cards-price-min'), hi = $('cards-price-max');
+    if (Number(lo.value) > Number(hi.value)) { if (edge === 'min') lo.value = hi.value; else hi.value = lo.value; }
+    filters.priceMin = sliderBound(steps, Number(lo.value), 'min');
+    filters.priceMax = sliderBound(steps, Number(hi.value), 'max');
+    render();
+  });
+}
 $('cards-reset').addEventListener('click', () => { filters = blankFilters(); $('cards-query').value = ''; render(); });
 // app.js owns the shared list/grid choice and announces every change.
 document.addEventListener('viewchange', render);
 $('language').addEventListener('change', render);
-$('quantity-form').addEventListener('submit', event => { event.preventDefault(); saveQuantity(); });
-$('quantity-decrease').addEventListener('click', () => stepQuantity(-1));
-$('quantity-increase').addEventListener('click', () => stepQuantity(1));
-document.querySelectorAll('#quantity-dialog [data-step]').forEach(button => button.addEventListener('click', () => stepQuantity(Number(button.dataset.step))));
-$('quantity-cancel').addEventListener('click', () => $('quantity-dialog').close());
-$('quantity-dialog').addEventListener('cancel', event => { if (inventory.state.busy) event.preventDefault(); });
-$('quantity-dialog').addEventListener('close', () => { quantityTarget = null; });
 export function clearCards() {
   exportController?.abort(); exportController = null; exportError = '';
   $('cards-export-dialog').close();
   $('cards-import-dialog').close(); importResult = null;
   clearOfficial();
+  priceSupportController?.abort(); priceSupportController = null; priceSupport = {status: 'idle', merchants: []};
+  clearPriceLookup();
+  bulkPriceController?.abort(); bulkPriceController = null; bulkPrice = blankBulkPrice(); $('cards-price-dialog').close();
   filters = blankFilters(); $('cards-query').value = '';
-  $('card-dialog').close(); $('cards-delete-dialog').close(); $('quantity-dialog').close(); inventory.clear();
+  ratesGeneration++; displayCurrency = 'JPY'; rates = {JPY: 1}; ratesPending = new Set(); ratesFailed = new Set();
+  selectionGeneration++; selection = blankSelection(); groups.close(); exportGroup = null;
+  $('cards-bulk-delete-dialog').close();
+  quantityDrafts.clear(); savingQuantity = '';
+  $('card-dialog').close(); $('cards-delete-dialog').close(); inventory.clear();
 }
-export function activateCards(api) {officialAPI = api; clearCards(); inventory.activate(api);}
+export function activateCards(api) {officialAPI = api; clearCards(); loadPriceSupport(); inventory.activate(api);}
 
 // Official card lookup: typing a number searches after a pause; the first five
 // matches show as large cards, and choosing one fills the rest of the form.
@@ -494,6 +753,8 @@ async function runOfficial() {
 }
 function chooseOfficial(item) {
   if (inventory.state.busy) return;
+  const draft = inventory.state.draft;
+  if (draft.game !== item.game || draft.card_number !== item.card_number) clearPriceLookup();
   Object.assign(inventory.state.draft, {game: item.game, card_number: item.card_number, name: item.name, rarity: item.rarity, image_url: item.image_url || ''});
   render();
   $('card-quantity').focus(); $('card-quantity').select();
@@ -551,3 +812,222 @@ $('card-card_number').addEventListener('keydown', event => {
   if (event.key === 'Enter' && supportsOfficial()) { event.preventDefault(); runOfficial(); }
 });
 
+// Price lookup: the button beside the unit price asks YuYu-Tei (the only merchant for now) for every
+// offer on the entered game and number; clicking an offer fills in its price and currency. Which
+// games can be priced comes from /api/prices/merchants; for other games the button is disabled.
+let priceSupport = {status: 'idle', merchants: []}, priceSupportController = null;
+const merchantGames = id => priceSupport.merchants.find(merchant => merchant.id === id)?.games ?? null;
+const merchantName = merchant => merchant.id === 'yuyutei' ? t('merchant_yuyutei') : merchant.name;
+const blankPriceLookup = () => ({status: 'idle', items: [], error: '', chosen: '', cardNumber: ''});
+let priceLookup = blankPriceLookup(), priceLookupGeneration = 0, priceLookupController = null;
+// Loads once per account; a failed load is retried the next time the editor opens.
+function loadPriceSupport() {
+  if (!officialAPI || priceSupport.status === 'loading' || priceSupport.status === 'ready') return;
+  const controller = priceSupportController = new AbortController();
+  priceSupport = {status: 'loading', merchants: []};
+  fetchPriceMerchants(officialAPI, controller.signal).then(
+    merchants => { if (controller === priceSupportController) priceSupport = {status: 'ready', merchants}; },
+    () => { if (controller === priceSupportController) priceSupport = {status: 'failed', merchants: []}; })
+    .finally(() => { if (controller === priceSupportController) { renderPriceLookup(); buildPriceSources(); } });
+}
+// Why the lookup cannot run for the current draft ('' when it can).
+function priceLookupBlock() {
+  const draft = inventory.state.draft, game = draft.game.trim();
+  if (!game || !draft.card_number.trim()) return t('price_lookup_needs');
+  if (priceSupport.status === 'failed') return t('price_lookup_support_failed');
+  if (priceSupport.status !== 'ready') return t('price_lookup_support_loading');
+  if (!merchantGames(PRICE_MERCHANT)?.has(priceGame(game))) return t('price_lookup_unsupported', {game});
+  return '';
+}
+function clearPriceLookup() {
+  priceLookupGeneration++; priceLookupController?.abort(); priceLookupController = null;
+  priceLookup = blankPriceLookup();
+  renderPriceLookup();
+}
+async function runPriceLookup() {
+  if (priceLookupBlock() || inventory.state.busy) return;
+  clearPriceLookup();
+  const generation = priceLookupGeneration, draft = inventory.state.draft;
+  priceLookupController = new AbortController();
+  priceLookup = {...blankPriceLookup(), status: 'loading', cardNumber: draft.card_number.trim()};
+  renderPriceLookup();
+  try {
+    const items = await lookupPrices(officialAPI, draft, priceLookupController.signal);
+    if (generation !== priceLookupGeneration || !editorOpen()) return;
+    priceLookup = {...priceLookup, status: 'done', items: rankOffers(items, inventory.state.draft.rarity)};
+  } catch (error) {
+    if (generation !== priceLookupGeneration || error.name === 'AbortError') return;
+    priceLookup = {...priceLookup, status: 'error', error: error.key ?? 'price_lookup_failed'};
+  }
+  renderPriceLookup();
+}
+function applyOffer(offer) {
+  if (inventory.state.busy || !CURRENCIES.includes(offer.currency)) return;
+  Object.assign(inventory.state.draft, {price: String(offer.price), currency: offer.currency});
+  priceLookup.chosen = offer.product_url;
+  render();
+  $('card-price').focus();
+}
+const stockIcons = {in_stock: 'bi-check-circle-fill', out_of_stock: 'bi-x-circle', unknown: 'bi-question-circle'};
+function stockBadge(offer) {
+  const status = stockIcons[offer.stock_status] ? offer.stock_status : 'unknown';
+  const badge = node('span', '', `badge ${status}`);
+  badge.append(icon(stockIcons[status]), t(status) + (offer.stock_quantity == null ? '' : ` (${offer.stock_quantity})`));
+  return badge;
+}
+function offerItem(offer) {
+  const draft = inventory.state.draft, price = money(offer.price, offer.currency);
+  const chosen = priceLookup.chosen === offer.product_url && draft.price === String(offer.price) && draft.currency === offer.currency;
+  const wanted = draft.rarity.trim().toLowerCase();
+  const match = Boolean(wanted) && (offer.rarity ?? '').trim().toLowerCase() === wanted;
+  const item = node('li', '', `price-offer${match ? ' match' : ''}`);
+  const pick = node('button', '', `price-offer-pick${chosen ? ' chosen' : ''}`); pick.type = 'button';
+  pick.disabled = inventory.state.busy || !CURRENCIES.includes(offer.currency);
+  pick.setAttribute('aria-pressed', String(chosen));
+  const label = t('price_lookup_use', {price, name: offer.name}); pick.setAttribute('aria-label', label); pick.title = label;
+  const rarity = offer.rarity ? node('span', offer.rarity, `rarity-tag tier-${rarityTier(draft.game, offer.rarity)}`) : node('span', '—', 'muted');
+  const name = node('span', '', 'price-offer-name'); name.append(node('span', offer.name));
+  if (match) name.append(node('span', t('price_lookup_match'), 'price-offer-match'));
+  pick.append(rarity, name, stockBadge(offer), node('strong', price, 'price-offer-price'), icon(chosen ? 'bi-check-lg' : 'bi-box-arrow-in-down-left'));
+  pick.addEventListener('click', () => applyOffer(offer));
+  const link = document.createElement('a');
+  link.className = 'price-offer-link'; link.href = offer.product_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+  link.title = t('price_lookup_open'); link.setAttribute('aria-label', t('price_lookup_open')); link.append(icon('bi-box-arrow-up-right'));
+  item.append(pick, link);
+  return item;
+}
+function renderPriceLookup() {
+  const state = inventory.state, block = priceLookupBlock(), {status, items, error, cardNumber} = priceLookup;
+  const button = $('card-price-lookup');
+  button.disabled = state.busy || status === 'loading' || Boolean(block);
+  button.title = block || t('price_lookup_button_title', {number: state.draft.card_number.trim()});
+  button.querySelector('.bi').className = `bi ${status === 'loading' ? 'bi-arrow-repeat spin' : 'bi-tag'}`;
+  const panel = $('price-lookup-panel');
+  panel.hidden = status === 'idle';
+  panel.classList.toggle('failed', status === 'error');
+  $('price-lookup-status').textContent = status === 'loading' ? t('price_lookup_loading')
+    : status === 'error' ? t(error, {game: state.draft.game.trim()})
+    : status === 'done' ? (items.length ? t('price_lookup_choose', {count: number(items.length)}) : t('price_lookup_empty', {number: cardNumber}))
+    : '';
+  $('price-lookup-results').replaceChildren(...(status === 'done' ? items.map(offerItem) : []));
+  $('price-lookup-results').hidden = status !== 'done' || !items.length;
+}
+$('card-price-lookup').addEventListener('click', runPriceLookup);
+
+// Bulk price lookup for the selected cards. The dialog picks the data source (YuYu-Tei by default)
+// and whether cards that already have a price get the looked-up one. Cards are priced one at a
+// time with pickOffer (same rarity, lowest price, in stock first); one lookup serves every
+// selected card with the same game and number. Cards that got a price, or kept the one they had,
+// are deselected; the rest (unsupported game, no matching offer, failures) stay selected.
+const OUTCOMES = ['updated', 'kept', 'unsupported', 'unmatched', 'failed'];
+const blankBulkPrice = () => ({phase: 'setup', merchant: PRICE_MERCHANT, replace: false, done: 0, total: 0, stopping: false,
+  counts: Object.fromEntries(OUTCOMES.map(outcome => [outcome, 0]))});
+let bulkPrice = blankBulkPrice(), bulkPriceController = null;
+const bulkPriceKeys = {updated: 'cards_bulk_price_updated', kept: 'cards_bulk_price_kept', unsupported: 'cards_bulk_price_unsupported',
+  unmatched: 'cards_bulk_price_unmatched', failed: 'cards_bulk_price_failed'};
+const bulkPriceIcons = {updated: 'bi-check-circle-fill', kept: 'bi-dash-circle', unsupported: 'bi-slash-circle',
+  unmatched: 'bi-question-circle', failed: 'bi-exclamation-circle'};
+// Source chips are rebuilt only when the merchant list changes, so keyboard focus survives renders.
+function buildPriceSources() {
+  const box = $('cards-price-sources');
+  box.replaceChildren(...priceSupport.merchants.map(merchant => {
+    const label = node('label', '', 'chip'), input = document.createElement('input');
+    input.type = 'radio'; input.name = 'price-source'; input.value = merchant.id;
+    label.append(input, icon('bi-check-lg'), node('span', merchantName(merchant)));
+    return label;
+  }));
+  if (!merchantGames(bulkPrice.merchant) && priceSupport.merchants.length) bulkPrice.merchant = priceSupport.merchants[0].id;
+  renderBulkPrice();
+}
+// What a run would do with the current choices: how many cards are looked up and skipped.
+function bulkPricePlan() {
+  const games = merchantGames(bulkPrice.merchant) ?? new Set(), plan = {count: 0, kept: 0, unsupported: 0};
+  for (const row of inventory.state.records.filter(card => selection.ids.has(card.id))) {
+    if (row.price != null && !bulkPrice.replace) plan.kept++;
+    else if (!games.has(priceGame(row.game))) plan.unsupported++;
+    else plan.count++;
+  }
+  return plan;
+}
+function renderBulkPrice() {
+  const {phase, counts, done, total, stopping} = bulkPrice, setup = phase === 'setup', running = phase === 'running';
+  const ready = priceSupport.status === 'ready';
+  for (const input of $('cards-price-sources').querySelectorAll('input')) { input.checked = input.value === bulkPrice.merchant; input.disabled = !setup; }
+  for (const input of $('cards-price-existing').querySelectorAll('input')) { input.checked = (input.value === 'replace') === bulkPrice.replace; input.disabled = !setup; }
+  const games = merchantGames(bulkPrice.merchant);
+  $('cards-price-source-hint').textContent = !ready ? t(priceSupport.status === 'failed' ? 'price_lookup_support_failed' : 'price_lookup_support_loading')
+    : games ? t('cards_bulk_price_games', {games: GAMES.filter(game => games.has(priceGame(game))).join(' · ')}) : '';
+  const plan = bulkPricePlan();
+  let summary = '';
+  if (setup && ready) {
+    summary = t('cards_bulk_price_plan', {count: number(plan.count)});
+    if (plan.kept) summary += ' · ' + t('cards_bulk_price_plan_kept', {count: number(plan.kept)});
+    if (plan.unsupported) summary += ' · ' + t('cards_bulk_price_plan_unsupported', {count: number(plan.unsupported)});
+  } else if (running) summary = t(stopping ? 'cards_bulk_price_stopping' : 'cards_bulk_price_progress', {done: number(done), total: number(total)});
+  else if (phase === 'done') summary = done < total ? t('cards_bulk_price_stopped', {count: number(total - done)}) : t('cards_bulk_price_done');
+  $('cards-price-summary').textContent = summary;
+  const lines = setup ? [] : OUTCOMES.filter(outcome => counts[outcome]).map(outcome => {
+    const line = node('li', '', `bulk-price-${outcome}`);
+    line.append(icon(bulkPriceIcons[outcome]), node('span', t(bulkPriceKeys[outcome], {count: number(counts[outcome])})));
+    return line;
+  });
+  if (phase === 'done' && selection.ids.size) lines.push(node('li', t('cards_bulk_price_left_selected'), 'bulk-price-note'));
+  $('cards-price-results').replaceChildren(...lines);
+  $('cards-price-results').hidden = !lines.length;
+  $('cards-price-cancel').hidden = !setup;
+  $('cards-price-start').hidden = !setup;
+  $('cards-price-start').disabled = !ready || !plan.count || inventory.state.busy || inventory.state.loading;
+  $('cards-price-stop').hidden = !running;
+  $('cards-price-stop').disabled = stopping;
+  $('cards-price-finish').hidden = phase !== 'done';
+  $('cards-price-close').disabled = running;
+}
+async function priceOne(id, {merchant, replace, games, offers, signal}) {
+  const row = inventory.state.records.find(card => card.id === id);
+  if (!row) return 'failed';
+  if (row.price != null && !replace) return 'kept';
+  const game = priceGame(row.game);
+  if (!games.has(game)) return 'unsupported';
+  const key = `${game}|${row.card_number.trim().toLowerCase()}`;
+  if (!offers.has(key)) offers.set(key, lookupPrices(officialAPI, row, signal, merchant));
+  let offer;
+  try { offer = pickOffer(await offers.get(key), row.rarity); } catch { return 'failed'; }
+  if (!offer) return 'unmatched';
+  if (row.price === offer.price && row.currency === offer.currency) return 'updated';
+  return await inventory.setPrice(id, offer.price, offer.currency) ? 'failed' : 'updated';
+}
+async function runBulkPrice() {
+  const ids = [...selection.ids], current = selectionGeneration, {merchant, replace} = bulkPrice, games = merchantGames(merchant);
+  if (selection.running || !ids.length || !games || bulkPrice.phase !== 'setup' || locked()) return;
+  const controller = bulkPriceController = new AbortController(), offers = new Map();
+  Object.assign(selection, {running: true, done: 0, total: ids.length, failed: 0});
+  Object.assign(bulkPrice, {phase: 'running', done: 0, total: ids.length});
+  render(); renderBulkPrice();
+  for (const id of ids) {
+    if (bulkPrice.stopping) break;
+    const outcome = await priceOne(id, {merchant, replace, games, offers, signal: controller.signal});
+    if (current !== selectionGeneration) return;
+    bulkPrice.counts[outcome]++;
+    if (outcome === 'updated' || outcome === 'kept') selection.ids.delete(id);
+    else if (outcome === 'failed') selection.failed++;
+    selection.done++; bulkPrice.done++;
+    render(); renderBulkPrice();
+  }
+  bulkPriceController = null;
+  selection.running = false; bulkPrice.phase = 'done';
+  render(); renderBulkPrice();
+}
+$('cards-bulk-price').addEventListener('click', () => {
+  if (!selection.ids.size || locked()) return;
+  bulkPrice = blankBulkPrice(); loadPriceSupport();
+  $('cards-price-dialog').showModal(); buildPriceSources();
+});
+$('cards-price-sources').addEventListener('change', event => { bulkPrice.merchant = event.target.value; renderBulkPrice(); });
+$('cards-price-existing').addEventListener('change', event => { bulkPrice.replace = event.target.value === 'replace'; renderBulkPrice(); });
+$('cards-price-start').addEventListener('click', runBulkPrice);
+$('cards-price-stop').addEventListener('click', () => { bulkPrice.stopping = true; renderBulkPrice(); });
+for (const id of ['cards-price-cancel', 'cards-price-finish', 'cards-price-close']) $(id).addEventListener('click', () => {
+  if (bulkPrice.phase !== 'running') $('cards-price-dialog').close();
+});
+// A running lookup is stopped with its own button, not Esc.
+$('cards-price-dialog').addEventListener('cancel', event => { if (bulkPrice.phase === 'running') event.preventDefault(); });
