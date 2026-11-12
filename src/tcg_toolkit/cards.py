@@ -31,6 +31,10 @@ GAMES = {'ws': 'WS', 'ws_en': 'WS EN', 'ws en': 'WS EN', 'wsr': 'WSR', 'pm': 'PM
          'chaos': 'ChaosTCG', 'chaostcg': 'ChaosTCG'}
 
 
+# Currencies a unit price may be recorded in; the WebUI converts between them for display.
+CURRENCIES = ('JPY', 'CNY', 'CAD')
+
+
 class CardInput(BaseModel):
     game: str = Field(min_length=1)
     card_number: str = Field(min_length=1)
@@ -38,6 +42,7 @@ class CardInput(BaseModel):
     name: str = Field(min_length=1)
     quantity: int = Field(default=1, strict=True, ge=0, le=9007199254740991)
     price: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    currency: Literal[CURRENCIES] = 'JPY'
     notes: str = ''
     image_url: str = ''
 
@@ -55,6 +60,14 @@ class CardInput(BaseModel):
                 raise ValueError('Image URL must be HTTP or HTTPS')
         return value
 
+
+    @field_validator('currency', mode='before')
+    @classmethod
+    def currency_code(cls, value):
+        # Missing (null) means the default; codes are case-insensitive, e.g. "cny".
+        if value is None:
+            return 'JPY'
+        return value.strip().upper() if isinstance(value, str) else value
 
     @field_validator('game', 'card_number', 'rarity', 'name', 'notes')
     @classmethod
@@ -85,7 +98,7 @@ class GroupTarget(BaseModel):
 def record(row: OwnedCard):
     return {**{key: getattr(row, key) for key in ('id', 'group_id', 'game', 'card_number', 'rarity', 'name',
                                                 'quantity', 'notes', 'image_url', 'created_at', 'updated_at')},
-            'price': float(row.price) if row.price is not None else None}
+            'price': float(row.price) if row.price is not None else None, 'currency': row.currency}
 
 
 def owned(db: Session, user_id, card_id, *, lock=False):
@@ -98,7 +111,7 @@ def owned(db: Session, user_id, card_id, *, lock=False):
 
 def values(body):
     return dict(game=body.game, card_number=body.card_number, rarity=body.rarity, name=body.name,
-                quantity=body.quantity, price=body.price, notes=body.notes, image_url=body.image_url,
+                quantity=body.quantity, price=body.price, currency=body.currency, notes=body.notes, image_url=body.image_url,
                 game_key=body.game.casefold(), number_key=body.card_number.casefold(), rarity_key=body.rarity.casefold())
 
 
@@ -184,21 +197,21 @@ def listing(request: Request, group_id: str | None = None, user=Depends(current_
 
 
 # 'group' holds the group name (not its ID), so files carry groups between accounts.
-EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'price', 'notes', 'group',
+EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'price', 'currency', 'notes', 'group',
                   'image_url', 'id', 'created_at', 'updated_at')
 XLSX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 IMPORT_LIMIT = 10 * 1024 * 1024
 REQUIRED_COLUMNS = {key for key, field in CardInput.model_fields.items() if field.is_required()}
 IMPORT_COLUMNS = {*CardInput.model_fields, 'group'}
-EXPORT_WIDTHS = {'game': 20, 'card_number': 20, 'rarity': 20, 'name': 36, 'quantity': 18, 'price': 18,
+EXPORT_WIDTHS = {'game': 20, 'card_number': 20, 'rarity': 20, 'name': 36, 'quantity': 18, 'price': 18, 'currency': 12,
                  'notes': 40, 'group': 24, 'image_url': 40, 'id': 40, 'created_at': 20, 'updated_at': 20}
 # XLSX headings are for people; JSON keys stay stable so files remain machine-readable.
 EXPORT_HEADINGS = {
     'en': {'sheet': 'Cards', 'game': 'Game', 'card_number': 'Number', 'rarity': 'Rarity', 'name': 'Name',
-           'quantity': 'Quantity', 'price': 'Price', 'notes': 'Notes', 'group': 'Group', 'image_url': 'Image URL', 'id': 'ID',
+           'quantity': 'Quantity', 'price': 'Price', 'currency': 'Currency', 'notes': 'Notes', 'group': 'Group', 'image_url': 'Image URL', 'id': 'ID',
            'created_at': 'Created at', 'updated_at': 'Updated at'},
     'zh-CN': {'sheet': '卡牌', 'game': '游戏', 'card_number': '编号', 'rarity': '稀有度', 'name': '名称',
-              'quantity': '拥有量', 'price': '价格', 'notes': '备注', 'group': '分组', 'image_url': '图片地址', 'id': 'ID',
+              'quantity': '拥有量', 'price': '价格', 'currency': '币种', 'notes': '备注', 'group': '分组', 'image_url': '图片地址', 'id': 'ID',
               'created_at': '创建时间', 'updated_at': '更新时间'},
 }
 
@@ -421,7 +434,8 @@ def update(card_id: str, body: CardInput, request: Request, user=Depends(current
         try:
             with db.begin_nested():
                 for key, value in values(body).items():
-                    if key == 'price' and key not in body.model_fields_set:
+                    # Older clients omit price/currency; keep the stored values then.
+                    if key in ('price', 'currency') and key not in body.model_fields_set:
                         continue
                     setattr(row, key, value)
                 row.updated_at = int(time.time())

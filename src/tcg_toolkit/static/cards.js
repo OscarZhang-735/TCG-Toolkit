@@ -1,7 +1,24 @@
-export const blankCard = () => ({game: '', card_number: '', rarity: '', name: '', quantity: 1, notes: '', image_url: ''});
+// price is the editor's text ('' = not set); see payload() for what is sent.
+export const blankCard = () => ({game: '', card_number: '', rarity: '', name: '', quantity: 1, price: '', currency: 'JPY', notes: '', image_url: ''});
+// Currencies a unit price may be entered in (the same ones the sidebar can display).
+export const CURRENCIES = ['JPY', 'CNY', 'CAD'];
+// Yen value of a card's price, for comparing prices entered in different currencies.
+// rates[code] is how much of that currency one yen buys; null when unpriced or the rate is unknown.
+export function yenPrice(row, rates) {
+  if (row.price == null) return null;
+  const currency = row.currency ?? 'JPY';
+  if (currency === 'JPY') return row.price;
+  return rates[currency] ? row.price / rates[currency] : null;
+}
+// Request body for a draft: the price goes as a decimal string so 12.34 stays exact; blank clears it.
+const payload = draft => ({...draft, price: String(draft.price ?? '').trim() || null});
+const draftOf = row => Object.fromEntries(Object.keys(blankCard()).map(k => [k,
+  k === 'price' ? (row.price == null ? '' : String(row.price)) : row[k] ?? blankCard()[k]]));
 const key = value => value.trim().toLowerCase();
-export function filterCards(rows, {query = '', game = '', rarity = ''} = {}) {
+// min/max are inclusive bounds on priceOf(row) (null: no limit); a card whose price is null never meets a bound.
+export function filterCards(rows, {query = '', game = '', rarity = '', min = null, max = null, priceOf = row => row.price} = {}) {
   return rows.filter(row => (!game || key(row.game) === key(game)) && (!rarity || key(row.rarity) === key(rarity)) &&
+    (min === null || (priceOf(row) != null && priceOf(row) >= min)) && (max === null || (priceOf(row) != null && priceOf(row) <= max)) &&
     (!query.trim() || key(row.name).includes(key(query)) || key(row.card_number).includes(key(query))));
 }
 export function summarizeCards(rows) {
@@ -57,7 +74,7 @@ export function createCards(onChange) {
     if (state.busy) return;
     const row = state.records.find(row => row.id === id);
     if (id && !row) return;
-    state.editing = id; state.draft = row ? Object.fromEntries(Object.keys(blankCard()).map(k => [k, row[k] ?? blankCard()[k]])) : blankCard();
+    state.editing = id; state.draft = row ? draftOf(row) : blankCard();
     state.draftGroup = id ? null : state.group;
     state.error = ''; state.duplicate = ''; onChange();
   }
@@ -66,7 +83,7 @@ export function createCards(onChange) {
     const current = generation, id = removeId || state.editing;
     state.busy = true; state.error = ''; state.duplicate = ''; onChange();
     try {
-      const body = removeId ? {} : id ? state.draft : {...state.draft, group_id: state.draftGroup};
+      const body = removeId ? {} : id ? payload(state.draft) : {...payload(state.draft), group_id: state.draftGroup};
       const result = await call(id ? '/' + id : '', removeId ? 'DELETE' : id ? 'PUT' : 'POST', body);
       if (current !== generation) return;
       if (removeId) state.records = state.records.filter(row => row.id !== id);

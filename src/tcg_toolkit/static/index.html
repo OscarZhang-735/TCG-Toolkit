@@ -232,11 +232,19 @@
 <div class="filter-search input-icon"><i class="bi bi-search"></i><input id="cards-query" type="search" data-i18n-aria-label="cards_search" data-i18n-placeholder="cards_search"/></div>
 <div class="filter-grid cards-filter-grid">
 <label class="field"><span data-i18n="rarity"></span><select id="cards-rarity-filter"></select></label>
-<label class="field"><span data-i18n="sort"></span><select id="cards-sort"><option data-i18n="default" value="original"></option><option data-i18n="name_a_z" value="name:asc"></option><option data-i18n="name_z_a" value="name:desc"></option><option data-i18n="number_ascending" value="card_number:asc"></option><option data-i18n="number_descending" value="card_number:desc"></option><option data-i18n="quantity_descending" value="quantity:desc"></option><option data-i18n="quantity_ascending" value="quantity:asc"></option></select></label>
+<label class="field"><span data-i18n="sort"></span><select id="cards-sort"><option data-i18n="default" value="original"></option><option data-i18n="name_a_z" value="name:asc"></option><option data-i18n="name_z_a" value="name:desc"></option><option data-i18n="number_ascending" value="card_number:asc"></option><option data-i18n="number_descending" value="card_number:desc"></option><option data-i18n="quantity_descending" value="quantity:desc"></option><option data-i18n="quantity_ascending" value="quantity:asc"></option><option data-i18n="price_ascending" value="price:asc"></option><option data-i18n="price_descending" value="price:desc"></option></select></label>
+<div class="field price-field" role="group" data-i18n-aria-label="price_range">
+<div class="price-head"><span data-i18n="price_range"></span><output id="cards-price-label"></output></div>
+<div class="range" id="cards-price-range">
+<div class="range-track"><div class="range-fill" id="cards-price-fill"></div></div>
+<input type="range" id="cards-price-min" min="0" max="0" step="1" value="0" data-i18n-aria-label="min_price"/>
+<input type="range" id="cards-price-max" min="0" max="0" step="1" value="0" data-i18n-aria-label="max_price"/>
+</div>
+</div>
 </div>
 <div class="chips" id="cards-game-chips" role="group" data-i18n-aria-label="games_to_show"></div>
 </div>
-<div class="panel table-panel" id="cards-table" hidden><div class="table-scroll"><table><thead><tr><th class="select-col"><span class="sr-only" data-i18n="favorite_select"></span></th><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="cards_quantity"></th><th data-i18n="cards_notes"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="cards-rows"></tbody></table></div></div>
+<div class="panel table-panel" id="cards-table" hidden><div class="table-scroll"><table><thead><tr><th class="select-col"><span class="sr-only" data-i18n="favorite_select"></span></th><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="cards_price_column"></th><th class="cart-col" data-i18n="cards_owned_column"></th><th data-i18n="cards_notes"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="cards-rows"></tbody></table></div></div>
 <div id="cards-grid" class="card-grid" hidden></div>
 <div id="cards-empty" class="empty" hidden><i class="bi bi-collection"></i><h3></h3></div>
 </section>
@@ -364,6 +372,7 @@
 <dialog id="card-dialog" class="form-dialog card-dialog" aria-labelledby="card-dialog-title">
 <form id="cards-form">
 <div class="dialog-head"><h2 id="card-dialog-title"></h2><button type="button" id="card-dialog-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<p class="required-note cards-required-note"><span class="required-mark" aria-hidden="true">*</span><span data-i18n="form_required_note"></span></p>
 <div class="cards-form-grid lookup-row">
 <label class="field"><span data-i18n="game"></span><select id="card-game" required></select></label>
 <label class="field"><span data-i18n="cards_number_or_keyword"></span><span class="official-number"><input id="card-card_number" required type="text" autocomplete="off"/><button id="official-search" type="button" class="secondary icon-only"  hidden><i class="bi bi-search"></i></button></span></label>
@@ -376,9 +385,10 @@
 </section>
 <div class="cards-form-grid details-row">
 <label class="field wide-2"><span data-i18n="name"></span><input id="card-name" required type="text" autocomplete="off"/></label>
-<label class="field"><span data-i18n="rarity"></span><select id="card-rarity" required></select><input id="card-rarity-custom" type="text" autocomplete="off" hidden disabled/></label>
+<label class="field wide-2"><span data-i18n="rarity"></span><select id="card-rarity" required></select><input id="card-rarity-custom" type="text" autocomplete="off" hidden disabled/></label>
 <label class="field"><span data-i18n="cards_quantity"></span><input id="card-quantity" required type="number" min="0" step="1" max="9007199254740991" value="1"/></label>
-<label class="field wide" id="card-group-field" hidden><span data-i18n="favorite_group_column"></span><select id="card-group"></select></label>
+<label class="field wide-2 card-price-field"><span data-i18n="cards_price"></span><span class="price-input"><input id="card-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/><select id="card-currency" data-i18n-aria-label="cards_currency" data-i18n-title="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select></span></label>
+<label class="field" id="card-group-field" hidden><span data-i18n="favorite_group_column"></span><select id="card-group"></select></label>
 <label class="field wide"><span data-i18n="cards_image_url"></span><input id="card-image_url" type="url" autocomplete="off"/></label>
 <label class="field wide"><span data-i18n="cards_notes"></span><textarea id="card-notes" rows="2"></textarea></label>
 </div>
@@ -387,29 +397,6 @@
 <button id="cards-existing" type="button" class="text-button dialog-existing" hidden><i class="bi bi-pencil"></i><span data-i18n="cards_existing"></span></button>
 <button id="cards-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
 <button id="cards-save" type="submit"><i class="bi bi-check-lg"></i><span data-i18n="cards_save"></span></button>
-</div>
-</form>
-</dialog>
-<dialog id="quantity-dialog" class="form-dialog quantity-dialog" aria-labelledby="quantity-title" aria-describedby="quantity-name">
-<form id="quantity-form" novalidate>
-<div class="dialog-head"><h2 id="quantity-title" data-i18n="cards_quantity_edit"></h2></div>
-<div class="quantity-card" id="quantity-card"></div>
-<p id="quantity-name" class="quantity-name"></p>
-<div class="quantity-stepper">
-<button type="button" id="quantity-decrease" class="secondary icon-only" data-i18n-aria-label="cards_quantity_decrease" data-i18n-title="cards_quantity_decrease"><i class="bi bi-dash-lg"></i></button>
-<input id="quantity-input" type="number" min="0" step="1" max="9007199254740991" inputmode="numeric" required data-i18n-aria-label="cards_quantity"/>
-<button type="button" id="quantity-increase" class="secondary icon-only" data-i18n-aria-label="cards_quantity_increase" data-i18n-title="cards_quantity_increase"><i class="bi bi-plus-lg"></i></button>
-</div>
-<div class="quantity-quick" role="group" data-i18n-aria-label="cards_quantity_edit">
-<button type="button" class="secondary compact" data-step="-10">−10</button>
-<button type="button" class="secondary compact" data-step="-5">−5</button>
-<button type="button" class="secondary compact" data-step="5">+5</button>
-<button type="button" class="secondary compact" data-step="10">+10</button>
-</div>
-<p id="quantity-error" class="dialog-error" role="alert"></p>
-<div class="dialog-actions">
-<button id="quantity-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
-<button id="quantity-save" type="submit"><i class="bi bi-check-lg"></i><span data-i18n="cards_save"></span></button>
 </div>
 </form>
 </dialog>

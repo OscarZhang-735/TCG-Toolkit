@@ -409,11 +409,12 @@ button.password-toggle {
   background: transparent; color: var(--color-text-subtle); font-size: 15px;
 }
 button.password-toggle:hover { border: 0; background: var(--color-hover); color: var(--color-text); }
-/* Register and password reset: every field is required; the asterisk follows the input's required attribute. */
-.required-mark, :is(#auth-form.registering, #password-reset-form) .field:has(:required) > span:first-child::after { color: var(--color-required); font-weight: 600; }
-:is(#auth-form.registering, #password-reset-form) .field:has(:required) > span:first-child::after { content: "*"; margin-left: 3px; }
+/* Register, password reset and the card editor: the asterisk follows the input's required attribute. */
+.required-mark, :is(#auth-form.registering, #password-reset-form, #cards-form) .field:has(:required) > span:first-child::after { color: var(--color-required); font-weight: 600; }
+:is(#auth-form.registering, #password-reset-form, #cards-form) .field:has(:required) > span:first-child::after { content: "*"; margin-left: 3px; }
 .required-note { margin: -12px 0 -4px; font-size: 12px; color: var(--color-text-muted); text-align: right; }
 .required-note .required-mark { margin-right: 3px; }
+.cards-required-note { margin: -10px 0 10px; }
 .field-hint { display: block; margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
 .field-hint[hidden] { display: none; }
 #auth-error, #password-reset-error {
@@ -511,7 +512,6 @@ button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-
   font-size: 11px; font-weight: 500; color: var(--color-text-secondary); background: var(--color-surface-sunken); border-radius: var(--radius-pill);
 }
 .card-foot .group-tag { margin-right: 6px; }
-.cards-group-foot { display: flex; justify-content: flex-end; margin-top: -4px; }
 td.group-col { white-space: nowrap; }
 /* Multi-select: checkboxes and the action bar only show while selecting. */
 #favorites-panel:not(.selecting) .select-col, #cards-panel:not(.selecting) .select-col { display: none; }
@@ -654,12 +654,19 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 .stat-chip-label { font-weight: 600; overflow-wrap: anywhere; }
 .stat-chip-value { color: var(--color-text-muted); white-space: nowrap; }
 #cards-retry { margin-bottom: 14px; }
-.cards-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 220px)); gap: 16px; }
+.cards-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 1.6fr); gap: 16px; align-items: end; }
 #cards-table, #cards-grid { margin-top: 14px; }
 #cards-filters .chips:empty, #cards-filters .chips[hidden] { display: none; }
 .product-summary .cards-name { min-width: 0; }
-.cards-qty { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.card.out_of_stock .cards-qty { color: var(--color-text-subtle); }
+/* Notes, names and cell padding give way so price, holdings and group columns fit without horizontal scrolling. */
+#cards-table td.cards-notes { min-width: 64px; }
+#cards-table td:has(> .product-summary) { min-width: 190px; }
+#cards-table :is(th, td) { padding-left: 14px; }
+/* Unit price input with its currency picker on the same line. */
+.field > .price-input { display: flex; gap: 8px; margin-top: 6px; color: inherit; font-size: inherit; font-weight: inherit; }
+/* Outrank the generic field input/select margins below; the wrapper already carries it. */
+.cards-form-grid .field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
+.card-dialog .field .price-input select { width: auto; flex: none; margin-top: 0; }
 .card .row-actions button.row-action { width: 28px; height: 28px; font-size: 14px; }
 .card .cards-notes { max-width: none; min-width: 0; margin: -2px 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 #cards-panel td { overflow-wrap: anywhere; }
@@ -711,6 +718,8 @@ button.row-action:hover { background: var(--color-hover); color: var(--color-tex
 .card-dialog .details-row { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
 .card-dialog .details-row .wide-2 { grid-column: span 2; }
 .card-dialog .details-row .wide { grid-column: 1 / -1; }
+/* Editing hides the group picker; the price then fills the rest of the quantity row. */
+@media (min-width: 761px) { .card-dialog .details-row:has(#card-group-field[hidden]) .card-price-field { grid-column: span 3; } }
 .card-dialog .field select { margin-top: 6px; }
 /* Beats the generic .field > span label rule. */
 .field > .official-number { display: flex; gap: 8px; margin-top: 6px; color: inherit; font-size: inherit; }
@@ -753,16 +762,6 @@ button.official-card.chosen, button.official-card.chosen:hover { border-color: v
 }
 @media (prefers-reduced-motion: reduce) { .official-card.skeleton { animation: none; } button.official-card:hover { transform: none; } }
 
-/* Quantity quick edit */
-button.cards-qty {
-  height: auto; padding: 4px 8px; margin: -4px -8px; gap: 6px;
-  background: transparent; border: 1px dashed transparent; border-radius: var(--radius-md);
-  color: inherit; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
-}
-button.cards-qty:hover { background: var(--color-hover); border-color: var(--color-border-strong); color: var(--color-text); }
-td.numeric button.cards-qty { margin-right: -8px; }
-td.muted button.cards-qty, .card.out_of_stock button.cards-qty { color: var(--color-text-subtle); }
-.quantity-dialog { width: min(380px, 92vw); }
 /* Import dialog: one drop zone stands in for the native file input. */
 .import-dialog { width: min(480px, 94vw); }
 .import-drop {
@@ -797,13 +796,6 @@ td.muted button.cards-qty, .card.out_of_stock button.cards-qty { color: var(--co
 .export-group[disabled] .chip { cursor: not-allowed; }
 .chip:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .export-summary { margin: 4px 0 0; font-size: 13px; color: var(--color-text-secondary); }
-.quantity-card { display: flex; align-items: center; gap: 8px; }
-.quantity-name { margin: 8px 0 18px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
-.quantity-stepper { display: flex; align-items: center; gap: 10px; }
-.quantity-stepper button { width: 44px; height: 44px; font-size: 18px; }
-.quantity-stepper input { flex: 1; height: 44px; font-size: 20px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
-.quantity-quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
-.quantity-quick button { font-variant-numeric: tabular-nums; }
 
 /* Owned quantity (from My cards) in search and favorites */
 td.owned-cell { font-weight: 600; }

@@ -107,6 +107,7 @@ class OwnedCard(Base):
     name: Mapped[str]
     quantity: Mapped[int] = mapped_column()
     price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(server_default='JPY')
     notes: Mapped[str]
     game_key: Mapped[str]
     number_key: Mapped[str]
@@ -118,6 +119,7 @@ class OwnedCard(Base):
     __table_args__ = (
         CheckConstraint(quantity >= 0),
         CheckConstraint('price >= 0', name='owned_cards_price_nonnegative'),
+        CheckConstraint("currency IN ('JPY', 'CNY', 'CAD')", name='owned_cards_currency_known'),
         UniqueConstraint("user_id", "game_key", "number_key", "rarity_key"),
         ForeignKeyConstraint(["user_id", "group_id"], ["card_groups.user_id", "card_groups.id"],
                              name="owned_cards_user_group_fkey"),

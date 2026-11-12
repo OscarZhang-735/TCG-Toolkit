@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const source = await readFile(new URL('../src/tcg_toolkit/static/cards.js', import.meta.url), 'utf8');
-const {createCards, filterCards, summarizeCards} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const {createCards, filterCards, summarizeCards, yenPrice} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const card = {id: 'one', game: 'WS', card_number: 'ABC-001', rarity: 'SR', name: 'First', quantity: 2, notes: 'Keep'};
 const reply = (data, status = 200) => ({ok: status < 400, status, json: async () => data});
 
@@ -23,6 +23,41 @@ test('filters and grouped statistics include zero stock without counting its typ
   assert.equal(filterCards(rows, {query: ' abc ', game: 'ws', rarity: 'sr'}).length, 2);
   assert.equal(filterCards(rows, {query: 'other'}).length, 1);
   assert.deepEqual(summarizeCards([]), {kinds: 0, quantity: 0, games: [], rarities: []});
+});
+test('price bounds are inclusive and leave out unpriced cards only while a bound is set', () => {
+  const rows = [{...card, id: 'free', price: 0}, {...card, id: 'mid', price: 12.5}, {...card, id: 'top', price: 99.99},
+    {...card, id: 'unset', price: null}, {...card, id: 'old'}];
+  const ids = bounds => filterCards(rows, bounds).map(row => row.id);
+  assert.deepEqual(ids({}), ['free', 'mid', 'top', 'unset', 'old']);
+  assert.deepEqual(ids({min: 0}), ['free', 'mid', 'top']);
+  assert.deepEqual(ids({min: 12.5, max: 99.99}), ['mid', 'top']);
+  assert.deepEqual(ids({max: 12.5}), ['free', 'mid']);
+  assert.deepEqual(ids({min: 13, max: 50}), []);
+});
+test('prices in other currencies compare by yen value; unknown rates stay out of bounds', () => {
+  const rates = {JPY: 1, CNY: 0.05};
+  assert.equal(yenPrice({price: 800}, rates), 800);
+  assert.equal(yenPrice({price: 800, currency: 'JPY'}, {}), 800);
+  assert.equal(yenPrice({price: 35, currency: 'CNY'}, rates), 700);
+  assert.equal(yenPrice({price: 10, currency: 'CAD'}, rates), null);
+  assert.equal(yenPrice({price: null, currency: 'CNY'}, rates), null);
+  const rows = [{...card, id: 'yen', price: 800, currency: 'JPY'}, {...card, id: 'yuan', price: 35, currency: 'CNY'},
+    {...card, id: 'cad', price: 10, currency: 'CAD'}];
+  const ids = bounds => filterCards(rows, {...bounds, priceOf: row => yenPrice(row, rates)}).map(row => row.id);
+  assert.deepEqual(ids({}), ['yen', 'yuan', 'cad']);
+  assert.deepEqual(ids({min: 750}), ['yen']);
+  assert.deepEqual(ids({max: 700}), ['yuan']);
+});
+test('drafts carry the currency, defaulting to JPY', async () => {
+  const sent = [];
+  const cards = createCards(() => {});
+  await cards.activate(async (url, options) => {
+    if (options.method === 'GET') return reply({items: url.endsWith('/groups') ? [] : [{...card, price: 35, currency: 'CNY'}]});
+    const body = JSON.parse(options.body); sent.push(body); return reply({...card, ...body}, 201);
+  });
+  cards.edit('one'); assert.equal(cards.state.draft.currency, 'CNY');
+  cards.state.draft.quantity = 4; await cards.save(); assert.equal(sent.at(-1).currency, 'CNY');
+  cards.edit(); assert.equal(cards.state.draft.currency, 'JPY');
 });
 test('duplicate and failed saves preserve draft; failed deletion preserves data', async () => {
   const cards = createCards(() => {}); let failure = 409;
@@ -129,6 +164,29 @@ test('group create, rename and delete keep cards; name conflicts report a key', 
   assert.deepEqual(cards.state.groups.map(group => group.id), ['g2', 'g-new']);
   assert.equal(cards.state.records[0].group_id, null); assert.equal(cards.state.records[0].quantity, card.quantity);
   assert.equal(cards.state.group, null); assert.equal(cards.state.draftGroup, null);
+});
+
+test('price is edited as text, sent as an exact decimal string, and blank clears it', async () => {
+  const saved = {...card, price: 12.5};
+  const sent = [];
+  const cards = createCards(() => {});
+  await cards.activate(async (url, options) => {
+    if (options.method === 'GET') return reply({items: url.endsWith('/groups') ? [] : [saved, {...card, id: 'two', price: null}]});
+    const body = JSON.parse(options.body); sent.push(body);
+    return reply({...saved, ...body, price: body.price === null ? null : Number(body.price)}, options.method === 'POST' ? 201 : 200);
+  });
+  cards.edit('one'); assert.equal(cards.state.draft.price, '12.5');
+  cards.edit('two'); assert.equal(cards.state.draft.price, '');
+  // A quantity-only save keeps the existing price.
+  cards.edit('one'); cards.state.draft.quantity = 5; await cards.save();
+  assert.equal(sent.at(-1).price, '12.5');
+  cards.edit('one'); cards.state.draft.price = ' 0.10 '; await cards.save();
+  assert.equal(sent.at(-1).price, '0.10'); assert.equal(cards.state.records[0].price, 0.1);
+  cards.edit('one'); cards.state.draft.price = ''; await cards.save();
+  assert.equal(sent.at(-1).price, null); assert.equal(cards.state.records[0].price, null);
+  cards.edit(); assert.equal(cards.state.draft.price, '');
+  Object.assign(cards.state.draft, {game: 'WS', card_number: 'NEW-1', rarity: 'R', name: 'New', price: '1234.56'});
+  await cards.save(); assert.equal(sent.at(-1).price, '1234.56'); assert.equal(sent.at(-1).group_id, null);
 });
 
 test('thumbnail survives editing and save, and resets for a new card', async () => {
