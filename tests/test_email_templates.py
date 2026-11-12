@@ -38,7 +38,7 @@ def test_digest_marks_direction_and_simplifies_card_metadata():
     assert chinese_before_english(html, '2 张订阅卡牌有变化', '2 subscribed cards changed')
     assert f"检查时间 Checked at：{datetime.fromtimestamp(1_800_000_000).astimezone():%Y-%m-%d %H:%M}</p>" in html
     assert '价格 Price' in html and '库存 Stock' in html and '在游游亭查看 View on YuYu-Tei' in html
-    assert chinese_before_english(html, '每天中午检查订阅的卡牌', 'Subscribed cards are checked daily at noon')
+    assert chinese_before_english(html, '按你设置的查询间隔检查订阅卡牌', 'Subscribed cards are checked at your chosen interval')
     assert '&lt;Card &amp; name&gt;' in html and '<Card' not in html
     assert 'href="https://yuyu-tei.jp/sell/wsr/card/OS01/10240?a=&quot;b&quot;"' in html
     # Every card shows its rarity as a badge before the card number.

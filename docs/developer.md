@@ -53,7 +53,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_DB_SUBNET` | 内部数据库网络 | `10.205.0.0/24` |
 | `TCG_PROXY_IPS` | 受信任的反向代理来源 IP，不要设为 `*` | `127.0.0.1` |
 | `TCG_SUBNET` | Docker 网络子网，与本地网络冲突时修改 | `10.203.0.0/24` |
-| `TCG_SUBSCRIPTIONS_ENABLED` | 启动卡牌订阅定时检查及邮件重试线程 | 直接运行关闭；Compose 开启 |
+| `TCG_SUBSCRIPTIONS_ENABLED` | 启动卡牌订阅每小时到期扫描及邮件重试线程 | 直接运行关闭；Compose 开启 |
 | `TCG_SITE_URL` | 订阅邮件底部“前往 TCG Toolkit 查看”链接使用的网页地址（自动追加 `#favorites`）；须为 http(s) 地址，未设置或无效时使用公开站点 | `https://oscarzhang-735.github.io/TCG-Toolkit/` |
 | `TZ` | 根目录 Compose 必填，设为宿主机 IANA 时区，例如 `America/Toronto`；Linux 生产部署使用挂载的宿主机 `/etc/localtime` | `.env.example` 示例为 `America/Toronto` |
 
@@ -104,7 +104,7 @@ API 响应继续显式选择公开字段，不直接序列化 ORM 实体，避�
 ### Alembic 迁移
 
 `tcg-db migrate` 使用 Alembic，并在同一个 PostgreSQL 事务锁和事务内执行接管、升级及版本校验。
-已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，升级到 schema 5，保留用户、会话和业务数据。
+已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔和 `0010` 的用户统一间隔迁移，升级到 schema 10，保留用户、会话和业务数据。
 新空库通过基线迁移初始化。原 `001_initial.sql` 保持不可变，仅供基线使用；业务代码不再执行 SQL 字符串。
 `schema_migrations` 保留为发布版本兼容标记，现有 JSON 状态接口和回退判断继续可用。
 
@@ -203,7 +203,7 @@ IP 限制为各发送接口每分钟 5 次、注册／绑定验证及登录接�
 改密事务同时更新 Argon2id 摘要、消费验证码、撤销全部会话，并作废该用户其余待发送或有效验证码。
 登录的密码校验和会话创建也在写事务内完成，避免并发登录在改密后留下旧密码会话。
 验证码邮件晚到时不会重新激活已作废记录。前端改密成功清除本地会话，返回登录页，并提示使用新密码登录。
-当前使用 PostgreSQL schema 5。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
+当前使用 PostgreSQL schema 10。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
 
 自动化测试注入内存发信器，仍经过真实验证码校验；没有生产环境绕过开关。
 真实投递验收：配置 SMTP 后，向自己的测试邮箱发送验证码，确认邮件语言、到达时间、验证码注册和邮箱登录，再确认重发旧码失效。
@@ -458,36 +458,54 @@ Content-Type: application/json
 
 | 接口 | 请求与响应 |
 | --- | --- |
-| `POST /api/subscriptions` | `{"game":"wsr","product_url":"https://yuyu-tei.jp/sell/wsr/card/OS01/10240"}`；返回 200 和订阅记录 |
+| `POST /api/subscriptions` | `{"game":"wsr","product_url":"https://yuyu-tei.jp/sell/wsr/card/OS01/10240"}`；继承当前用户的查询间隔；返回 200 和订阅记录 |
 | `GET /api/subscriptions` | 返回 `{"items":[订阅记录,…]}`，仅包含当前用户的订阅 |
+| `GET /api/subscriptions/settings` | 返回当前用户的 `{"interval_hours":24,"next_check_at":1800086400}`，无需已有订阅或已验证邮箱 |
+| `PUT /api/subscriptions/settings` | `{"interval_hours":6}`；统一修改当前用户全部已有及未来订阅的间隔，返回与 GET 相同的设置 |
 | `DELETE /api/subscriptions/{id}` | 发送 JSON `{}`；取消自己的订阅，成功返回 204，不存在或属于其他用户返回 404 |
 
-订阅记录为 `id`、`item`、`created_at`、`checked_at`、`last_error`。`item` 包含 `game`、`name`、`card_number`、`rarity`、`image_url`、`product_url`、`price`、`currency`、`stock_quantity`、`stock_status`、`stock_text`；时间均为 Unix 秒。`checked_at` 为最近检查尝试的时间，失败时仍保留上次有效 `item`，错误代码放入 `last_error`。
+订阅记录为 `id`、`item`、`created_at`、`checked_at`、`last_error`、`next_check_at`。`item` 包含 `game`、`name`、`card_number`、`rarity`、`image_url`、`product_url`、`price`、`currency`、`stock_quantity`、`stock_status`、`stock_text`；时间均为 Unix 秒。`checked_at` 为最近检查尝试所属的计划扫描时间（整点扫描即该整点，启动扫描为实际开始时间），失败时仍保留上次有效 `item`，错误代码放入 `last_error`。
 
 创建时要求存在有效通知邮箱（已验证自定义邮箱或已验证注册邮箱），否则返回 403 `verified_email_required`。只接受六个受支持游戏的游游亭 HTTPS 详情 URL，游戏路径必须匹配（`lycee` 对应 `lo`）；去掉尾部 `/` 并统一主机名。查询参数、片段、其他域名、额外路径或编码路径不接受。名称、价格、库存由服务端获取，不采信客户端快照。
 
-相同用户、游戏、链接重复创建返回原记录，不再次抓取、不重置基准；初次读取失败不创建订阅。上游超时返回 504 `product_timeout`；HTTP 错误返回 502 `product_unavailable`；缺少或无法确定普通品相价格/库存返回 502 `product_unreadable`。
+相同用户、游戏、链接重复创建返回原记录，不再次抓取、不重置基准或已有调度；初次读取失败不创建订阅。上游超时返回 504 `product_timeout`；HTTP 错误返回 502 `product_unavailable`；缺少或无法确定普通品相价格/库存返回 502 `product_unreadable`。
 
-设置 `TCG_SUBSCRIPTIONS_ENABLED=true` 后，FastAPI 启动后台线程，每天按进程本地时间 12:00 开始读取已订阅卡牌。每轮按链接去重，一张卡被多人订阅仍只读取一次。与上次成功检查（首次为订阅时）的日元价格、库存数量和有货/缺货状态比较，元数据或库存文案变化不会触发邮件。未知库存、404 和解析失败保留基准，其他卡牌继续处理。
+设置 `TCG_SUBSCRIPTIONS_ENABLED=true` 后，FastAPI 启动后台线程，启动时扫描一次，此后按进程本地时间每小时整点扫描 `next_check_at <= 本轮开始时间` 的订阅。整点扫描即使因唤醒抖动或等待邮件锁而晚 10 分钟内开始，`checked_at` 和下次时间仍按该整点计算，避免 `HH:00:01` 开始的扫描让下一次错过 `HH:00:00` 而整体顺延一小时。每轮仅对到期订阅按游戏和链接去重，同卡未到期订阅不更新。与上次成功检查（首次为订阅时）的日元价格、库存数量和有货/缺货状态比较，元数据或库存文案变化不会触发邮件。未知库存、404 和解析失败保留基准，其他卡牌继续处理。
 
-按用户事务保存新快照和邮件待发记录，每个检查日最多生成一封中英双语汇总，列出所有成功检测到的变化及详情链接；无变化不发。投递时读取当前有效通知邮箱发送纯文本及 HTML 邮件；发送前剔除已经取消的订阅，剔除后为空则标记 `cancelled`。SMTP 在数据库事务外执行，沿用 `TCG_SMTP_*`，无须游游亭登录凭据。
+按用户事务保存新快照和邮件待发记录，每轮每位用户最多生成一封中英双语汇总，同一天可有多封，列出所有成功检测到的变化及详情链接；无变化不发。投递时读取当前有效通知邮箱发送纯文本及 HTML 邮件；发送前剔除已经取消的订阅，剔除后为空则标记 `cancelled`。SMTP 在数据库事务外执行，沿用 `TCG_SMTP_*`，无须游游亭登录凭据。
 
 首次投递失败后等待 60、300、1800 秒再重试，后台最多每 30 秒扫描到期邮件，累计 4 次失败转为 `failed`。重启恢复未耗尽的待发重试，不自动重发终态失败邮件。SMTP 已接收但成功状态尚未提交时进程崩溃，可能重复发送同一 Message-ID。邮件表中的变化记录不因取消订阅而移除，保留用于排查。
 
-调度启动时只安排下一个中午；下午启动等次日，不补查停机日。数据库会话锁与检查日期唯一记录防止多进程重复任务；多个后端实例须使用同一时区。停止时等待当前网络操作结束并退出线程，随后关闭数据库。每日任务中断不补跑；已提交的用户快照与邮件仍有效，未处理的卡牌下次继续比较。
+用户中心的“订阅查询间隔”统一设置该账户全部订阅的间隔，默认 24 小时、最低 1 小时。设置独立于通知邮箱，无订阅时也可提前设置。`interval_hours` 必须是 1 至 2147483647 的整数（PostgreSQL integer 范围），不接受小数、布尔值或字符串。
+
+间隔仅存储在 `users.subscription_interval_hours`，每条订阅只保留 `next_check_at`。首次抓取开始时记录 `checked_at`，下次时间为 `checked_at + 用户间隔 * 3600`。PUT 在一个事务中修改用户设置并重算该用户全部订阅的下次时间；重复保存不会延后任务，已到期的等待下一次扫描。创建时读取用户最新设置。创建订阅请求不允许携带 `interval_hours`（422），原逐条 PATCH 接口已移除（405）。
+
+设置响应的 `next_check_at` 是预计下次查询时间（Unix 秒）：取该用户最早的订阅 `next_check_at`，向上取到首个本地整点扫描；已到期则为当前时间之后的下一个整点（恰在整点时为该整点）。无订阅时为 `null`。用户中心在标题下显示“每 N 小时查询一次”和该时间（按浏览器本机时区显示为 `2026/11/11 22:00 (UTC-5)`，偏移随夏令时变化），每次进入用户中心刷新；表单默认收起，提供 1/3/6/12 小时及 1/3 天快捷选项和自定义小时数，值未变化时不可保存。
+
+成功或失败的检查均将下次时间设为本轮开始时间加用户间隔；失败保留原快照并记录错误。间隔按经过的秒数计算，不受夏令时影响。由于每小时整点扫描，正常情况下实际执行可比到期时间晚不足一小时；抓取和锁等待也可能延迟执行。
+
+停机积压在启动时只检查一次，不逐次补跑。数据库会话锁串行化检查和投递；抢锁失败保留扫描期限，锁释放后重试。每用户事务原子保存快照、下次检查时间及邮件，已提交的记录不重复处理，异常或强制终止留下的到期记录在后续扫描继续处理。保存前重新锁定订阅，跳过已取消或延长间隔后不再到期的记录，使用用户的最新间隔。停止时等待当前网络操作结束并退出线程，随后关闭数据库。
+
+迁移 `0009` 保留历史任务及邮件并允许同日多轮汇总；迁移 `0010` 升级到 schema 10，将所有用户统一重置为 24 小时，按 `checked_at + 86400` 重算订阅下次时间，移除订阅的独立间隔字段。快照、任务、邮件和重试状态均保留。发布时停止所有旧 Worker，执行 `tcg-db migrate`，再启动新版本，不能混跑新旧调度。
 
 数据库状态可通过只读 SQL 查询：
 
 ```sql
-SELECT local_date, state, started_at, finished_at, last_error
-FROM subscription_runs ORDER BY local_date DESC LIMIT 20;
+SELECT id, local_date, state, started_at, finished_at, last_error
+FROM subscription_runs ORDER BY started_at DESC LIMIT 20;
 
-SELECT id, user_id, run_date, state, attempts, next_attempt_at, last_error
+SELECT id, user_id, run_id, run_date, state, attempts, next_attempt_at, last_error
 FROM subscription_emails WHERE state IN ('pending', 'failed')
 ORDER BY created_at DESC LIMIT 100;
 
-SELECT id, user_id, product_url, checked_at, last_error
+SELECT id, user_id, product_url, checked_at, next_check_at, last_error
 FROM subscriptions WHERE last_error IS NOT NULL;
+
+SELECT id, user_id, next_check_at
+FROM subscriptions WHERE next_check_at <= EXTRACT(EPOCH FROM now())
+ORDER BY next_check_at;
+
+SELECT id, subscription_interval_hours FROM users;
 ```
 
 `subscription_runs.state` 为 `running/complete/failed`；`subscription_emails.state` 为 `pending/sent/failed/cancelled`。任务完成可以同时存在个别卡牌抓取错误，请结合订阅的 `last_error` 查看。日志包含有效时区、下一次执行时间、每轮唯一卡牌数、用户卡牌变化数、抓取失败数以及邮件投递状态，不输出 SMTP 密码。

@@ -107,6 +107,24 @@
 <div class="bind-email-actions"><button id="notification-reset" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span id="notification-reset-label"></span></button><button id="notification-submit" type="submit"><i class="bi bi-check2"></i><span data-i18n="notify_save"></span></button></div>
 </form>
 </section>
+<section id="subscription-settings" class="panel email-settings subscription-settings collapsed" aria-labelledby="subscription-settings-title">
+<div class="email-settings-head"><span class="account-icon"><i class="bi bi-clock-history"></i></span>
+<div class="email-settings-text"><h2 id="subscription-settings-title" data-i18n="interval_title"></h2>
+<p id="subscription-interval-summary"></p>
+<p id="subscription-next-check"><i class="bi bi-calendar-event" aria-hidden="true"></i><span id="subscription-next-check-label"></span></p></div>
+<button id="subscription-settings-retry" type="button" class="secondary compact" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
+<button type="button" id="subscription-settings-toggle" class="icon-button panel-toggle" aria-controls="subscription-settings-form" aria-expanded="false"><i id="subscription-settings-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div>
+<form id="subscription-settings-form" hidden novalidate>
+<p id="subscription-settings-help" class="password-help" data-i18n="interval_help"></p>
+<fieldset class="field interval-presets"><legend data-i18n="interval_presets"></legend>
+<div class="chips"><label class="chip"><input type="radio" name="subscription-interval-preset" id="subscription-interval-preset-1" value="1" disabled/><i class="bi bi-check2" aria-hidden="true"></i><span id="subscription-interval-preset-1-label"></span></label><label class="chip"><input type="radio" name="subscription-interval-preset" id="subscription-interval-preset-3" value="3" disabled/><i class="bi bi-check2" aria-hidden="true"></i><span id="subscription-interval-preset-3-label"></span></label><label class="chip"><input type="radio" name="subscription-interval-preset" id="subscription-interval-preset-6" value="6" disabled/><i class="bi bi-check2" aria-hidden="true"></i><span id="subscription-interval-preset-6-label"></span></label><label class="chip"><input type="radio" name="subscription-interval-preset" id="subscription-interval-preset-12" value="12" disabled/><i class="bi bi-check2" aria-hidden="true"></i><span id="subscription-interval-preset-12-label"></span></label><label class="chip"><input type="radio" name="subscription-interval-preset" id="subscription-interval-preset-24" value="24" disabled/><i class="bi bi-check2" aria-hidden="true"></i><span id="subscription-interval-preset-24-label"></span></label><label class="chip"><input type="radio" name="subscription-interval-preset" id="subscription-interval-preset-72" value="72" disabled/><i class="bi bi-check2" aria-hidden="true"></i><span id="subscription-interval-preset-72-label"></span></label></div></fieldset>
+<label class="field interval-field"><span data-i18n="interval_label"></span>
+<span class="interval-input"><input id="subscription-interval" type="number" inputmode="numeric" min="1" max="2147483647" step="1" required disabled aria-describedby="subscription-settings-help"/><span class="interval-unit" data-i18n="interval_unit" aria-hidden="true"></span></span></label>
+<p id="subscription-settings-status" class="email-status" role="status" aria-live="polite"></p>
+<p id="subscription-settings-error" role="alert"></p>
+<div class="bind-email-actions"><button id="subscription-settings-save" type="submit" disabled><i class="bi bi-check2"></i><span id="subscription-settings-save-label"></span></button></div>
+</form>
+</section>
 <section id="password-settings" class="panel password-settings collapsed" aria-labelledby="password-settings-title">
 <div class="email-settings-head"><span class="account-icon"><i class="bi bi-shield-lock"></i></span><div class="email-settings-text"><h2 id="password-settings-title" data-i18n="password_change_title"></h2><p class="password-help" data-i18n="password_change_intro"></p></div>
 <button type="button" id="password-settings-toggle" class="icon-button panel-toggle" aria-controls="password-change-form" aria-expanded="false"><i id="password-settings-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div>

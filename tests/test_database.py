@@ -90,12 +90,55 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
         assert db.get(Favorite, 'favorite').snapshot == '{}'
         assert db.get(Favorite, 'favorite').group_id is None
         assert db.get(OwnedCard, 'card').quantity == 3
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0008'
+        assert MigrationContext.configure(db.connection()).get_current_revision() == '0010'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
     with app.state.auth.store.connect() as db:
         assert compare_metadata(MigrationContext.configure(db), Base.metadata) == []
+
+
+def test_schema_eight_preserves_subscriptions_runs_and_pending_mail(empty_database):
+    from datetime import date
+    from tcg_toolkit.db_models import Subscription, SubscriptionRun, SubscriptionEmail
+    from tcg_toolkit.subscription_worker import SubscriptionWorker
+    from test_subscriptions import snapshot, Mailer
+    import json
+
+    day = date(2026, 11, 1)
+    changes = json.dumps([dict(subscription_id='sub', before=snapshot(), after=snapshot(price=200), checked_at=1_800_000_000)])
+    with Database(empty_database) as store, store.connect() as db:
+        command.upgrade(db_cli.alembic_config(db), '0008')
+        tables = {name: Table(name, MetaData(), autoload_with=db)
+                  for name in ('users', 'subscriptions', 'subscription_runs', 'subscription_emails')}
+        db.execute(tables['users'].insert().values(id='user', username='user', password_hash='hash', created_at=1,
+                   email='user@example.com', email_verified_at=1))
+        db.execute(tables['subscriptions'].insert().values(id='sub', user_id='user', game='wsr',
+                   product_url=snapshot()['product_url'], snapshot=json.dumps(snapshot()), created_at=1,
+                   checked_at=100, last_error='product_timeout'))
+        db.execute(tables['subscription_runs'].insert().values(local_date=day, started_at=100,
+                   finished_at=120, state='complete'))
+        db.execute(tables['subscription_emails'].insert().values(id='mail', user_id='user', run_date=day,
+                   changes=changes, state='pending', attempts=1, next_attempt_at=200, created_at=120,
+                   last_error='OSError'))
+    assert db_cli.migrate(empty_database) == 10
+    with UserStore(empty_database) as store:
+        with store.session() as db:
+            sub = db.get(Subscription, 'sub')
+            assert (sub.next_check_at, sub.checked_at) == (86500, 100)
+            assert db.get(User, 'user').subscription_interval_hours == 24
+            assert sub.last_error == 'product_timeout' and sub.snapshot == json.dumps(snapshot())
+            run = db.scalar(select(SubscriptionRun))
+            assert str(uuid.UUID(run.id)) == run.id
+            assert (run.local_date, run.started_at, run.finished_at, run.state) == (day, 100, 120, 'complete')
+            mail = db.get(SubscriptionEmail, 'mail')
+            assert (mail.run_id, mail.run_date, mail.changes) == (run.id, day, changes)
+            assert (mail.state, mail.attempts, mail.next_attempt_at, mail.last_error) == ('pending', 1, 200, 'OSError')
+        mailer = Mailer()
+        SubscriptionWorker(store, mailer=mailer, clock=lambda: 200).deliver_due()
+        assert len(mailer.messages) == 1
+        with store.session() as db:
+            assert db.get(SubscriptionEmail, 'mail').state == 'sent'
 
 
 def test_newer_schema_is_rejected():
@@ -107,12 +150,31 @@ def test_newer_schema_is_rejected():
         UserStore()
 
 
+def test_schema_nine_resets_all_accounts_to_24_hours(empty_database):
+    from tcg_toolkit.db_models import Subscription
+    with Database(empty_database) as store, store.connect() as db:
+        command.upgrade(db_cli.alembic_config(db), '0009')
+        users = Table('users', MetaData(), autoload_with=db)
+        subscriptions = Table('subscriptions', MetaData(), autoload_with=db)
+        db.execute(users.insert(), [dict(id=u, username=u, password_hash='hash', created_at=1)
+                                    for u in ('mixed', 'uniform', 'empty')])
+        for number, (user, interval) in enumerate([('mixed', 1), ('mixed', 6), ('uniform', 3)]):
+            db.execute(subscriptions.insert().values(id=str(number), user_id=user, game='wsr',
+                       product_url=f'https://example.com/{number}', snapshot='{}', created_at=1,
+                       checked_at=100, interval_hours=interval, next_check_at=100 + interval * 3600))
+    assert db_cli.migrate(empty_database) == 10
+    with UserStore(empty_database) as store, store.session() as db:
+        assert [u.subscription_interval_hours for u in db.scalars(select(User))] == [24, 24, 24]
+        assert [s.next_check_at for s in db.scalars(select(Subscription))] == [86500] * 3
+        assert 'interval_hours' not in {c['name'] for c in inspect(db.connection()).get_columns('subscriptions')}
+
+
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0009_failure.py').write_text(
+    (scripts / 'versions' / '0011_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0009'\ndown_revision='0008'\n"
+        "revision='0011'\ndown_revision='0010'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = db_cli.alembic_config

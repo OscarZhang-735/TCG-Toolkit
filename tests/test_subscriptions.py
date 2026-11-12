@@ -1,10 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta
+from datetime import datetime
 import json
 import smtplib
 import os
 import time
 from threading import Event
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -14,11 +15,10 @@ from sqlalchemy import event, func, select
 from auth_helpers import register_user
 from tcg_toolkit.db_models import Subscription, SubscriptionEmail, SubscriptionRun, User
 from tcg_toolkit import subscriptions as api
-from tcg_toolkit.subscription_worker import SubscriptionWorker, next_noon
+from tcg_toolkit.subscription_worker import SubscriptionWorker, next_hour
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
-DAY = date(2026, 11, 1)
 NOW = 1_800_000_000
 URL = 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240'
 
@@ -44,6 +44,7 @@ class Mailer:
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
+    monkeypatch.setattr(api, 'time', SimpleNamespace(time=lambda: NOW - 86400))
     monkeypatch.setattr(api, 'fetch_product_snapshot', lambda game, url: snapshot(url))
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
         login(client, 'alice')
@@ -57,7 +58,9 @@ def login(client, username):
     return response.json()['user']['id']
 
 
-def add(client, url=URL):
+def add(client, url=URL, interval_hours=None):
+    if interval_hours is not None:
+        assert client.put('/api/subscriptions/settings', json={'interval_hours': interval_hours}).status_code == 200
     response = client.post('/api/subscriptions', json=dict(game='wsr', product_url=url))
     assert response.status_code == 200, response.text
     return response.json()
@@ -169,8 +172,8 @@ def test_failed_initial_fetch_leaves_no_subscription(client, monkeypatch):
 def test_changes_are_queued_once_and_sent_once(client, price, quantity):
     add(client)
     service = worker(lambda game, url: snapshot(url, price, quantity))
-    assert service.check_daily(DAY)
-    assert not service.check_daily(DAY)
+    assert service.check_due()
+    assert not service.check_due()
     assert len(emails()) == 1
     change = json.loads(emails()[0].changes)[0]
     assert change['before']['price'] == 100 and change['after']['price'] == price
@@ -189,12 +192,13 @@ def test_changes_are_queued_once_and_sent_once(client, price, quantity):
 def test_unchanged_is_silent_and_restock_is_not(client):
     saved = add(client)
     service = worker()
-    service.check_daily(DAY)
+    service.check_due()
     service.deliver_due()
     assert emails() == [] and service.mailer.messages == []
     with app.state.auth.store.session() as db:
         db.get(Subscription, saved['id']).snapshot = json.dumps(snapshot(quantity=0))
-    service.check_daily(DAY + timedelta(days=1))
+    service.clock = lambda: NOW + 86400
+    service.check_due()
     assert json.loads(emails()[0].changes)[0]['before']['stock_status'] == 'out_of_stock'
 
 
@@ -208,7 +212,7 @@ def test_many_cards_one_digest_per_user_and_shared_fetch(client):
         calls.append(url)
         return snapshot(url, price=200)
     service = worker(fetch)
-    service.check_daily(DAY)
+    service.check_due()
     service.deliver_due()
     assert sorted(calls) == [URL, URL + '1']
     assert sorted(len(json.loads(row.changes)) for row in emails()) == [1, 2]
@@ -226,14 +230,15 @@ def test_source_failure_preserves_baseline_and_other_cards_continue(client, fail
             return {**snapshot(url), 'stock_quantity': None, 'stock_status': 'unknown'}
         raise HTTPException(502, detail=failure)
     service = worker(fetch)
-    service.check_daily(DAY)
+    service.check_due()
     with app.state.auth.store.session() as db:
         row = db.get(Subscription, saved['id'])
         assert row.snapshot == json.dumps(saved['item'])
         assert row.last_error and row.checked_at == NOW
     assert len(json.loads(emails()[0].changes)) == 1
     service.fetcher = lambda game, url: snapshot(url, price=200)
-    service.check_daily(DAY + timedelta(days=1))
+    service.clock = lambda: NOW + 86400
+    service.check_due()
     assert len(emails()) == 2
     with app.state.auth.store.session() as db:
         assert db.get(Subscription, saved['id']).last_error is None
@@ -245,7 +250,7 @@ def test_retry_schedule_exhaustion_and_restart(client):
     mailer = Mailer()
     mailer.error = smtplib.SMTPException('failure')
     service = worker(lambda game, url: snapshot(url, price=200), mailer, now)
-    service.check_daily(DAY)
+    service.check_due()
     for attempt, delay in enumerate((60, 300, 1800), start=1):
         service.deliver_due()
         row = emails()[0]
@@ -267,7 +272,7 @@ def test_retry_after_restart_retains_original_change(client):
     add(client)
     now = [NOW]
     service = worker(lambda game, url: snapshot(url, price=200), now=now)
-    service.check_daily(DAY)
+    service.check_due()
     service.mailer.error = OSError('offline')
     service.deliver_due()
     now[0] += 60
@@ -282,7 +287,7 @@ def test_cancelled_subscriptions_are_excluded_from_pending_mail(client, remove_a
     first = add(client)
     second = add(client, URL + '1')
     service = worker(lambda game, url: snapshot(url, price=200))
-    service.check_daily(DAY)
+    service.check_due()
     client.request('DELETE', '/api/subscriptions/' + first['id'], json={})
     if remove_all:
         client.request('DELETE', '/api/subscriptions/' + second['id'], json={})
@@ -302,14 +307,14 @@ def test_atomic_snapshot_and_outbox_on_database_failure(client):
     event.listen(SubscriptionEmail, 'before_insert', fail_insert)
     try:
         with pytest.raises(RuntimeError, match='outbox unavailable'):
-            service.check_daily(DAY)
+            service.check_due()
     finally:
         event.remove(SubscriptionEmail, 'before_insert', fail_insert)
     with app.state.auth.store.session() as db:
         assert json.loads(db.get(Subscription, saved['id']).snapshot)['price'] == 100
-        assert db.get(SubscriptionRun, DAY).state == 'failed'
+        assert db.scalar(select(SubscriptionRun)).state == 'failed'
         assert db.scalar(select(func.count()).select_from(SubscriptionEmail)) == 0
-    assert service.check_daily(DAY + timedelta(days=1))
+    assert service.check_due()
     assert len(emails()) == 1
 
 
@@ -322,10 +327,10 @@ def test_concurrent_workers_do_not_repeat_checks_or_mail(client):
         return snapshot(url, price=200)
     first, second = worker(fetch), worker()
     with ThreadPoolExecutor(max_workers=1) as pool:
-        running = pool.submit(first.check_daily, DAY)
+        running = pool.submit(first.check_due)
         try:
             assert entered.wait(10)
-            assert not second.check_daily(DAY)
+            assert not second.check_due()
         finally:
             release.set()
         assert running.result()
@@ -349,35 +354,33 @@ def test_concurrent_workers_do_not_repeat_checks_or_mail(client):
     assert len(first.mailer.messages) == 1 and emails()[0].attempts == 1
 
 
-def test_noon_schedule_and_missed_startup_does_not_backfill(monkeypatch):
+def test_hourly_schedule_startup_and_missed_hours(monkeypatch):
     before = datetime(2026, 11, 1, 11, 59, 59).timestamp()
     noon = datetime(2026, 11, 1, 12).timestamp()
-    assert next_noon(before) == noon
-    assert next_noon(noon) == datetime(2026, 11, 2, 12).timestamp()
+    assert next_hour(before) == noon
+    assert next_hour(noon) == noon + 3600
     now = [before]
     service = worker(now=now)
     calls = []
-    monkeypatch.setattr(service, 'check_daily', lambda day: calls.append(day) or True)
+    monkeypatch.setattr(service, 'check_due', lambda slot=None: calls.append(now[0]) or True)
     monkeypatch.setattr(service, 'deliver_due', lambda: None)
     service.tick()
-    assert calls == []
+    assert calls == [before]
     now[0] = noon
     service.tick()
     service.tick()
-    assert calls == [DAY]
-    restarted = worker(now=[noon + 3600])
-    assert restarted.deadline == datetime(2026, 11, 2, 12).timestamp()
-    now[0] = datetime(2026, 11, 4, 13).timestamp()
+    assert calls == [before, noon]
+    now[0] += 5 * 86400
     service.tick()
-    assert calls == [DAY]
+    assert calls == [before, noon, now[0]]
+    assert service.deadline == now[0] + 3600
 
 
-def test_busy_mail_worker_at_noon_does_not_skip_the_daily_check(client):
+def test_busy_mail_worker_does_not_skip_due_check(client):
     add(client)
-    now = [datetime(2026, 11, 1, 11, 59, 59).timestamp()]
+    now = [NOW]
     service = worker(lambda game, url: snapshot(url, price=200), now=now)
     other = worker()
-    now[0] += 1
     with other.exclusive() as acquired:
         assert acquired
         service.tick()
@@ -387,17 +390,18 @@ def test_busy_mail_worker_at_noon_does_not_skip_the_daily_check(client):
     assert len(emails()) == 1 and emails()[0].state == 'sent'
 
 
-@pytest.mark.skipif(not hasattr(time, 'tzset'), reason='POSIX timezone switching; also checked in Linux Docker')
-@pytest.mark.parametrize('day,hours', [(datetime(2026, 3, 7, 13), 22), (datetime(2026, 10, 31, 13), 24)])
-def test_next_noon_observes_dst(day, hours):
+@pytest.mark.skipif(not hasattr(time, 'tzset'), reason='Requires POSIX timezone switching')
+@pytest.mark.parametrize('day,expected_hour', [(datetime(2026, 3, 8, 1, 30), 3),
+                                              (datetime(2026, 11, 1, 1, 30, fold=0), 1)])
+def test_next_hour_observes_dst(day, expected_hour):
     previous = os.environ.get('TZ')
     try:
         os.environ['TZ'] = 'America/Toronto'
         time.tzset()
         now = day.timestamp()
-        due = next_noon(now)
-        assert datetime.fromtimestamp(due).hour == 12
-        assert due - now == hours * 3600
+        due = next_hour(now)
+        assert datetime.fromtimestamp(due).hour == expected_hour
+        assert due - now == 1800
     finally:
         if previous is None:
             os.environ.pop('TZ', None)

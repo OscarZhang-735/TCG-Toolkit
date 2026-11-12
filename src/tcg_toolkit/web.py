@@ -65,7 +65,7 @@ class BrowserCORS:
     async def __call__(self, scope, receive, send):
         origins = getattr(scope["app"].state, "auth_origins", set())
         await CORSMiddleware(self.app, allow_origins=list(origins),
-                             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                              allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
                              expose_headers=["Idempotency-Replayed", "Retry-After"])(scope, receive, send)
 
