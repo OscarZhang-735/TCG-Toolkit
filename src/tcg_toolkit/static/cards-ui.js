@@ -6,6 +6,7 @@ import {numberButton} from './copy-number.js';
 import {setNavCount} from './nav-count.js';
 import {EXPORT_FIELDS, fetchCardExport, downloadCardExport} from './cards-export.js';
 import {raritiesForGame, rarityCategories, findRarity, rarityTier, rarityDescription} from './rarities.js';
+import {bindGroups} from './group-ui.js';
 const $ = id => document.getElementById(id);
 const fields = ['game', 'card_number', 'rarity', 'name', 'quantity', 'notes', 'image_url'];
 // List/grid choice is shared with search and favorites (app.js owns the toggle).
@@ -14,6 +15,13 @@ let officialAPI, officialGeneration = 0, officialController;
 const blankFilters = () => ({query: '', rarity: '', sort: 'original', hiddenGames: new Set()});
 let filters = blankFilters(), pendingDelete = null;
 const inventory = createCards(render);
+// Multi-select for moving many cards at once. Moves run one card at a time; cards that fail
+// stay selected so the move can be retried. selectionGeneration drops a run when the account changes.
+const blankSelection = () => ({active: false, ids: new Set(), running: false, done: 0, total: 0, failed: 0});
+let selection = blankSelection(), selectionGeneration = 0;
+const locked = () => inventory.state.busy || inventory.state.loading || selection.running;
+const groups = bindGroups(inventory, {prefix: 'cards', deleteMessage: 'cards_group_delete_message', locked});
+const groupName = id => inventory.state.groups.find(group => group.id === id)?.name ?? null;
 let importResult = null;
 function renderImport() {
   const {ready, busy, loading} = inventory.state;
@@ -42,7 +50,7 @@ function renderImport() {
 }
 // Export settings: format, heading language and fields are remembered; the games
 // start from the page's game filter each time the dialog opens.
-let exportController = null, exportError = '', exportHiddenGames = new Set();
+let exportController = null, exportError = '', exportHiddenGames = new Set(), exportGroup = null;
 const EXPORT_KEY = 'cardsExport';
 function loadExportSettings() {
   let saved = {};
@@ -56,15 +64,18 @@ function loadExportSettings() {
 }
 let exportSettings = loadExportSettings();
 const saveExportSettings = () => localStorage.setItem(EXPORT_KEY, JSON.stringify(exportSettings));
-// [key, label] for every game in the library, sorted for display.
-const exportGames = () => [...new Map(inventory.state.records.map(row => [row.game.toLowerCase(), row.game]))]
+// Cards in the chosen export group (null: the whole library).
+const exportRecords = () => inventory.state.records.filter(row => exportGroup === null || row.group_id === exportGroup);
+// [key, label] for every game in the exported cards, sorted for display.
+const exportGames = () => [...new Map(exportRecords().map(row => [row.game.toLowerCase(), row.game]))]
   .sort((a, b) => collator.compare(a[1], b[1]));
 function renderExport() {
   const state = inventory.state;
   $('cards-export').disabled = !state.ready || state.loading || state.busy;
   const busy = Boolean(exportController), {format, fields: chosenFields} = exportSettings;
   const games = exportGames(), chosenGames = games.filter(([key]) => !exportHiddenGames.has(key));
-  const cards = state.records.filter(row => !exportHiddenGames.has(row.game.toLowerCase())).length;
+  const cards = exportRecords().filter(row => !exportHiddenGames.has(row.game.toLowerCase())).length;
+  $('cards-export-group-field').hidden = !state.groups.length; $('cards-export-group-field').disabled = busy;
   document.querySelectorAll('input[name="export-format"]').forEach(input => { input.checked = input.value === format; });
   document.querySelectorAll('input[name="export-language"]').forEach(input => { input.checked = input.value === exportSettings.language; });
   $('cards-export-format').closest('fieldset').disabled = busy;
@@ -76,7 +87,8 @@ function renderExport() {
   $('cards-export-games-all').textContent = t(chosenGames.length === games.length ? 'cards_export_clear_all' : 'cards_export_select_all');
   $('cards-export-fields-all').textContent = t(chosenFields.length === EXPORT_FIELDS.length ? 'cards_export_clear_all' : 'cards_export_select_all');
   $('cards-export-summary').textContent = t('cards_export_summary', {cards: number(cards), fields: number(chosenFields.length)});
-  const problem = games.length && !chosenGames.length ? 'cards_export_need_game' : !chosenFields.length ? 'cards_export_need_field' : '';
+  const problem = games.length && !chosenGames.length ? 'cards_export_need_game' : !chosenFields.length ? 'cards_export_need_field'
+    : !cards ? 'cards_group_empty' : '';
   const message = problem || exportError;
   $('cards-export-error').textContent = !busy && message ? t(message) : '';
   const confirm = $('cards-export-confirm');
@@ -91,6 +103,13 @@ function exportChip(value, label, checked, onChange) {
   chip.append(input, icon('bi-check-lg'), node('span', label));
   return chip;
 }
+function exportGroupOptions() {
+  const all = node('option', t('favorite_group_all')); all.value = '';
+  $('cards-export-group').replaceChildren(all, ...inventory.state.groups.map(group => {
+    const option = node('option', group.name); option.value = group.id; return option;
+  }));
+  $('cards-export-group').value = exportGroup ?? '';
+}
 function exportChips() {
   $('cards-export-games').replaceChildren(...exportGames().map(([key, label]) => exportChip(key, label, !exportHiddenGames.has(key),
     checked => { if (checked) exportHiddenGames.delete(key); else exportHiddenGames.add(key); })));
@@ -103,7 +122,8 @@ function exportChips() {
 }
 function openExport() {
   if ($('cards-export').disabled) return;
-  exportError = '';
+  exportError = ''; exportGroup = inventory.state.group;
+  exportGroupOptions();
   const known = new Set(exportGames().map(([key]) => key));
   exportHiddenGames = new Set([...filters.hiddenGames].filter(key => known.has(key)));
   exportChips(); renderExport();
@@ -116,7 +136,7 @@ async function runExport() {
   const games = exportHiddenGames.size ? exportGames().filter(([key]) => !exportHiddenGames.has(key)).map(([, label]) => label) : null;
   exportController = controller; exportError = ''; renderExport();
   try {
-    const blob = await fetchCardExport(officialAPI, {format, language, games, fields: chosenFields}, controller.signal);
+    const blob = await fetchCardExport(officialAPI, {format, language, games, fields: chosenFields, group: exportGroup}, controller.signal);
     if (exportController === controller) { exportController = null; downloadCardExport(blob, format); $('cards-export-dialog').close(); }
   } catch (error) {
     if (exportController === controller && error.name !== 'AbortError') {
@@ -167,9 +187,17 @@ function rarityOptions() {
   } else if (mapped) draft.rarity = match?.code ?? '';
   select.value = draft.rarity;
 }
+// New cards go into the group chosen here (the selected tab by default); edits keep their group.
+function groupPicker() {
+  const state = inventory.state, select = $('card-group');
+  $('card-group-field').hidden = Boolean(state.editing) || !state.groups.length;
+  const none = node('option', t('favorite_group_none')); none.value = '';
+  select.replaceChildren(none, ...state.groups.map(group => { const option = node('option', group.name); option.value = group.id; return option; }));
+  select.value = state.draftGroup ?? ''; select.disabled = state.busy;
+}
 function options(id, field) {
   const select = $(id), value = filters[field];
-  const labels = new Map(inventory.state.records.map(row => [row[field].toLowerCase(), row[field]]));
+  const labels = new Map(inventory.visible().map(row => [row[field].toLowerCase(), row[field]]));
   const all = node('option', t('cards_all')); all.value = '';
   select.replaceChildren(all, ...[...labels.values()].sort().map(label => {const option = node('option', label); option.value = label; return option;}));
   if (value && ![...select.options].some(option => option.value === value)) {const option = node('option', value); option.value = value; select.append(option);}
@@ -189,7 +217,7 @@ function visibleCards(records) {
 // Game logos shown after the game name in filter chips (keys match gameKey()).
 const GAME_LOGOS = {ws: './game-ws-sticker.png', 'ws en': './game-ws-sticker.png', wsr: './game-wsr.webp', pm: './game-pm.webp', sev: './game-sev.png', 'sev en': './game-sev.png', lycee: './game-lycee.webp', chaostcg: './game-chaos.webp'};
 function gameChips() {
-  const games = new Map(inventory.state.records.map(row => [row.game.toLowerCase(), row.game]));
+  const games = new Map(inventory.visible().map(row => [row.game.toLowerCase(), row.game]));
   $('cards-game-chips').replaceChildren(...[...games].sort((a, b) => collator.compare(a[1], b[1])).map(([key, label]) => {
     const chip = node('label', '', 'chip'), input = document.createElement('input');
     input.type = 'checkbox'; input.checked = !filters.hiddenGames.has(key);
@@ -202,10 +230,72 @@ function gameChips() {
   $('cards-game-chips').hidden = games.size < 2;
 }
 function cardActions(row) {
-  const actions = node('div', '', 'row-actions'), locked = inventory.state.busy || inventory.state.loading;
-  actions.append(iconButton('bi-pencil', t('cards_edit'), () => openEditor(row.id), locked),
-    iconButton('bi-trash3', t('cards_delete'), () => confirmDelete(row), locked));
+  const actions = node('div', '', 'row-actions'), disabled = locked();
+  if (inventory.state.groups.length) actions.append(iconButton('bi-folder-symlink', t('favorite_move'), () => openMove(row), disabled || inventory.state.groupBusy));
+  actions.append(iconButton('bi-pencil', t('cards_edit'), () => openEditor(row.id), disabled),
+    iconButton('bi-trash3', t('cards_delete'), () => confirmDelete(row), disabled));
   return actions;
+}
+function openMove(row) {
+  groups.openMove(row.name, row.group_id ?? '', groupId => inventory.move(row.id, groupId),
+    () => inventory.state.busy, () => inventory.state.records.some(card => card.id === row.id));
+}
+// Ungrouped cards get no tag.
+function groupTag(row) {
+  const name = groupName(row.group_id);
+  if (!name) return null;
+  const tag = node('span', name, 'group-tag'); tag.title = name;
+  return tag;
+}
+// Checkbox for multi-select; only shown while selecting.
+function selectBox(row) {
+  const box = node('input', '', 'select-box'); box.type = 'checkbox';
+  box.checked = selection.ids.has(row.id); box.disabled = selection.running;
+  box.setAttribute('aria-label', t('favorite_select_card', {name: row.name}));
+  box.addEventListener('click', event => event.stopPropagation());
+  box.addEventListener('change', () => {
+    if (selection.running) return;
+    if (!selection.ids.delete(row.id)) selection.ids.add(row.id);
+    render();
+  });
+  return box;
+}
+function setSelecting(active) {
+  if (selection.running) return;
+  selection = {...blankSelection(), active}; render();
+}
+async function bulkMove(groupId) {
+  const ids = [...selection.ids], current = selectionGeneration;
+  if (selection.running || !ids.length) return;
+  Object.assign(selection, {running: true, done: 0, total: ids.length, failed: 0}); render();
+  for (const id of ids) {
+    const error = await inventory.move(id, groupId);
+    if (current !== selectionGeneration) return;
+    if (error) selection.failed++; else selection.ids.delete(id);
+    selection.done++; render();
+  }
+  selection.running = false; render();
+}
+function renderSelection(rows) {
+  const state = inventory.state;
+  // Selecting only serves moves, so it needs at least one group.
+  if (!state.groups.length && selection.active && !selection.running) selection = blankSelection();
+  // Keep only cards still shown, so a bulk move never touches a card hidden by the group or filters.
+  const shown = new Set(rows.map(row => row.id));
+  for (const id of selection.ids) if (!shown.has(id)) selection.ids.delete(id);
+  const count = selection.ids.size;
+  $('cards-panel').classList.toggle('selecting', selection.active);
+  $('cards-selection-bar').hidden = !selection.active;
+  $('cards-select').hidden = !state.groups.length;
+  $('cards-select').setAttribute('aria-pressed', String(selection.active));
+  $('cards-select').querySelector('span').textContent = t(selection.active ? 'favorite_select_done' : 'favorite_select');
+  $('cards-select').disabled = selection.running || !state.ready;
+  $('cards-select-all').checked = count > 0 && count === rows.length;
+  $('cards-select-all').indeterminate = count > 0 && count < rows.length;
+  $('cards-select-all').disabled = selection.running || !rows.length;
+  $('cards-selection-count').textContent = selection.running ? t('favorite_bulk_progress', {done: number(selection.done), total: number(selection.total)})
+    : t('favorite_selected_count', {count: number(count)}) + (selection.failed ? ' · ' + t('cards_bulk_failed', {count: number(selection.failed)}) : '');
+  $('cards-bulk-move').disabled = selection.running || !count || state.busy || state.loading;
 }
 // Clicking a quantity opens a small popup that changes only the quantity.
 function quantityButton(row, label, iconName = '') {
@@ -213,7 +303,7 @@ function quantityButton(row, label, iconName = '') {
   if (iconName) button.append(icon(iconName));
   button.append(label);
   button.title = t('cards_quantity_edit'); button.setAttribute('aria-label', `${t('cards_quantity_edit')}: ${row.name} (${row.quantity})`);
-  button.disabled = inventory.state.busy || inventory.state.loading;
+  button.disabled = locked();
   button.addEventListener('click', () => openQuantity(row));
   return button;
 }
@@ -247,10 +337,12 @@ async function saveQuantity() {
 function cardRow(row) {
   const tr = document.createElement('tr');
   const cell = (child, className = '') => {const td = node('td', '', className); td.append(child); tr.append(td);};
+  cell(selectBox(row), 'select-col'); tr.classList.toggle('selected', selection.ids.has(row.id));
   const product = node('div', '', 'product-summary');
   product.append(cardImage(row, {noReferrer: true}), node('span', row.name, 'cards-name'));
   cell(node('span', row.game, 'game-tag')); cell(rarityBadge(row)); cell(numberButton(row.card_number)); cell(product);
   cell(quantityButton(row, number(row.quantity)), `numeric${row.quantity ? '' : ' muted'}`); cell(row.notes, 'cards-notes');
+  cell(groupTag(row) ?? node('span', '—', 'muted'), 'group-col');
   cell(cardActions(row), 'action-col');
   return tr;
 }
@@ -260,8 +352,13 @@ function cardTile(row) {
   const top = node('div', '', 'card-top'); top.append(tags, numberButton(row.card_number));
   const quantity = quantityButton(row, t('cards_owned', {quantity: number(row.quantity)}), 'bi-collection');
   const bottom = node('div', '', 'card-bottom'); bottom.append(quantity, cardActions(row));
-  card.append(top, cardImage(row, {noReferrer: true}), node('span', row.name, 'card-name'), bottom);
+  const image = cardImage(row, {noReferrer: true});
+  if (selection.active) { image.append(selectBox(row)); card.classList.toggle('selected', selection.ids.has(row.id)); }
+  card.append(top, image, node('span', row.name, 'card-name'), bottom);
   if (row.notes) card.append(node('p', row.notes, 'cards-notes'));
+  // Its group sits in the bottom-right corner, as on the favorites page.
+  const tag = groupTag(row);
+  if (tag) { const foot = node('div', '', 'cards-group-foot'); foot.append(tag); card.append(foot); }
   return card;
 }
 function chips(groups) {
@@ -317,6 +414,7 @@ function render() {
     input.disabled = state.busy;
   }
   $('card-dialog-title').textContent = t(state.editing ? 'cards_edit_title' : 'cards_add');
+  groupPicker();
   rarityOptions();
   officialButton();
   $('cards-save').disabled = !state.ready || state.busy || state.loading;
@@ -330,23 +428,29 @@ function render() {
   $('cards-add').disabled = !state.ready;
   options('cards-rarity-filter', 'rarity'); gameChips();
   $('cards-sort').value = filters.sort;
-  const rows = visibleCards(state.records), stats = summarizeCards(rows), cardsView = currentView();
+  groups.render();
+  const groupRows = inventory.visible(), group = groups.selected();
+  const rows = visibleCards(groupRows), stats = summarizeCards(rows), cardsView = currentView();
+  renderSelection(rows);
+  $('cards-title').textContent = group ? group.name : t('cards_list');
+  // Without any groups the group column would only hold dashes.
+  $('cards-table').classList.toggle('without-groups', !state.groups.length);
   // Whole library, not the current filter: total copies owned.
   setNavCount($('cards-nav-count'), state.ready ? summarizeCards(state.records).quantity : 0);
-  $('cards-stats').hidden = !state.ready || !state.records.length;
+  $('cards-stats').hidden = !state.ready || !groupRows.length;
   $('cards-kinds').textContent = number(stats.kinds);
   $('cards-quantity-total').textContent = number(stats.quantity);
   $('cards-by-game').replaceChildren(...chips(stats.games));
   $('cards-by-rarity').replaceChildren(...chips(stats.rarities));
   $('cards-count').hidden = !state.ready;
-  $('cards-count').textContent = t('counts', {matching: number(rows.length), loaded: number(state.records.length)});
-  $('cards-filters').hidden = !state.ready || !state.records.length;
+  $('cards-count').textContent = t('counts', {matching: number(rows.length), loaded: number(groupRows.length)});
+  $('cards-filters').hidden = !state.ready || !groupRows.length;
   $('cards-rows').replaceChildren(...(cardsView === 'list' ? rows.map(cardRow) : []));
   $('cards-table').hidden = !rows.length || cardsView !== 'list';
   $('cards-grid').hidden = !rows.length || cardsView !== 'grid';
   $('cards-grid').replaceChildren(...(cardsView === 'grid' ? rows.map(cardTile) : []));
   $('cards-empty').hidden = !state.ready || rows.length > 0;
-  $('cards-empty').querySelector('h3').textContent = t(state.records.length ? 'no_matching_results' : 'cards_empty_all');
+  $('cards-empty').querySelector('h3').textContent = t(groupRows.length ? 'no_matching_results' : state.records.length ? 'cards_group_empty' : 'cards_empty_all');
 }
 function confirmDelete(row) {
   pendingDelete = row.id;
@@ -359,6 +463,23 @@ for (const field of fields) $('card-' + field).addEventListener('input', event =
   if (field === 'game' || field === 'card_number') {scheduleOfficial(); officialButton();}
 });
 $('card-rarity-custom').addEventListener('input', event => { inventory.state.draft.rarity = event.target.value; });
+$('card-group').addEventListener('change', event => { inventory.state.draftGroup = event.target.value || null; });
+$('cards-export-group').addEventListener('change', event => {
+  exportGroup = event.target.value || null; exportError = '';
+  const known = new Set(exportGames().map(([key]) => key));
+  exportHiddenGames = new Set([...exportHiddenGames].filter(key => known.has(key)));
+  exportChips(); renderExport();
+});
+$('cards-select').addEventListener('click', () => setSelecting(!selection.active));
+$('cards-select-all').addEventListener('change', event => {
+  if (selection.running) return;
+  for (const row of visibleCards(inventory.visible())) event.target.checked ? selection.ids.add(row.id) : selection.ids.delete(row.id);
+  render();
+});
+$('cards-bulk-move').addEventListener('click', () => {
+  const count = selection.ids.size;
+  if (count) groups.openBulkMove(count, bulkMove);
+});
 $('cards-form').addEventListener('submit', async event => {
   event.preventDefault();
   await inventory.save();
@@ -448,6 +569,7 @@ export function clearCards() {
   $('cards-import-dialog').close(); importResult = null;
   clearOfficial();
   filters = blankFilters(); $('cards-query').value = '';
+  selectionGeneration++; selection = blankSelection(); groups.close(); exportGroup = null;
   $('card-dialog').close(); $('cards-delete-dialog').close(); $('quantity-dialog').close(); inventory.clear();
 }
 export function activateCards(api) {officialAPI = api; clearCards(); inventory.activate(api);}

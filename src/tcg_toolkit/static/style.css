@@ -510,9 +510,10 @@ button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-
   font-size: 11px; font-weight: 500; color: var(--color-text-secondary); background: var(--color-surface-sunken); border-radius: var(--radius-pill);
 }
 .card-foot .group-tag { margin-right: 6px; }
+.cards-group-foot { display: flex; justify-content: flex-end; margin-top: -4px; }
 td.group-col { white-space: nowrap; }
 /* Multi-select: checkboxes and the action bar only show while selecting. */
-#favorites-panel:not(.selecting) .select-col { display: none; }
+#favorites-panel:not(.selecting) .select-col, #cards-panel:not(.selecting) .select-col { display: none; }
 th.select-col, td.select-col { width: 1%; padding-right: 0; }
 input.select-box { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--color-primary); }
 .card-image input.select-box { position: absolute; top: 12px; left: 12px; z-index: 3; width: 20px; height: 20px; }
@@ -527,7 +528,7 @@ tr.selected td { background: var(--color-hover); }
 .select-all input { width: 16px; height: 16px; margin: 0; accent-color: var(--color-primary); }
 .selection-count { font-size: 12px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 .selection-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-#favorites-select[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
+#favorites-select[aria-pressed=true], #cards-select[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 .favorite-add-menu {
   position: fixed; z-index: 50; min-width: 160px; max-width: 240px; max-height: 280px; overflow-y: auto; padding: 6px;
   background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
@@ -539,7 +540,7 @@ button.favorite-add-option {
   border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 13px; font-weight: 500;
 }
 button.favorite-add-option:hover, button.favorite-add-option:focus-visible { background: var(--color-hover); outline: none; }
-#favorites-list.without-groups .group-col { display: none; }
+#favorites-list.without-groups .group-col, #cards-table.without-groups .group-col { display: none; }
 #favorites-details[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 /* Always level with the update time; a status note, if any, goes on the line below. */
 .fav-time { display: inline-flex; align-items: center; gap: 5px; }
@@ -565,7 +566,7 @@ button.group-tab[aria-pressed=true]:disabled:hover { background: var(--color-pri
 button.group-tab[aria-pressed=true] .group-tab-count { background: color-mix(in srgb, var(--color-on-primary) 20%, transparent); color: var(--color-on-primary); }
 .group-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .group-actions .icon-button { width: 34px; height: 34px; }
-#favorite-group-name { margin-top: 6px; }
+.group-name-input { margin-top: 6px; }
 @media (max-width: 700px) {
   .group-bar { flex-direction: column; align-items: stretch; }
   .group-actions { justify-content: flex-end; }
@@ -696,7 +697,7 @@ button.row-action:hover { background: var(--color-hover); color: var(--color-tex
 .confirm-dialog { width: min(420px, 92vw); }
 .confirm-dialog p { margin: 0; line-height: 1.6; color: var(--color-text-secondary); }
 .confirm-dialog p.dialog-error { margin-top: 16px; color: var(--color-text); }
-.confirm-dialog p.favorite-move-name { margin-bottom: 16px; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
+.confirm-dialog p.move-name { margin-bottom: 16px; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
 @media (max-width: 700px) {
   .cards-summary { grid-template-columns: 1fr; }
   .stat-groups, .cards-form-grid, .cards-filter-grid { grid-template-columns: 1fr; }
@@ -791,6 +792,7 @@ td.muted button.cards-qty, .card.out_of_stock button.cards-qty { color: var(--co
 .export-group .chips { margin-top: 8px; }
 .export-group .chip { position: relative; }
 .export-group[disabled] .chips { opacity: .5; }
+.export-group .export-select { width: 100%; margin-top: 8px; }
 .export-group[disabled] .chip { cursor: not-allowed; }
 .chip:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .export-summary { margin: 4px 0 0; font-size: 13px; color: var(--color-text-secondary); }
