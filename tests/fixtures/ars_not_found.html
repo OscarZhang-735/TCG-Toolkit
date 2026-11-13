@@ -1,0 +1,32 @@
+<main class="user-main search-main" id="main" role="main">
+<div class="section">
+<div class="container">
+<h2 class="ttl search-title">ARS 鑑定データベース検索</h2>
+<div class="error"></div>
+<div class="search-section">
+<div class="search-mode">
+<input checked="checked" id="mode1" name="mode" type="radio" value="1"/>
+<label for="mode1">鑑定番号から検索</label>
+<input id="mode2" name="mode" type="radio" value="2"/>
+<label for="mode2">カード名から検索</label>
+</div>
+<div class="search-box">
+<input id="word" name="word" placeholder="鑑定番号またはカード名を入力" type="text" value="000000000000"/>
+<button onclick="search()"><i class="fas fa-search"></i>検索</button>
+</div>
+</div>
+<span class="error-mes">
+						
+							入力された鑑定番号のデータは存在しません。
+						
+					</span>
+</div>
+</div>
+<form action="/grading/searchNumber" method="get" name="searchNumber2">
+<input id="hid" name="id" type="hidden"/>
+</form>
+<form action="/grading/searchName" method="get" name="searchName2">
+<input id="hname" name="name" type="hidden"/>
+<input name="page" type="hidden" value="1"/>
+</form>
+</main>

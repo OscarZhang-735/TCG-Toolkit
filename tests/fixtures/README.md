@@ -1,5 +1,11 @@
 # 页面片段
 
+2026-11-12 从 ARS 官方 `https://ars-grading.com/grading/searchNumber?id=...` 获取，仅保留 `main` 内容：
+
+- `ars_certificate.html`：编号 `047088950114`，包含日英卡片信息、高亮等级和统计；无卡片图片。
+- `ars_not_found.html`：编号 `000000000000`，HTTP 200 中明确的无记录提示。
+- 统计为采集时快照，测试不访问外网。
+
 2026-10-27 从 `https://yuyu-tei.jp/sell/{game}/s/search` 获取：
 
 - `wsr_1.html`：`search_word=OS01`。
