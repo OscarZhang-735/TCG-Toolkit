@@ -47,6 +47,8 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_PSA_API_TOKEN` | PSA 官方 API 的服务端 Token | 空 |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
 | `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
+| `PROXY_GO_API` | 独立 `proxy-go` 客户端的网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
+| `PROXY_GO_API_KEY` | `proxy-go` 服务端 API 密钥，仅填写密钥本身 | 空 |
 | `PGHOST` / `PGPORT` | PostgreSQL 地址；Compose 内使用服务名 | `db` / `5432`（Compose） |
 | `PGDATABASE` / `PGUSER` / `PGPASSWORD` | 应用数据库、非超级用户角色及密码 | Compose 默认库和角色为 `tcg`；密码必填 |
 | `TCG_PG_ADMIN_PASSWORD` | PostgreSQL 初始化管理员密码，仅传给 db | 必填 |
@@ -59,6 +61,36 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TZ` | 根目录 Compose 必填，设为宿主机 IANA 时区，例如 `America/Toronto`；Linux 生产部署使用挂载的宿主机 `/etc/localtime` | `.env.example` 示例为 `America/Toronto` |
 
 `.env` 已被 Git 忽略，请勿提交密钥。公网部署请参阅 [部署手册](../deploy/README.md)。
+
+### proxy-go 代理客户端
+
+`ProxyGoClient` 用于需要处理风控或验证的 GET/HEAD 请求，由业务代码显式调用。现有游游亭加密代理、直连开关和 PSA 官方 API 路由保持原有行为。
+
+在 `.env` 中设置 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。配置优先级为构造参数、进程环境、当前工作目录的 `.env`；显式空值会报告配置错误，不会继续读取较低优先级的值。主机直接运行 Python 时可使用 `http://127.0.0.1:18087/v1/fetch`。Docker Desktop 中的 Web 连接宿主机时改用 `http://host.docker.internal:18087/v1/fetch`，并确保 Proxy-Go 监听容器可达的地址。迁移到服务器后更新地址和密钥即可；三份 Compose 均只向 Web 服务传入这两个变量，修改后重新创建 Web 容器。
+
+```python
+from tcg_toolkit.external import ProxyGoClient, ProxyGoGatewayError
+
+with ProxyGoClient() as client:
+    try:
+        response = client.get(
+            "https://www.psacard.com/en-CA/cert/98428602/psa",
+            country="US",
+        )
+    except ProxyGoGatewayError as exc:
+        print(exc.status_code, exc.detail, exc.request_id)
+        print(exc.proxy_total_bytes, exc.proxy_attempts)
+        raise
+
+    metadata = response.extensions["proxy_go"]
+    print(metadata["request_id"], metadata["proxy_traffic"])
+    response.raise_for_status()  # 检查目标站状态，而非网关状态。
+    html = response.content      # 已解码的正文 bytes。
+```
+
+也可使用 `client.head(url, country="US")` 或 `client.fetch(url, country="US", method="GET")`。仅支持 GET/HEAD，不接受目标站自定义请求头、Cookie 或请求体。默认国家为 `US`，默认超时 220 秒、连接超时 5 秒，忽略系统代理环境变量。客户端不自动重试；验证处理和代理重试由 Proxy-Go 执行。
+
+网关非 200 状态抛出 `ProxyGoGatewayError`，保留 `status_code`、`detail`、`request_id`、`proxy_total_bytes` 和 `proxy_attempts`；早期认证或参数错误可能没有后三项。网络错误沿用 HTTPX 异常。网关返回 200 时，客户端将 JSON 中的目标 `status_code`、响应头和 Base64 正文还原为 `httpx.Response`，请求 ID 与完整流量统计位于 `response.extensions["proxy_go"]`。目标 4xx/5xx 仍返回响应，由调用方检查；目标重定向不会自动跟随，可读取 `Location` 后自行决定是否继续请求。
 
 ### 测试
 
