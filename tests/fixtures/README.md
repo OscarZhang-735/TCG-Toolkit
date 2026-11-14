@@ -6,6 +6,14 @@
 - `psa_not_found.html`：编号 `000000000000`，保留实际 HTTP 200 错误页的 `html#__next_error__` 和 Next.js 明确的 404 标记。
 - 图片仅保存 URL；评级数量为采集时快照，普通解析测试不访问外网。
 
+2026-11-14 通过 proxy-go 从 CGC 官方 `https://www.cgccards.com/certlookup/6091052028/` 获取：
+
+- `cgc_certificate.html`：保留 intro（包括隐藏的无记录、限流模板）、证书图片和 Population 模板。证书编号 `6091052028`，卡名 Tsuyogaru Otona no Secret Labo Mayu，Weiss Schwarz Rose、2025、Japanese、Yuzu Soft、R01-026SP、Special，等级 PRISTINE 10，Grade Date 为 2025-11-19。
+- 证书图片为 Obverse、Reverse，原图地址来自图片链接的 `href`，描述来自图片的 `title`；仅保存地址，不下载图片。
+- Population 在该 HTML 中只有 JavaScript 异步模板，未提供实际数量；解析结果保留为 `null`。隐藏的无记录、限流模板也存在于正常证书页，不能仅因模板存在而判定查询失败。
+- 该样本供 `tests/test_cgc.py` 离线解析测试使用。
+- `cgc_lookup_pending.html`：同日请求编号 `0000000000` 返回的 HTTP 200 入口页片段，只有预填编号与待执行的查询表单，没有证书字段或明确错误状态；用于验证不会将隐藏模板误判为证书不存在。
+
 2026-11-12 从 ARS 官方 `https://ars-grading.com/grading/searchNumber?id=...` 获取，仅保留 `main` 内容：
 
 - `ars_certificate.html`：编号 `047088950114`，包含日英卡片信息、高亮等级和统计；无卡片图片。

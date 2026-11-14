@@ -46,7 +46,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
 | `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
-| `PROXY_GO_API` | PSA 网页查询使用的 `proxy-go` 网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
+| `PROXY_GO_API` | PSA 与 CGC 网页查询使用的 `proxy-go` 网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
 | `PROXY_GO_API_KEY` | `proxy-go` 服务端 API 密钥，仅填写密钥本身 | 空 |
 | `PGHOST` / `PGPORT` | PostgreSQL 地址；Compose 内使用服务名 | `db` / `5432`（Compose） |
 | `PGDATABASE` / `PGUSER` / `PGPASSWORD` | 应用数据库、非超级用户角色及密码 | Compose 默认库和角色为 `tcg`；密码必填 |
@@ -63,7 +63,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 
 ### proxy-go 代理客户端
 
-`ProxyGoClient` 用于需要处理风控或验证的 GET/HEAD 请求，由业务代码显式调用。PSA 证书查询通过此客户端抓取网页；游游亭加密代理、直连开关和 ARS 查询保持原有行为。
+`ProxyGoClient` 用于需要处理风控或验证的 GET/HEAD 请求，由业务代码显式调用。PSA 与 CGC 证书查询通过此客户端抓取网页；游游亭加密代理、直连开关和 ARS 查询保持原有行为。
 
 在 `.env` 中设置 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。配置优先级为构造参数、进程环境、当前工作目录的 `.env`；显式空值会报告配置错误，不会继续读取较低优先级的值。主机直接运行 Python 时可使用 `http://127.0.0.1:18087/v1/fetch`。Docker Desktop 中的 Web 连接宿主机时改用 `http://host.docker.internal:18087/v1/fetch`，并确保 Proxy-Go 监听容器可达的地址。迁移到服务器后更新地址和密钥即可；三份 Compose 均只向 Web 服务传入这两个变量，修改后重新创建 Web 容器。
 
@@ -179,7 +179,7 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 
 ## 评级卡证书查询
 
-`GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa` 和 `ars`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
+`GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa`、`cgc` 和 `ars`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
 
 配置服务端 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。PSA 查询使用 `ProxyGoClient`，以 `country="US"` 抓取 `https://www.psacard.com/en-CA/cert/{cert_number}/psa`。Proxy-Go 负责目标网站验证和代理重试；TCG 客户端默认超时 220 秒、连接超时 5 秒，不自动重试、不跟随重定向。修改 Compose 中的配置后重新创建 Web 容器。
 
@@ -214,7 +214,7 @@ Invoke-RestMethod -Uri 'http://localhost:8000/api/grading/psa/certificates/98428
 
 网关 HTTP 200 后仍检查目标站状态及页面内容。服务器日志记录请求 ID、目标状态、代理字节和尝试次数；客户端错误响应不包含凭据或上游错误正文。
 
-`tests/test_grading.py` 使用模拟响应验证网页解析和错误映射。`tests/test_grading_live.py` 从 TCG PSA 接口调用开始，经过真实 Proxy-Go 和 PSA 网页完成端到端验证；默认跳过，运行时使用上文的专用测试 PostgreSQL 配置及可用的 Proxy-Go 配置：
+`tests/test_grading.py` 使用模拟响应验证 PSA 网页解析和错误映射。`tests/test_grading_live.py` 按 PSA、CGC 参数化，从对应 TCG 接口调用开始，经过真实 Proxy-Go 和目标网页完成端到端验证；每个机构默认跳过，独立开关启用。运行时使用上文的专用测试 PostgreSQL 配置及可用的 Proxy-Go 配置，PSA 示例：
 
 ```powershell
 $env:TCG_LIVE_PSA_TEST="1"
@@ -222,6 +222,29 @@ python -m pytest -q -s tests/test_grading_live.py
 ```
 
 可通过 `TCG_LIVE_PSA_OUTPUT` 指定保存返回 JSON 的文件路径。验收编号 `98428602` 对应 CHITOSE TUTAMACHI、卡号 3955、2024 年、GEM MT 10，以及两张证书图片。
+
+### CGC 网页查询
+
+`GET /api/grading/cgc/certificates/{cert_number}` 沿用上述登录、编号校验和 `no-store` 规则。使用同一 Proxy-Go 配置，以 `country="US"` 抓取 `https://www.cgccards.com/certlookup/{cert_number}/`。默认超时 220 秒、连接超时 5 秒，客户端不自动重试、不跟随重定向。
+
+返回 `provider: "cgc"`、`cert_number`、`source_url`、`certificate`、`images`；`source_url` 为抓取地址。`certificate.title` 取 `Card Name`，`grade` 取 `Grade`，`fields` 保留证书信息的原始标签和值。当前页面的 Population 区域只有 JavaScript 异步模板，没有实际数量，因此 `population` 返回 `{"at_grade": null, "higher": null}`，不把缺失值当作零。
+
+`images` 仅从证书图片区读取：`url` 为图片链接 `a.href` 指向的原图，`alt` 为图片的 `title`。返回 Obverse、Reverse 图片地址，不下载图片，也不包含 Add to Registry 示例图或 Logo。
+
+配置、网络、网关和解析错误沿用 PSA 的 HTTP 状态映射，错误代码分别为 `cgc_not_configured`、`cgc_timeout`、`cgc_authentication_failed`、`cgc_rate_limited`、`cgc_unreadable`、`cgc_unavailable`。服务器日志保留请求 ID、目标状态、代理字节和尝试次数，客户端错误响应不公开凭据。
+
+成功页面也包含未激活的“无记录”和限流模板，解析器不会据此报错。若返回的只是预填编号、等待 JavaScript 查询的入口页，返回 `502 cgc_unreadable`，不将其推断为证书不存在。
+
+`tests/test_cgc.py` 使用真实页面片段进行离线测试，来源见 [fixtures 说明](../tests/fixtures/README.md)。测试证书 `6091052028` 对应 Tsuyogaru Otona no Secret Labo Mayu、Weiss Schwarz Rose、2025 年、Japanese、Yuzu Soft、卡号 R01-026SP、Special、PRISTINE 10，Grade Date 为 2025-11-19，含 Obverse 和 Reverse 两张图片。
+
+真实端到端测试使用独立开关和输出路径：
+
+```powershell
+$env:TCG_LIVE_CGC_TEST="1"
+python -m pytest -q -s tests/test_grading_live.py
+```
+
+可通过 `TCG_LIVE_CGC_OUTPUT` 指定保存返回 JSON 的文件路径。两个机构开关均为 `1` 时，该命令同时验证 PSA 与 CGC。
 
 ### ARS 网页查询
 

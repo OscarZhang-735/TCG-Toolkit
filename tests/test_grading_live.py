@@ -1,4 +1,4 @@
-"""Opt-in HTTP end-to-end PSA lookup through the configured real proxy-go."""
+"""Opt-in HTTP certificate lookups through the configured real proxy-go."""
 import json
 import logging
 import os
@@ -16,16 +16,18 @@ from auth_helpers import install_mailbox, register_user
 from tcg_toolkit.web import app
 
 
-pytestmark = pytest.mark.skipif(
-    os.getenv('TCG_LIVE_PSA_TEST') != '1',
-    reason='Set TCG_LIVE_PSA_TEST=1 to use the live proxy-go and PSA services.',
-)
-
-NUMBER = '98428602'
-CERTIFICATE_PATH = f'/api/grading/psa/certificates/{NUMBER}'
-
-
-def test_psa_lookup_over_http(monkeypatch, caplog):
+@pytest.mark.parametrize('provider,number,source_url', [
+    pytest.param('psa', '98428602', 'https://www.psacard.com/en-CA/cert/98428602/psa',
+                 marks=pytest.mark.skipif(os.getenv('TCG_LIVE_PSA_TEST') != '1',
+                                         reason='Set TCG_LIVE_PSA_TEST=1 for live PSA lookup.'),
+                 id='psa'),
+    pytest.param('cgc', '6091052028', 'https://www.cgccards.com/certlookup/6091052028/',
+                 marks=pytest.mark.skipif(os.getenv('TCG_LIVE_CGC_TEST') != '1',
+                                         reason='Set TCG_LIVE_CGC_TEST=1 for live CGC lookup.'),
+                 id='cgc'),
+])
+def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, source_url):
+    certificate_path = f'/api/grading/{provider}/certificates/{number}'
     monkeypatch.setenv('TCG_SUBSCRIPTIONS_ENABLED', 'false')
     monkeypatch.setenv('TCG_AVATAR_COS_URL', '')
     caplog.set_level(logging.INFO, logger='tcg_toolkit.grading')
@@ -47,30 +49,45 @@ def test_psa_lookup_over_http(monkeypatch, caplog):
             assert server.started, 'TCG Toolkit HTTP server failed to start'
 
             # Prepare a valid test session; only email delivery is replaced.
-            # The measured flow starts at the PSA certificate HTTP endpoint.
+            # The measured flow starts at the certificate HTTP endpoint.
             install_mailbox()
             with httpx.Client(base_url=origin, headers={'Origin': origin}, trust_env=False,
                               timeout=httpx.Timeout(240, connect=5)) as browser:
-                registered = register_user(browser, username='psa_live', password='password123')
+                registered = register_user(browser, username=f'{provider}_live', password='password123')
                 assert registered.status_code == 201
                 browser.headers['Authorization'] = 'Bearer ' + registered.json()['token']
 
                 started = time.monotonic()
-                response = browser.get(CERTIFICATE_PATH)
+                response = browser.get(certificate_path)
                 elapsed = time.monotonic() - started
                 assert response.status_code == 200, response.text
                 assert response.headers['cache-control'] == 'no-store'
                 result = response.json()
-                assert result['provider'] == 'psa'
-                assert result['cert_number'] == NUMBER
+                assert result['provider'] == provider
+                assert result['cert_number'] == number
+                assert result['source_url'] == source_url
                 certificate = result['certificate']
-                assert certificate['fields']['Cert Number'] == NUMBER
-                assert certificate['fields']['Subject'] == 'CHITOSE TUTAMACHI'
-                assert certificate['fields']['Card Number'] == '3955'
-                assert certificate['fields']['Year'] == '2024'
-                assert certificate['grade'] == 'GEM MT 10'
-                assert certificate['title']
-                assert len(result['images']) == 2
+                assert certificate['fields']
+                assert certificate['grade']
+                assert result['images']
+                if provider == 'psa':
+                    assert certificate['fields']['Cert Number'] == number
+                    assert certificate['fields']['Subject'] == 'CHITOSE TUTAMACHI'
+                    assert certificate['fields']['Card Number'] == '3955'
+                    assert certificate['fields']['Year'] == '2024'
+                    assert certificate['grade'] == 'GEM MT 10'
+                    assert certificate['title']
+                    assert len(result['images']) == 2
+                else:
+                    assert certificate['fields']['Cert #'] == number
+                    assert certificate['fields']['Card Name'] == 'Tsuyogaru Otona no Secret Labo Mayu'
+                    assert certificate['fields']['Game'] == 'Weiss Schwarz Rose'
+                    assert certificate['fields']['Card Number'] == 'R01-026SP'
+                    assert certificate['fields']['Year'] == '2025'
+                    assert certificate['grade'] == 'PRISTINE 10'
+                    assert certificate['title'] == certificate['fields']['Card Name']
+                    assert [image['alt'] for image in result['images']] == ['Obverse', 'Reverse']
+                    assert all('TN_' not in image['url'] for image in result['images'])
                 for image in result['images']:
                     image_url = httpx.URL(image['url'])
                     assert image_url.scheme == 'https' and image_url.host
@@ -78,19 +95,20 @@ def test_psa_lookup_over_http(monkeypatch, caplog):
 
                 proxy_messages = [record.getMessage() for record in caplog.records
                                   if record.name == 'tcg_toolkit.grading'
-                                  and record.getMessage().startswith('PSA proxy-go request_id=')]
+                                  and record.getMessage().startswith(
+                                      f'{provider.upper()} proxy-go request_id=')]
                 assert len(proxy_messages) == 1
                 request_id = re.search(r'request_id=(\S+)', proxy_messages[0])
                 assert request_id and request_id.group(1) != 'None'
                 assert 'target_status=200' in proxy_messages[0]
 
-            output = os.getenv('TCG_LIVE_PSA_OUTPUT')
+            output = os.getenv(f'TCG_LIVE_{provider.upper()}_OUTPUT')
             if output:
                 destination = Path(output)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
             print(json.dumps({
-                'flow': f'GET {CERTIFICATE_PATH} -> proxy-go -> PSA -> parsed certificate',
+                'flow': f'GET {certificate_path} -> proxy-go -> {provider.upper()} -> parsed certificate',
                 'status': response.status_code,
                 'provider': result['provider'],
                 'cert_number': result['cert_number'],

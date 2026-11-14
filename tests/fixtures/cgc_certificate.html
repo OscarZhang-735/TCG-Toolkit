@@ -1,0 +1,120 @@
+<div class="certlookup-intro">
+<div class="content-wrapper">
+<div class="certlookup-search-box">
+<div class="certlookup-search-toggle">
+<h3><i class="icon-search"></i>New Search</h3>
+</div>
+<div class="certlookup-search-content">
+<div cert-lookup-search="" class="ccg-form">
+<form class="certlookup-form" name="form" ng-submit="$ctrl.lookupNoGrade($ctrl.certNumber)">
+<div class="certlookup-fields">
+<div class="certlookup-field">
+<label>Cert #</label>
+<input autocomplete="off" ccg-filter-input="\d+" ccg-ignore-model-override="" class="certlookup-number-field" maxlength="13" name="CertNum" ng-model="$ctrl.certNumber" pattern="\d{10,13}" placeholder="1234567999" required="" type="tel"/>
+<span class="error required" for-required="This is required." mx-validation-message="form.CertNum"></span>
+</div>
+<div class="certlookup-field">
+<label> </label>
+<button mx-submit-status="" name="lookup" type="submit">Go</button>
+</div>
+</div>
+<div class="error" ng-show="!$ctrl.isHomepage &amp;&amp; $ctrl.errorMessage">
+<span ng-if="$ctrl.errorMessage === $ctrl.lookupStatus.erpDown || $ctrl.errorMessage === $ctrl.lookupStatus.serverError">This feature is currently unavailable. Please try again later.</span>
+<span ng-if="$ctrl.errorMessage === $ctrl.lookupStatus.rateLimited">Your search activity has exceeded our limits. These limits help to protect the security of our database. Please try again later.</span>
+<span ng-if="$ctrl.errorMessage === $ctrl.lookupStatus.notFound">This item cannot be found. Please check that the CGC certification number was entered correctly. <span ccg-tooltip="Note: items are only searchable after they have been shipped. Please try again or contact &lt;a href='../../contact/'&gt;CGC Customer Service." persist-tooltip="" require-click=""><u><a>More help &gt;</a></u></span></span>
+</div>
+</form>
+</div>
+</div>
+</div>
+<dl>
+<dt>Cert #</dt>
+<dd>
+					6091052028
+				</dd>
+</dl>
+<dl>
+<dt>Card Name</dt>
+<dd>Tsuyogaru Otona no Secret Labo Mayu</dd>
+</dl>
+<div class="related-info">
+<dl>
+<dt>Game</dt>
+<dd>Weiss Schwarz Rose</dd>
+</dl>
+<dl>
+<dt>Year</dt>
+<dd>2025</dd>
+</dl>
+<dl>
+<dt>Language</dt>
+<dd>Japanese</dd>
+</dl>
+</div>
+<div class="related-info">
+<dl>
+<dt>Card Set</dt>
+<dd>Yuzu Soft</dd>
+</dl>
+<dl>
+<dt>Card Number</dt>
+<dd>R01-026SP</dd>
+</dl>
+<dl>
+<dt>Rarity</dt>
+<dd>Special</dd>
+</dl>
+</div>
+<div class="related-info">
+</div>
+<div class="related-info grades no-sub-grades">
+<dl>
+<dt>Grade</dt>
+<dd class="cert-grade-10">
+PRISTINE 10		</dd>
+</dl>
+</div>
+<div class="related-info">
+<dl>
+<dt>Grade Date</dt>
+<dd>2025-11-19</dd>
+</dl>
+</div>
+</div>
+</div>
+<div class="certlookup-details-wrapper">
+<div class="certlookup-images">
+<div ccg-fancybox-images="" class="certlookup-images-item">
+<a href="https://ccg-imaging-cgc-tradingcards-production.s3.amazonaws.com/17635520-875d-4082-ab53-cd12c96ea49a/CAR6091052-028_OBV.jpg">
+<img src="https://ccg-imaging-cgc-tradingcards-production.s3.amazonaws.com/17635520-875d-4082-ab53-cd12c96ea49a/TN_CAR6091052-028_OBV.jpg" title="Obverse"/>
+</a>
+</div>
+<div ccg-fancybox-images="" class="certlookup-images-item">
+<a href="https://ccg-imaging-cgc-tradingcards-production.s3.amazonaws.com/17635520-875d-4082-ab53-cd12c96ea49a/CAR6091052-028_REV.jpg">
+<img src="https://ccg-imaging-cgc-tradingcards-production.s3.amazonaws.com/17635520-875d-4082-ab53-cd12c96ea49a/TN_CAR6091052-028_REV.jpg" title="Reverse"/>
+</a>
+</div>
+</div>
+<!--Population report details-->
+<ul class="certlookup-stats" ng-cloak="" ng-controller="certlookupPopulationReportController as $popctrl" ng-init="$popctrl.init('02219523', 'PRISTINE 10', 'G')">
+<li>
+<a class="certlookup-stats-item" ng-cloak="" ng-href="{{$popctrl.population.popReportUrl}}" ng-if="$popctrl.population" target="_blank">
+<i class="icon-census"></i>
+<div class="certlookup-stats-item-content" ng-hide="$popctrl.loading">
+<div class="certlookup-stats-item-label">Total Graded by CGC</div>
+<div class="certlookup-stats-item-value value-smaller">In PRISTINE 10 Grade: {{ $popctrl.population.populationAtGrade == 0 ? 'Coming Soon!' : ($popctrl.population.populationAtGrade | number:0) }}</div>
+<div class="certlookup-stats-item-value value-smaller">In Higher Grades: {{$popctrl.population.populationInHigherGrade | number}}</div>
+<span class="certlookup-stats-item-top-pop icon-top-pop" ng-if="$popctrl.population.populationInHigherGrade == 0">Top Pop</span>
+</div>
+</a>
+<!--Card without pop report info-->
+<div class="certlookup-stats-item" ng-if="!$popctrl.population">
+<i class="icon-census"></i>
+<div class="certlookup-stats-item-content" ng-hide="$popctrl.loading">
+<div class="certlookup-stats-item-label">Total Graded by CGC</div>
+										Population info is not available.
+									</div>
+</div>
+</li>
+</ul>
+</div>

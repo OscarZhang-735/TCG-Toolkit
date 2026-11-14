@@ -15,6 +15,7 @@ from .external.proxy_go import ProxyGoClient, ProxyGoConfigError, ProxyGoGateway
 
 router = APIRouter(prefix='/api/grading', dependencies=[Depends(current_user)])
 PSA_URL = 'https://www.psacard.com/en-CA/cert/{cert_number}/psa'
+CGC_URL = 'https://www.cgccards.com/certlookup/{cert_number}/'
 logger = logging.getLogger(__name__)
 
 
@@ -70,38 +71,103 @@ def parse_psa(html, cert_number):
 
 
 def fetch_psa(cert_number):
+    return _fetch_proxied_certificate('psa', cert_number,
+                                     PSA_URL.format(cert_number=cert_number), parse_psa)
+
+
+def parse_cgc(html, cert_number):
+    soup = BeautifulSoup(html, 'html.parser')
+
+    def unreadable():
+        raise HTTPException(502, detail='cgc_unreadable')
+
+    intro = soup.select_one('.certlookup-intro')
+    if intro is None:
+        unreadable()
+    # The search form includes inactive not-found and rate-limit templates even
+    # on successful pages. Only the server-rendered certificate fields count.
+    fields = {}
+    for label in intro.select('dl dt'):
+        key = node_text(label)
+        value = label.find_next_sibling('dd')
+        if not key or key in fields or value is None:
+            unreadable()
+        fields[key] = node_text(value)
+    if (fields.get('Cert #') != cert_number or not fields.get('Card Name')
+            or not fields.get('Grade')):
+        unreadable()
+
+    source_url = CGC_URL.format(cert_number=cert_number)
+    images = []
+    for image in soup.select('.certlookup-images img'):
+        link = image.find_parent('a')
+        source = (link.get('href') if link else None) or image.get('src')
+        if not source:
+            unreadable()
+        try:
+            url = urljoin(source_url, source)
+            parsed = urlsplit(url)
+        except ValueError:
+            unreadable()
+        if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+            unreadable()
+        if not any(item['url'] == url for item in images):
+            images.append({'url': url, 'alt': image.get('title') or image.get('alt', '')})
+
+    population = {'at_grade': None, 'higher': None}
+    labels = {f"In {fields['Grade']} Grade": 'at_grade', 'In Higher Grades': 'higher'}
+    for value in soup.select('.certlookup-stats-item-value'):
+        label, _, count = node_text(value).partition(':')
+        key = labels.get(label)
+        count = count.strip()
+        # Unresolved Angular expressions and "Coming Soon!" are not counts.
+        if key and re.fullmatch(r'[0-9]+(?:,[0-9]{3})*', count):
+            population[key] = int(count.replace(',', ''))
+    return {'provider': 'cgc', 'cert_number': cert_number, 'source_url': source_url,
+            'certificate': {'title': fields['Card Name'], 'grade': fields['Grade'],
+                            'fields': fields, 'population': population},
+            'images': images}
+
+
+def fetch_cgc(cert_number):
+    return _fetch_proxied_certificate('cgc', cert_number,
+                                     CGC_URL.format(cert_number=cert_number), parse_cgc)
+
+
+def _fetch_proxied_certificate(provider, cert_number, url, parse):
     try:
         with ProxyGoClient() as client:
-            response = client.get(PSA_URL.format(cert_number=cert_number), country='US')
+            response = client.get(url, country='US')
     except ProxyGoConfigError:
-        raise HTTPException(503, detail='psa_not_configured') from None
+        raise HTTPException(503, detail=f'{provider}_not_configured') from None
     except ProxyGoGatewayError as exc:
-        logger.warning('PSA proxy-go gateway_status=%s request_id=%s proxy_total_bytes=%s proxy_attempts=%s',
-                       exc.status_code, exc.request_id, exc.proxy_total_bytes, exc.proxy_attempts)
+        logger.warning('%s proxy-go gateway_status=%s request_id=%s proxy_total_bytes=%s proxy_attempts=%s',
+                       provider.upper(), exc.status_code, exc.request_id,
+                       exc.proxy_total_bytes, exc.proxy_attempts)
         if exc.status_code == 504:
-            raise HTTPException(504, detail='psa_timeout') from None
-        detail = ('psa_authentication_failed' if exc.status_code in (401, 403) else
-                  'psa_rate_limited' if exc.status_code == 429 else 'psa_unavailable')
-        raise HTTPException(502, detail=detail) from None
+            raise HTTPException(504, detail=f'{provider}_timeout') from None
+        detail = ('authentication_failed' if exc.status_code in (401, 403) else
+                  'rate_limited' if exc.status_code == 429 else 'unavailable')
+        raise HTTPException(502, detail=f'{provider}_{detail}') from None
     except httpx.TimeoutException:
-        raise HTTPException(504, detail='psa_timeout') from None
+        raise HTTPException(504, detail=f'{provider}_timeout') from None
     except httpx.HTTPError:
-        raise HTTPException(502, detail='psa_unavailable') from None
+        raise HTTPException(502, detail=f'{provider}_unavailable') from None
 
     metadata = response.extensions['proxy_go']
     traffic = metadata['proxy_traffic'] or {}
-    logger.info('PSA proxy-go request_id=%s target_status=%s proxy_total_bytes=%s proxy_attempts=%s',
-                metadata['request_id'], response.status_code, traffic.get('total_bytes'),
+    logger.info('%s proxy-go request_id=%s target_status=%s proxy_total_bytes=%s proxy_attempts=%s',
+                provider.upper(), metadata['request_id'], response.status_code, traffic.get('total_bytes'),
                 len(traffic.get('attempts', [])))
     if response.status_code == 429:
-        raise HTTPException(502, detail='psa_rate_limited')
+        raise HTTPException(502, detail=f'{provider}_rate_limited')
     if response.status_code not in (200, 404):
-        raise HTTPException(502, detail='psa_unavailable')
+        raise HTTPException(502, detail=f'{provider}_unavailable')
     if response.headers.get('content-type', '').split(';')[0].strip().lower() != 'text/html':
-        raise HTTPException(502, detail='psa_unreadable')
-    result = parse_psa(response.text, cert_number)
+        raise HTTPException(502, detail=f'{provider}_unreadable')
+    result = parse(response.text, cert_number)
     if response.status_code != 200:
-        raise HTTPException(502, detail='psa_unavailable')
+        raise HTTPException(502, detail=f'{provider}_unavailable')
     return result
 
 
@@ -178,7 +244,7 @@ def fetch_ars(cert_number):
     return parse_ars(response.text, cert_number)
 
 
-PROVIDERS = {'psa': fetch_psa, 'ars': fetch_ars}
+PROVIDERS = {'psa': fetch_psa, 'ars': fetch_ars, 'cgc': fetch_cgc}
 
 
 @router.get('/{provider}/certificates/{cert_number}')
