@@ -1,7 +1,7 @@
 """Authenticated grading certificate lookups through provider adapters."""
-import os
+import logging
 import re
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -10,59 +10,99 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import run_in_threadpool
 
 from .auth.routes import current_user
+from .external.proxy_go import ProxyGoClient, ProxyGoConfigError, ProxyGoGatewayError
 
 
 router = APIRouter(prefix='/api/grading', dependencies=[Depends(current_user)])
-PSA_API_URL = 'https://api.psacard.com/publicapi/cert'
+PSA_URL = 'https://www.psacard.com/en-CA/cert/{cert_number}/psa'
+logger = logging.getLogger(__name__)
 
 
-def _psa_request(client, method, cert_number, *, images=False):
+def parse_psa(html, cert_number):
+    soup = BeautifulSoup(html, 'html.parser')
+
+    def unreadable():
+        raise HTTPException(502, detail='psa_unreadable')
+
+    # PSA's streamed Next.js page can carry an explicit 404 inside HTTP 200.
+    if soup.select_one('html#__next_error__') is not None and any(
+            'NEXT_HTTP_ERROR_FALLBACK;404' in script.get_text() for script in soup.select('script')):
+        raise HTTPException(404, detail='grading_certificate_not_found')
+    main = soup.select_one('main')
+    if main is None:
+        unreadable()
+    fields = {}
+    for label in main.select('dl dt'):
+        value = label.find_next_sibling('dd')
+        key = node_text(label)
+        if not key or key in fields or value is None:
+            unreadable()
+        fields[key] = node_text(value)
+    title = node_text(main.select_one('h1'))
+    if fields.get('Cert Number') != cert_number or not fields.get('Item Grade') or not title:
+        unreadable()
+
+    images = []
+    for image in main.find_all('img', alt=re.compile(r'^Cert image [0-9]+$')):
+        source = image.get('src', '')
+        url = urljoin(PSA_URL.format(cert_number=cert_number), source)
+        parsed = urlsplit(url)
+        if not source or parsed.scheme not in ('http', 'https') or not parsed.netloc:
+            unreadable()
+        if not any(item['url'] == url for item in images):
+            images.append({'url': url, 'alt': image['alt']})
+
+    # Population panels may be streamed outside <main>; absent counts stay null.
+    population = {'at_grade': None, 'higher': None}
+    labels = {'PSA Population': 'at_grade', 'PSA Pop Higher': 'higher'}
+    for group in soup.select('[role="group"][aria-labelledby]'):
+        label = group.find(id=group['aria-labelledby'])
+        key = labels.get(node_text(label))
+        if key:
+            value = node_text(label.find_next_sibling())
+            if re.fullmatch(r'[0-9]+(?:,[0-9]{3})*', value):
+                population[key] = int(value.replace(',', ''))
+    return {'provider': 'psa', 'cert_number': cert_number,
+            'source_url': PSA_URL.format(cert_number=cert_number),
+            'certificate': {'title': title, 'grade': fields['Item Grade'],
+                            'fields': fields, 'population': population},
+            'images': images}
+
+
+def fetch_psa(cert_number):
     try:
-        response = client.get(f'{PSA_API_URL}/{method}/{cert_number}', timeout=20)
-        if response.status_code in (401, 403):
-            raise HTTPException(502, detail='psa_authentication_failed')
-        if response.status_code == 429:
-            raise HTTPException(502, detail='psa_rate_limited')
-        response.raise_for_status()
+        with ProxyGoClient() as client:
+            response = client.get(PSA_URL.format(cert_number=cert_number), country='US')
+    except ProxyGoConfigError:
+        raise HTTPException(503, detail='psa_not_configured') from None
+    except ProxyGoGatewayError as exc:
+        logger.warning('PSA proxy-go gateway_status=%s request_id=%s proxy_total_bytes=%s proxy_attempts=%s',
+                       exc.status_code, exc.request_id, exc.proxy_total_bytes, exc.proxy_attempts)
+        if exc.status_code == 504:
+            raise HTTPException(504, detail='psa_timeout') from None
+        detail = ('psa_authentication_failed' if exc.status_code in (401, 403) else
+                  'psa_rate_limited' if exc.status_code == 429 else 'psa_unavailable')
+        raise HTTPException(502, detail=detail) from None
     except httpx.TimeoutException:
         raise HTTPException(504, detail='psa_timeout') from None
     except httpx.HTTPError:
         raise HTTPException(502, detail='psa_unavailable') from None
-    try:
-        payload = response.json()
-    except ValueError:
-        raise HTTPException(502, detail='psa_unreadable') from None
-    if not isinstance(payload, (dict, list)) or (not images and not isinstance(payload, dict)):
+
+    metadata = response.extensions['proxy_go']
+    traffic = metadata['proxy_traffic'] or {}
+    logger.info('PSA proxy-go request_id=%s target_status=%s proxy_total_bytes=%s proxy_attempts=%s',
+                metadata['request_id'], response.status_code, traffic.get('total_bytes'),
+                len(traffic.get('attempts', [])))
+    if response.status_code == 429:
+        raise HTTPException(502, detail='psa_rate_limited')
+    if response.status_code not in (200, 404):
+        raise HTTPException(502, detail='psa_unavailable')
+    if response.headers.get('content-type', '').split(';')[0].strip().lower() != 'text/html':
         raise HTTPException(502, detail='psa_unreadable')
-    if isinstance(payload, dict):
-        message = payload.get('ServerMessage', '')
-        message = message.strip().rstrip('.').casefold() if isinstance(message, str) else ''
-        if payload.get('IsValidRequest') is False:
-            raise HTTPException(502, detail='psa_request_rejected')
-        if message == 'no data found' and payload.get('IsValidRequest') is True:
-            if images:
-                return payload
-            raise HTTPException(404, detail='grading_certificate_not_found')
-        if message and message != 'request successful':
-            raise HTTPException(502, detail='psa_request_rejected')
-    return payload
-
-
-def fetch_psa(cert_number):
-    token = os.getenv('TCG_PSA_API_TOKEN', '').strip()
-    if not token:
-        raise HTTPException(503, detail='psa_not_configured')
-    with httpx.Client(headers={'Authorization': f'bearer {token}', 'Accept': 'application/json'},
-                      follow_redirects=False, trust_env=False) as client:
-        certificate = _psa_request(client, 'GetByCertNumber', cert_number)
-        records = [certificate.get(key) for key in ('PSACert', 'DNACert')]
-        if not any(isinstance(record, dict) and record.get('CertNumber') == cert_number
-                   for record in records):
-            raise HTTPException(502, detail='psa_unreadable')
-        images = _psa_request(client, 'GetImagesByCertNumber', cert_number, images=True)
-    return {'provider': 'psa', 'cert_number': cert_number,
-            'source_url': f'https://www.psacard.com/cert/{cert_number}/',
-            'certificate': certificate, 'images': images}
+    result = parse_psa(response.text, cert_number)
+    if response.status_code != 200:
+        raise HTTPException(502, detail='psa_unavailable')
+    return result
 
 
 ARS_URL = 'https://ars-grading.com/grading/searchNumber'

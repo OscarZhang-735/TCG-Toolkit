@@ -1,5 +1,11 @@
 # 页面片段
 
+2026-11-14 通过 proxy-go 从 PSA 官方 `https://www.psacard.com/en-CA/cert/{number}/psa` 获取：
+
+- `psa_certificate.html`：编号 `98428602`，保留 `main` 与两个评级数量面板；卡名 CHITOSE TUTAMACHI、等级 GEM MT 10，含两张证书图片地址。
+- `psa_not_found.html`：编号 `000000000000`，保留实际 HTTP 200 错误页的 `html#__next_error__` 和 Next.js 明确的 404 标记。
+- 图片仅保存 URL；评级数量为采集时快照，普通解析测试不访问外网。
+
 2026-11-12 从 ARS 官方 `https://ars-grading.com/grading/searchNumber?id=...` 获取，仅保留 `main` 内容：
 
 - `ars_certificate.html`：编号 `047088950114`，包含日英卡片信息、高亮等级和统计；无卡片图片。

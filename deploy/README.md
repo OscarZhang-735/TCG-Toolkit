@@ -19,8 +19,7 @@
 - `PGDATABASE=tcg`、`PGUSER=tcg`、随机 `PGPASSWORD` 和另一个随机 `TCG_PG_ADMIN_PASSWORD`。
 - `TCG_POSTGRES_IMAGE`：与本次发布匹配的 PostgreSQL 17 digest；大版本升级必须另行安排。
 - `TCG_DB_SUBNET=10.205.0.0/24`：数据库内部网络，可按宿主机网络调整。
-- `TCG_PSA_API_TOKEN`：PSA 官方 API Token，仅填写 Token 本身，不带 bearer 前缀；缺少配置时证书查询返回 503。修改后重新创建 Web 容器，见[开发文档](../docs/developer.md#评级卡证书查询)。
-- `PROXY_GO_API` / `PROXY_GO_API_KEY`：独立 `proxy-go` 客户端的网关地址和密钥，地址支持基础 URL 或完整 `/v1/fetch`。迁移 Proxy-Go 到服务器时更新这两项并重新创建 Web 容器；地址须能从容器访问。现有业务路由保持原有行为，调用方式见[开发文档](../docs/developer.md#proxy-go-代理客户端)。
+- `PROXY_GO_API` / `PROXY_GO_API_KEY`：PSA 证书网页查询使用的 `proxy-go` 网关地址和密钥，地址支持基础 URL 或完整 `/v1/fetch`。缺少任一项时 PSA 查询返回 503 `psa_not_configured`。迁移 Proxy-Go 到服务器时更新这两项并重新创建 Web 容器；地址须能从容器访问。游游亭和 ARS 请求保持原有行为，PSA 返回结构与验收方式见[开发文档](../docs/developer.md#评级卡证书查询)。
 - 保留 `API_DOMAIN`、`TCG_PROXY_IPS`、RapidAPI、搜索代理、SMTP 参数及稳定的 `TCG_EMAIL_CODE_SECRET`。
 
 `.env` 保持权限 600，不提交到 Git。当前代理网关为 `172.19.0.1`；保留现有 default 网络，若改变网关应同步更新信任 IP。

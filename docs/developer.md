@@ -44,10 +44,9 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | --- | --- | --- |
 | `TCG_TRUSTED_ORIGINS` | 允许登录的访问地址，多个用逗号分隔，不含路径 | 空（不允许登录） |
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
-| `TCG_PSA_API_TOKEN` | PSA 官方 API 的服务端 Token | 空 |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
 | `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
-| `PROXY_GO_API` | 独立 `proxy-go` 客户端的网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
+| `PROXY_GO_API` | PSA 网页查询使用的 `proxy-go` 网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
 | `PROXY_GO_API_KEY` | `proxy-go` 服务端 API 密钥，仅填写密钥本身 | 空 |
 | `PGHOST` / `PGPORT` | PostgreSQL 地址；Compose 内使用服务名 | `db` / `5432`（Compose） |
 | `PGDATABASE` / `PGUSER` / `PGPASSWORD` | 应用数据库、非超级用户角色及密码 | Compose 默认库和角色为 `tcg`；密码必填 |
@@ -64,7 +63,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 
 ### proxy-go 代理客户端
 
-`ProxyGoClient` 用于需要处理风控或验证的 GET/HEAD 请求，由业务代码显式调用。现有游游亭加密代理、直连开关和 PSA 官方 API 路由保持原有行为。
+`ProxyGoClient` 用于需要处理风控或验证的 GET/HEAD 请求，由业务代码显式调用。PSA 证书查询通过此客户端抓取网页；游游亭加密代理、直连开关和 ARS 查询保持原有行为。
 
 在 `.env` 中设置 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。配置优先级为构造参数、进程环境、当前工作目录的 `.env`；显式空值会报告配置错误，不会继续读取较低优先级的值。主机直接运行 Python 时可使用 `http://127.0.0.1:18087/v1/fetch`。Docker Desktop 中的 Web 连接宿主机时改用 `http://host.docker.internal:18087/v1/fetch`，并确保 Proxy-Go 监听容器可达的地址。迁移到服务器后更新地址和密钥即可；三份 Compose 均只向 Web 服务传入这两个变量，修改后重新创建 Web 容器。
 
@@ -182,12 +181,7 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 
 `GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa` 和 `ars`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
 
-配置服务端 `TCG_PSA_API_TOKEN`，仅填写 Token 本身，不带 bearer 前缀。接口使用 `Authorization: bearer …` 顺序调用 PSA 官方接口：
-
-1. `https://api.psacard.com/publicapi/cert/GetByCertNumber/{cert_number}`
-2. 证书存在后调用 `https://api.psacard.com/publicapi/cert/GetImagesByCertNumber/{cert_number}`
-
-PSA 每次请求超时 20 秒，不自动重试、不跟随重定向。PSA 仅使用官方 API，不渲染或抓取证书网页。修改 Compose 中的 Token 后重新创建 Web 容器。
+配置服务端 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。PSA 查询使用 `ProxyGoClient`，以 `country="US"` 抓取 `https://www.psacard.com/en-CA/cert/{cert_number}/psa`。Proxy-Go 负责目标网站验证和代理重试；TCG 客户端默认超时 220 秒、连接超时 5 秒，不自动重试、不跟随重定向。修改 Compose 中的配置后重新创建 Web 容器。
 
 请求示例（`TCG_LOGIN_TOKEN` 为本站登录 Token）：
 
@@ -195,7 +189,14 @@ PSA 每次请求超时 20 秒，不自动重试、不跟随重定向。PSA 仅�
 Invoke-RestMethod -Uri 'http://localhost:8000/api/grading/psa/certificates/98428602' -Headers @{ Authorization = "Bearer $env:TCG_LOGIN_TOKEN" }
 ```
 
-返回 `provider`、`cert_number`、`source_url`、`certificate`、`images`。`source_url` 为 `https://www.psacard.com/cert/{cert_number}/`；`certificate` 和 `images` 完整保留对应官方接口的 JSON，包括额外字段及图片地址。不下载图片、不假定正反面字段，不补充官方 API 未提供的网页估值、成交记录或 Set Registry。
+返回 `provider: "psa"`、`cert_number`、`source_url`、`certificate`、`images`。`source_url` 为上述抓取地址。`certificate` 根据网页生成：
+
+- `title`：页面 `h1` 标题。
+- `grade`：评级文本，例如 `"GEM MT 10"`。
+- `fields`：Item Information 区域的原始标签和值，保留额外字段。
+- `population`：`{"at_grade": 整数或null, "higher": 整数或null}`，分别为同等级和更高等级数量；页面未提供时为 `null`。
+
+`images` 为 `[{"url": 图片src, "alt": 图片alt}, …]`，仅提取 `Cert image N` 证书图片，不包含 Logo 或销售缩略图，也不下载图片。此接口返回上述网页结构，不再返回 PSA 官方 API 的 JSON。
 
 错误响应为 `{"detail":"错误代码"}`：
 
@@ -203,22 +204,28 @@ Invoke-RestMethod -Uri 'http://localhost:8000/api/grading/psa/certificates/98428
 | --- | --- | --- |
 | 401 | `authentication_required` | 未登录本站 |
 | 422 | `unsupported_grading_provider` / `invalid_cert_number` | 机构或编号错误 |
-| 404 | `grading_certificate_not_found` | 官方 API 明确返回无记录 |
-| 503 | `psa_not_configured` | Token 未配置 |
-| 504 | `psa_timeout` | 上游请求超时 |
-| 502 | `psa_authentication_failed` | 官方 API 返回 401/403 |
-| 502 | `psa_rate_limited` | 官方 API 返回 429 |
-| 502 | `psa_request_rejected` | 官方 API 返回业务失败 |
-| 502 | `psa_unreadable` | 响应无法解析或证书数据不匹配 |
+| 404 | `grading_certificate_not_found` | 页面明确返回无记录 |
+| 503 | `psa_not_configured` | Proxy-Go 地址或密钥未配置 |
+| 504 | `psa_timeout` | 网关返回 504 或网络请求超时 |
+| 502 | `psa_authentication_failed` | Proxy-Go 网关返回 401/403 |
+| 502 | `psa_rate_limited` | 网关或目标站返回 429 |
+| 502 | `psa_unreadable` | 非 HTML、页面无法解析或证书编号不匹配 |
 | 502 | `psa_unavailable` | 其他上游请求错误 |
 
-HTTP 200 的业务失败也会检查。图片查询失败时整次查询失败；明确无图片时保留官方空结果。客户端不会收到 Token、认证头或上游错误正文。
+网关 HTTP 200 后仍检查目标站状态及页面内容。服务器日志记录请求 ID、目标状态、代理字节和尝试次数；客户端错误响应不包含凭据或上游错误正文。
 
-`tests/test_grading.py` 使用模拟上游响应验证数据透传、图片地址、前导零、认证、超时、限流、业务失败和无图片情况；在专用测试 PostgreSQL 环境运行。
+`tests/test_grading.py` 使用模拟响应验证网页解析和错误映射。`tests/test_grading_live.py` 从 TCG PSA 接口调用开始，经过真实 Proxy-Go 和 PSA 网页完成端到端验证；默认跳过，运行时使用上文的专用测试 PostgreSQL 配置及可用的 Proxy-Go 配置：
+
+```powershell
+$env:TCG_LIVE_PSA_TEST="1"
+python -m pytest -q -s tests/test_grading_live.py
+```
+
+可通过 `TCG_LIVE_PSA_OUTPUT` 指定保存返回 JSON 的文件路径。验收编号 `98428602` 对应 CHITOSE TUTAMACHI、卡号 3955、2024 年、GEM MT 10，以及两张证书图片。
 
 ### ARS 网页查询
 
-`GET /api/grading/ars/certificates/{cert_number}` 沿用上述登录、编号校验和 `no-store` 规则。使用普通 HTTP 请求 `https://ars-grading.com/grading/searchNumber?id={cert_number}`，不需要 Token 或浏览器，不向 ARS 发送 PSA Token。单次超时 20 秒，不重试、不跟随重定向。
+`GET /api/grading/ars/certificates/{cert_number}` 沿用上述登录、编号校验和 `no-store` 规则。使用普通 HTTP 请求 `https://ars-grading.com/grading/searchNumber?id={cert_number}`，不需要 Token 或浏览器。单次超时 20 秒，不重试、不跟随重定向。
 
 返回 `provider: "ars"`、`cert_number`、`source_url`、`certificate`、`images`。ARS 的 `certificate` 结构为：
 
@@ -227,7 +234,7 @@ HTTP 200 的业务失败也会检查。图片查询失败时整次查询失败�
 - `population.total_grading` / `total_submission`：页面的鉴定总数和提交总数（整数）。
 - `population.grades`：等级到原始统计文本的映射，例如 `{"10": "1（0）"}`；`population.remarks` 保留页面对统计的说明，不推断括号内数量。
 
-首期 `images` 固定为 `[]`，因为实测查询页没有卡片图片，不返回网站 Logo。PSA 的官方 JSON 返回格式不变。
+首期 `images` 固定为 `[]`，因为实测查询页没有卡片图片，不返回网站 Logo。
 
 明确的无记录提示返回 404 `grading_certificate_not_found`；超时为 504 `ars_timeout`；429 为 502 `ars_rate_limited`；其他 HTTP/网络错误为 502 `ars_unavailable`；非 HTML、编号回显不匹配、关键结构缺失或多项高亮为 502 `ars_unreadable`。错误响应不包含上游正文。
 
