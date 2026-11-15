@@ -18,7 +18,8 @@ from fastapi.testclient import TestClient
 from tcg_toolkit.auth.store import UserStore
 from tcg_toolkit.models import Game, SearchItem, SearchPage, StockStatus
 from tcg_toolkit.errors import SearchRequestError, SearchParseError
-from tcg_toolkit.web import app, SEARCHERS
+from tcg_toolkit.search import SEARCHERS
+from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
 

@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from auth_helpers import (Mailbox, TEST_SECRET, install_mailbox,
                           registration_body, register_user)
-from tcg_toolkit.auth.email_verification import AuthError, EmailVerification, SMTPMailer, normalize_email
+from tcg_toolkit.auth.email_verification import AuthError, EmailVerification, normalize_email
+from tcg_toolkit.notifications import SMTPMailer
 from tcg_toolkit.auth.passwords import hasher
 from tcg_toolkit.auth.service import AuthService, token_hash
 from tcg_toolkit.auth.store import UserStore

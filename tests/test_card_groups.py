@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.cards import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
+from tcg_toolkit.card_transfer import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
 from tcg_toolkit.db_models import CardGroup, OwnedCard
 from tcg_toolkit.web import app
 from test_cards import CARD, client, exported, login, spreadsheet_rows

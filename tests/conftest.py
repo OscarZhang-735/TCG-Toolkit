@@ -6,7 +6,7 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 import pytest
 
 from tcg_toolkit.database import Database, connection_info
-from tcg_toolkit.db_cli import migrate
+from tcg_toolkit.schema import migrate
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +29,7 @@ def postgres_schema(monkeypatch):
 
     monkeypatch.setattr(Database, "__init__", track)
     # Some existing API tests use TestClient without a lifespan context.
-    from tcg_toolkit.auth.routes import initialize_auth
+    from tcg_toolkit.auth.runtime import initialize_auth
     from tcg_toolkit.web import app
     initialize_auth(app)
     try:

@@ -234,3 +234,8 @@ class PMSearcher(BaseSearcher):
 class SEVSearcher(BaseSearcher):
     game = Game.SEV
     search_path = "/sell/sev/s/search"
+
+
+SEARCHERS = {searcher.game: searcher for searcher in (
+    WSRSearcher, LyceeSearcher, ChaosTCGSearcher, WSSearcher, PMSearcher, SEVSearcher,
+)}

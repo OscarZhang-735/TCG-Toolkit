@@ -9,7 +9,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import run_in_threadpool
 
-from .auth.routes import current_user
+from .auth.dependencies import current_user
 from .external.proxy_go import ProxyGoClient, ProxyGoConfigError, ProxyGoGatewayError
 
 

@@ -219,9 +219,9 @@ def test_slow_fetch_keeps_next_hour_and_failure_interval(client, monkeypatch):
     refreshed_favorite = {**saved_favorite, 'item': snapshot(price=200), 'refreshed_at': start}
     assert client.get('/api/favorites').json()['items'] == [refreshed_favorite]
     assert service.deadline == start + 3600
-    from fastapi import HTTPException
+    from tcg_toolkit.errors import ProductSourceError
     def failed(*args):
-        raise HTTPException(504, detail='product_timeout')
+        raise ProductSourceError('product_timeout')
     service.fetcher = failed
     client.put('/api/subscriptions/settings', json={'interval_hours': 6})
     now[0] = start + 6 * 3600

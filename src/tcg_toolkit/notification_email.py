@@ -4,20 +4,14 @@ import time
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select, update
 
-from .auth.routes import current_user, write_guard, CodeRequest, CodeInput
+from .auth.dependencies import current_user, write_guard
+from .auth.schemas import CodeRequest, CodeInput
+from .notifications import notification_recipient
 from .database import email_lock
 from .db_models import User, EmailChallenge
 
 router = APIRouter(prefix='/api/subscriptions/notification-email')
 PURPOSE = 'notification_email'
-
-
-def notification_recipient(user):
-    if user is None:
-        return None
-    if user.notification_email and user.notification_email_verified_at is not None:
-        return user.notification_email
-    return user.email if user.email_verified_at is not None else None
 
 
 def settings(user):

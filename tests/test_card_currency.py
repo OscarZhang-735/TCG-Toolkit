@@ -4,7 +4,7 @@ import pytest
 from openpyxl import load_workbook
 from sqlalchemy.exc import IntegrityError
 
-from tcg_toolkit.cards import XLSX_MEDIA_TYPE
+from tcg_toolkit.card_transfer import XLSX_MEDIA_TYPE
 from tcg_toolkit.db_models import OwnedCard
 from tcg_toolkit.web import app
 from test_cards import CARD, client, login
@@ -21,9 +21,9 @@ def test_currency_defaults_to_jpy_and_is_normalized(client, sent, stored):
 def test_currency_update_omission_and_validation(client):
     saved = client.post('/api/cards', json={**CARD, 'price': 30, 'currency': 'CNY'}).json()
     path = f"/api/cards/{saved['id']}"
-    # Older clients send neither price nor currency: both are kept.
-    kept = client.put(path, json={**CARD, 'quantity': 5}).json()
-    assert (kept['quantity'], kept['price'], kept['currency']) == (5, 30, 'CNY')
+    # PUT applies the current model defaults to omitted price and currency.
+    replaced = client.put(path, json={**CARD, 'quantity': 5}).json()
+    assert (replaced['quantity'], replaced['price'], replaced['currency']) == (5, None, 'JPY')
     assert client.put(path, json={**CARD, 'price': 30, 'currency': 'cad'}).json()['currency'] == 'CAD'
     for bad in ['USD', '', 1, True, ['JPY']]:
         assert client.post('/api/cards', json={**CARD, 'card_number': 'X', 'currency': bad}).status_code == 422

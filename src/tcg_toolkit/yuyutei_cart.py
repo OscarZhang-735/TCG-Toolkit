@@ -14,7 +14,9 @@ from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from .auth.routes import current_user, write_guard
+from .auth.dependencies import current_user, write_guard
+from .cart_models import CartTarget
+from .product_identity import GAME_PATHS
 from . import cart_operations
 from .external.search_proxy import YuYuTeiProxyTransport
 
@@ -22,7 +24,6 @@ router = APIRouter(prefix='/api/yuyutei', dependencies=[Depends(current_user)])
 CART_URL = 'https://yuyu-tei.jp/api/cart_order_edit'
 CART_PAGE = 'https://yuyu-tei.jp/cart/sell'
 CART_SERVICE = 'https://yuyu-tei.jp/api/cart_service'
-GAME_PATHS = {7: 'ws', 8: 'chaos', 11: 'pm', 34: 'lo', 47: 'sev', 56: 'wsr'}
 _session_locks = {}
 _session_locks_guard = Lock()
 
@@ -74,14 +75,6 @@ class CredentialsInput(BaseModel):
         if not re.fullmatch(r'[A-Za-z0-9%+/_=.\-]+', value):
             raise ValueError('Invalid credential')
         return value
-
-
-class CartTarget(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    gid: Literal[7, 8, 11, 34, 47, 56]
-    ver: str = Field(min_length=1, max_length=64, pattern=r'^[A-Za-z0-9_-][A-Za-z0-9_.-]*$')
-    cid: str = Field(min_length=1, max_length=32, pattern=r'^[0-9]+$')
-    kizu: int = Field(default=0, strict=True, ge=0, le=1)
 
 
 class CartInput(CartTarget):

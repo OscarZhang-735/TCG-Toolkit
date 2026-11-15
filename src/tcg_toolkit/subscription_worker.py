@@ -2,8 +2,6 @@
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
-from email.message import EmailMessage
-from .email_templates import digest_html, digest_subject, digest_titles, favorites_url
 import json
 import logging
 import smtplib
@@ -11,59 +9,20 @@ from threading import Event, Thread
 import time
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy import func, select
 
-from .auth.email_verification import SMTPMailer
-from .db_models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
-from .product_details import fetch_product_snapshot
-from .notification_email import notification_recipient
+from .db_models import Subscription, SubscriptionEmail, SubscriptionRun, User
+from .errors import ProductSourceError
+from .external.yuyutei_products import fetch_product_snapshot
+from .notifications import SMTPMailer, digest_message, notification_recipient
+from .subscription_schedule import next_hour
+from .subscription_service import apply_check_results
 
 logger = logging.getLogger('uvicorn.error.subscriptions')
 LOCK_KEY = 894210612
 RETRY_DELAYS = (60, 300, 1800)
 # A scan that starts this late still counts as its scheduled hour (lock waits, wake-up jitter).
 SLOT_TOLERANCE = 600
-CHANGE_FIELDS = ('price', 'stock_quantity', 'stock_status')
-
-
-def next_hour(now):
-    """Find the next local hour boundary on the timeline, including DST folds."""
-    candidate = (int(now) // 60 + 1) * 60
-    while datetime.fromtimestamp(candidate).minute != 0:
-        candidate += 60
-    return candidate
-
-
-def scheduled_scan(due, now):
-    """Estimate the hourly scan that first sees a subscription due at `due`."""
-    moment = max(int(due), int(now))
-    try:
-        return next_hour(moment - 1)  # A boundary itself is a scan time.
-    except (OverflowError, OSError, ValueError):  # Beyond datetime's range.
-        return moment
-
-
-def digest_message(recipient, email_id, run_date, changes):
-    message = EmailMessage()
-    message['To'] = recipient
-    message['Subject'] = digest_subject(run_date)
-    message['Message-ID'] = f'<{email_id}@tcg-toolkit.local>'
-    # Bilingual like the HTML part: Chinese first, then English, line by line.
-    zh_title, en_title = digest_titles(len(changes))
-    text = [f'{run_date} {zh_title}（普通品相）', f'{run_date} {en_title} (normal condition)', '']
-    for change in changes:
-        before, after = change['before'], change['after']
-        title = ' · '.join(filter(None, [after['name'], after.get('rarity'), after['card_number']]))
-        price = f"价格 Price：{before['price']:,} → {after['price']:,} JPY"
-        quantity = f"库存 Stock：{before['stock_quantity'] or 0:,} → {after['stock_quantity'] or 0:,}"
-        checked = '检查时间 Checked at：' + datetime.fromtimestamp(change['checked_at']).astimezone().isoformat(timespec='seconds')
-        url = after['product_url']
-        text.extend([title, price, quantity, checked, url, ''])
-    text.append(f'前往 TCG Toolkit 查看 · Open TCG Toolkit：{favorites_url()}')
-    message.set_content('\n'.join(text))
-    message.add_alternative(digest_html(run_date, changes), subtype='html')
-    return message
 
 
 class SubscriptionWorker:
@@ -134,55 +93,18 @@ class SubscriptionWorker:
                 snapshot = self.fetcher(game, url)
                 if (snapshot['stock_status'] == 'unknown' or snapshot['stock_quantity'] is None
                         or snapshot['price'] is None):
-                    raise HTTPException(502, detail='product_unreadable')
+                    raise ProductSourceError('product_unreadable')
                 products[(game, url)] = (snapshot, None)
-            except HTTPException as exc:
-                products[(game, url)] = (None, str(exc.detail))
+            except ProductSourceError as exc:
+                products[(game, url)] = (None, exc.code)
                 errors += 1
         changed = 0
         for user_id, ids in by_user.items():
             if self.stopping.is_set():
                 raise InterruptedError('Subscription checks stopped')
-            with self.store.session() as db:
-                # Lock favorites before subscriptions, matching favorite removal.
-                account = db.get(User, user_id, with_for_update=True)
-                if account is None:
-                    continue
-                favorites = defaultdict(list)
-                for favorite in db.scalars(select(Favorite).join(Subscription,
-                        (Favorite.user_id == Subscription.user_id)
-                        & (Favorite.game == Subscription.game)
-                        & (func.rtrim(Favorite.product_url, '/') == Subscription.product_url))
-                        .where(Favorite.user_id == user_id, Subscription.id.in_(ids))
-                        .order_by(Favorite.id).with_for_update(of=Favorite)):
-                    favorites[(favorite.game, favorite.product_url.rstrip('/'))].append(favorite)
-                rows = db.scalars(select(Subscription).where(Subscription.id.in_(ids),
-                                  Subscription.next_check_at <= started_at)
-                                  .order_by(Subscription.id).with_for_update()).all()
-                changes = []
-                for row in rows:
-                    snapshot, error = products[(row.game, row.product_url)]
-                    row.checked_at, row.last_error = slot, error
-                    row.next_check_at = slot + account.subscription_interval_hours * 3600
-                    if error:
-                        continue
-                    before = json.loads(row.snapshot)
-                    if any(before[key] != snapshot[key] for key in CHANGE_FIELDS):
-                        changes.append(dict(subscription_id=row.id, before=before, after=snapshot,
-                                            checked_at=slot))
-                    row.snapshot = json.dumps(snapshot)
-                    for favorite in favorites[(row.game, row.product_url)]:
-                        saved = json.loads(favorite.snapshot)
-                        # Subscriptions only fetch normal-condition offers.
-                        if (saved.get('cart') or {}).get('kizu', 0) != 0:
-                            continue
-                        favorite.snapshot = json.dumps({**saved, **snapshot, 'product_url': favorite.product_url})
-                        favorite.refreshed_at = slot
-                if changes:
-                    now = int(self.clock())
-                    db.add(SubscriptionEmail(id=str(uuid.uuid4()), user_id=user_id, run_id=run_id, run_date=local_date,
-                           changes=json.dumps(changes), state='pending', created_at=now, next_attempt_at=now))
-                    changed += len(changes)
+            changed += apply_check_results(
+                self.store, user_id, ids, products, run_id=run_id, local_date=local_date,
+                started_at=started_at, slot=slot, now=int(self.clock()))
         logger.info('Subscription check run=%s cards=%d changes=%d source_errors=%d',
                     run_id, len(products), changed, errors)
 

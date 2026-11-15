@@ -7,7 +7,7 @@ import time
 from threading import Event
 from types import SimpleNamespace
 
-from fastapi import HTTPException
+from tcg_toolkit.errors import ProductSourceError
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import event, func, select
@@ -15,7 +15,8 @@ from sqlalchemy import event, func, select
 from auth_helpers import register_user
 from tcg_toolkit.db_models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
 from tcg_toolkit import subscriptions as api
-from tcg_toolkit.subscription_worker import SubscriptionWorker, next_hour
+from tcg_toolkit.subscription_worker import SubscriptionWorker
+from tcg_toolkit.subscription_schedule import next_hour
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -168,7 +169,7 @@ def test_guards_and_verified_email_required(client):
 
 def test_failed_initial_fetch_leaves_no_subscription(client, monkeypatch):
     def unavailable(*args):
-        raise HTTPException(504, detail='product_timeout')
+        raise ProductSourceError('product_timeout')
     monkeypatch.setattr(api, 'fetch_product_snapshot', unavailable)
     assert client.post('/api/subscriptions', json=dict(game='wsr', product_url=URL)).status_code == 504
     assert client.get('/api/subscriptions').json()['items'] == []
@@ -281,7 +282,7 @@ def test_source_failure_preserves_baseline_and_other_cards_continue(client, fail
             return snapshot(url, price=200)
         if failure == 'unknown':
             return {**snapshot(url), 'stock_quantity': None, 'stock_status': 'unknown'}
-        raise HTTPException(502, detail=failure)
+        raise ProductSourceError(failure)
     service = worker(fetch)
     service.check_due()
     with app.state.auth.store.session() as db:

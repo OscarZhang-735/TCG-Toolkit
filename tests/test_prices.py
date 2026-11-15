@@ -4,12 +4,11 @@ from pathlib import Path
 import httpx
 import pytest
 from bs4 import BeautifulSoup
-from fastapi import HTTPException
 
 from tcg_toolkit import prices
-from tcg_toolkit.errors import SearchParseError, SearchRequestError
+from tcg_toolkit.errors import ProductSourceError, SearchParseError, SearchRequestError
 from tcg_toolkit.models import Game, SearchItem, SearchPage, StockStatus
-from tcg_toolkit.web import SEARCHERS
+from tcg_toolkit.search import SEARCHERS
 from test_cards import client
 from test_product_details import FIXTURE, offer_html
 
@@ -118,7 +117,7 @@ def test_later_page_failure_does_not_return_partial_quotes(client, monkeypatch, 
 def test_detail_failures_use_price_errors(client, monkeypatch, detail, status, expected):
     source(monkeypatch, [[card(), card(condition=None, product_url=card().product_url + '2')]])
     def fail(*args):
-        raise HTTPException(status, detail=detail)
+        raise ProductSourceError(detail)
     monkeypatch.setattr(prices, 'fetch_product_snapshot', fail)
     response = client.get('/api/prices', params=PARAMS)
     assert response.status_code == status
@@ -137,7 +136,7 @@ def test_unknown_condition_fetches_normal_detail(client, monkeypatch, mismatch):
     def get(self, requested, *, timeout):
         calls.append(requested)
         return httpx.Response(200, text=html, request=httpx.Request('GET', requested))
-    monkeypatch.setattr('tcg_toolkit.product_details.SearchProxyClient.get', get)
+    monkeypatch.setattr('tcg_toolkit.external.yuyutei_products.SearchProxyClient.get', get)
     response = client.get('/api/prices', params={**PARAMS, 'game': 'wsr', 'card_number': number})
     assert calls == [url]
     if mismatch:

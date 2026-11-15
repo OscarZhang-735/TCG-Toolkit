@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
 const noticesModule = 'data:text/javascript;base64,' + Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/notices.js', import.meta.url), 'utf8')).toString('base64');
-const source = (await readFile(new URL('../src/tcg_toolkit/static/cart.js', import.meta.url), 'utf8')).replace("'./notices.js'", JSON.stringify(noticesModule));
-const {cartTarget, cartErrorKey, createCart, parseQuantity, quantityRange, planQuantity} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+const identityModule = asModule(await readFile(new URL('../src/tcg_toolkit/static/product-identity.js', import.meta.url), 'utf8'));
+const source = (await readFile(new URL('../src/tcg_toolkit/static/cart.js', import.meta.url), 'utf8'))
+  .replace("'./notices.js'", JSON.stringify(noticesModule)).replace("'./product-identity.js'", JSON.stringify(identityModule));
+const {cartErrorKey, createCart, quantityRange, planQuantity} = await import(asModule(source));
+const {cartTarget} = await import(identityModule);
+const {parseQuantity} = await import(asModule(await readFile(new URL('../src/tcg_toolkit/static/quantity.js', import.meta.url), 'utf8')));
 
 const target = {gid: 56, ver: 'OS01', cid: '10044', kizu: 0};
 const row = (quantity, type = 'normal', extra = {}) => ({...target, type, quantity, unit_price: 30, ...extra});

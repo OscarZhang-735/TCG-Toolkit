@@ -22,3 +22,15 @@ class SearchParseError(SearchError):
 
 class SearchPaginationError(SearchParseError):
     """The response pagination would skip back or return the wrong page."""
+
+
+class ProductSourceError(Exception):
+    """A product page could not provide a usable offer or printed details."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+    @property
+    def status_code(self):
+        return 504 if self.code == 'product_timeout' else 502

@@ -7,11 +7,13 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AfterValidator
 
-from .auth.routes import current_user
-from .cards import GAMES
-from .errors import SearchParseError, SearchRequestError
+from .auth.dependencies import current_user
+from .card_schemas import GAMES
+from .errors import ProductSourceError, SearchParseError, SearchRequestError
 from .models import Game
-from .product_details import fetch_product_snapshot, normalize_product_url
+from .external.yuyutei_products import fetch_product_snapshot
+from .product_identity import normalize_product_url
+from .search import SEARCHERS
 
 router = APIRouter(prefix='/api/prices', dependencies=[Depends(current_user)])
 OFFER_FIELDS = ('name', 'card_number', 'rarity', 'price', 'currency',
@@ -32,8 +34,6 @@ def canonical_game(value: str) -> str:
 
 
 def yuyutei_prices(game: str, card_number: str) -> list[dict]:
-    from .web import SEARCHERS
-
     items, seen = [], set()
     wanted = card_number.casefold()
     try:
@@ -50,7 +50,7 @@ def yuyutei_prices(game: str, card_number: str) -> list[dict]:
                     else:
                         offer = fetch_product_snapshot(game, url)
                         if offer['card_number'].strip().casefold() != wanted:
-                            raise HTTPException(502, detail='price_source_unreadable')
+                            raise ProductSourceError('product_unreadable')
                     items.append({**{key: offer[key] for key in OFFER_FIELDS},
                                   'product_url': url, 'condition': 'normal'})
                     seen.add(url)
@@ -60,11 +60,11 @@ def yuyutei_prices(game: str, card_number: str) -> list[dict]:
                             detail='price_source_timeout' if timeout else 'price_source_unavailable') from None
     except (SearchParseError, ValueError):
         raise HTTPException(502, detail='price_source_unreadable') from None
-    except HTTPException as exc:
+    except ProductSourceError as exc:
         errors = {'product_timeout': 'price_source_timeout',
                   'product_unavailable': 'price_source_unavailable',
                   'product_unreadable': 'price_source_unreadable'}
-        raise HTTPException(exc.status_code, detail=errors.get(exc.detail, exc.detail)) from None
+        raise HTTPException(exc.status_code, detail=errors[exc.code]) from None
     return items
 
 

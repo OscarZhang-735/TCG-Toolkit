@@ -5,7 +5,8 @@ import json
 import sys
 import unicodedata
 
-from . import ChaosTCGSearcher, LyceeSearcher, SearchError, WSRSearcher, WSSearcher, PMSearcher
+from .errors import SearchError
+from .search import SEARCHERS
 
 
 def _width(text: str) -> int:
@@ -35,19 +36,14 @@ def print_table(game, page) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="搜索游游亭卡牌，输出 JSON")
-    parser.add_argument("terms", nargs="+", help="关键词；兼容旧格式：游戏 关键词")
-    parser.add_argument("-g", "--game", action="append", choices=("wsr", "lycee", "chaos", "ws", "pm"),
+    parser.add_argument("keyword", help="关键词")
+    parser.add_argument("-g", "--game", action="append", required=True, choices=tuple(SEARCHERS),
                         help="搜索器，可重复指定；多个搜索器使用同一关键词")
     parser.add_argument("--clean", action="store_true", help="以易读表格输出结果")
     parser.add_argument("--page", type=int, default=1, help="页码或遍历起始页（默认 1）")
     parser.add_argument("--all", action="store_true", help="从指定页遍历至末页，每页输出一行 JSON")
     args = parser.parse_args(argv)
-    if args.game and len(args.terms) == 1:
-        games, args.keyword = list(dict.fromkeys(args.game)), args.terms[0]
-    elif not args.game and len(args.terms) == 2 and args.terms[0] in ("wsr", "lycee", "chaos", "ws", "pm"):
-        games, args.keyword = [args.terms[0]], args.terms[1]
-    else:
-        parser.error("Use KEYWORD --game GAME (repeatable), or GAME KEYWORD" if args.clean else "使用 关键词 --game 游戏（可重复），或旧格式：游戏 关键词")
+    games = list(dict.fromkeys(args.game))
     if not args.keyword.strip():
         parser.error("Keyword must not be empty" if args.clean else "关键词不能为空")
     if args.page < 1:
@@ -56,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     status = 0
     for game in games:
-        searcher_type = {"wsr": WSRSearcher, "lycee": LyceeSearcher, "chaos": ChaosTCGSearcher, "ws": WSSearcher, "pm": PMSearcher}[game]
+        searcher_type = SEARCHERS[game]
         try:
             with searcher_type() as searcher:
                 pages = (searcher.iter_pages(args.keyword, start_page=args.page) if args.all

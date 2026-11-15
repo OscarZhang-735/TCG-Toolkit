@@ -3,7 +3,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException, Query
-from .auth.routes import current_user
+from .auth.dependencies import current_user
 
 router = APIRouter(prefix='/api/official', dependencies=[Depends(current_user)])
 LYCEE_SEARCH = 'https://lycee-tcg.com/card/'

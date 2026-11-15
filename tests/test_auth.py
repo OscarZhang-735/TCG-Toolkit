@@ -11,7 +11,7 @@ from tcg_toolkit.web import app
 from tcg_toolkit.auth.service import AuthService, DuplicateUsername, token_hash
 from tcg_toolkit.auth.avatar import cleanup_avatar
 from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.db_cli import SCHEMA_VERSION
+from tcg_toolkit.schema import SCHEMA_VERSION
 
 ORIGIN = "https://testserver"
 BODY = {"username": "Alice", "password": "a long password!"}
@@ -76,7 +76,7 @@ def test_browser_assets_revalidate_after_upgrade(client):
 
 
 def test_anonymous_cannot_call_upstream(client, monkeypatch):
-    from tcg_toolkit.web import SEARCHERS
+    from tcg_toolkit.search import SEARCHERS
     from tcg_toolkit.external import CurrencyClient
     def forbidden(*args, **kwargs):
         pytest.fail("anonymous request reached upstream")
@@ -101,9 +101,9 @@ def test_write_guard(client):
 
 @pytest.mark.parametrize("action,limit", [("login", 10), ("register", 10), ("register/email-code", 5)])
 def test_rate_limit_and_spoofed_ip(client, action, limit, monkeypatch):
-    import tcg_toolkit.auth.routes as routes
+    import tcg_toolkit.auth.runtime as runtime
     now = [100.0]
-    monkeypatch.setattr(routes.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: now[0])
     for i in range(limit):
         response = client.post(f"/api/auth/{action}", json={}, headers={"X-Forwarded-For": f"1.2.3.{i}"})
         assert response.status_code == 422

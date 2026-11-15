@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from tcg_toolkit.db_models import User, EmailChallenge
 from tcg_toolkit.web import app
-from tcg_toolkit.auth.email_verification import SMTPMailer
+from tcg_toolkit.notifications import SMTPMailer
 from test_subscriptions import client, add, worker, emails, snapshot, NOW, login
 
 PATH = '/api/subscriptions/notification-email'
