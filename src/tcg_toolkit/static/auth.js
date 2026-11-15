@@ -50,6 +50,8 @@ function resetEmails() {
 function showPage() {
   const cards = Boolean(user) && location.hash === '#cards';
   $('cards-panel').hidden = !cards;
+  const graded = Boolean(user) && location.hash === '#graded';
+  $('graded-panel').hidden = !graded;
   const favorites = Boolean(user) && location.hash === '#favorites';
   const cart = Boolean(user) && location.hash === '#cart';
   $('cart-panel').hidden = !cart;
@@ -59,13 +61,13 @@ function showPage() {
   if (account && $('account-panel').hidden) subscriptionSettingsUI.reload();
   document.body.classList.toggle('signed-out', !user);
   $('auth-panel').hidden = Boolean(user);
-  $('search').hidden = !user || account || favorites || cards || cart;
+  $('search').hidden = !user || account || favorites || cards || graded || cart;
   $('account-panel').hidden = !account;
   $('user-bar').hidden = !user;
   $('app-nav').hidden = !user;
   $('app-settings').hidden = !user;
   document.querySelectorAll('#app-nav a, #account-link').forEach(a => {
-    if (a.hash === (cards ? '#cards' : cart ? '#cart' : account ? '#account' : favorites ? '#favorites' : '#search')) a.setAttribute('aria-current', 'page');
+    if (a.hash === (cards ? '#cards' : graded ? '#graded' : cart ? '#cart' : account ? '#account' : favorites ? '#favorites' : '#search')) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
   syncNavMenus();
@@ -184,7 +186,7 @@ async function signedIn(value) {
   $('account-status').textContent = '';
   resetNicknameEditor(); renderDisplayName();
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = '';
-  if (!['#account', '#favorites', '#cards', '#cart'].includes(location.hash)) location.hash = '#search';
+  if (!['#account', '#favorites', '#cards', '#graded', '#cart'].includes(location.hash)) location.hash = '#search';
   showPage(); refresh();
 }
 $('auth-form').addEventListener('submit', async event => {

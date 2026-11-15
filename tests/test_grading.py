@@ -23,9 +23,9 @@ TITLE = ('2024 LYCEE OVERTURE JAPANESE VER. NEXTON SUMMER SPECIAL PACK #3955 '
          'CHITOSE TUTAMACHI NEX-SUMMER SP PACK-SP SIG')
 IMAGES = [
     {'url': 'https://d1htnxwo4o0jhw.cloudfront.net/cert/166149476/small/bhO1GQ4Ke0KxqhnfoExo3A.jpg',
-     'alt': 'Cert image 1'},
+     'alt': 'Cert image 1', 'side': 'front', 'thumbnail_url': None},
     {'url': 'https://d1htnxwo4o0jhw.cloudfront.net/cert/166149476/small/fVpAFc1PAkWuxmpyJJUOuw.jpg',
-     'alt': 'Cert image 2'},
+     'alt': 'Cert image 2', 'side': 'back', 'thumbnail_url': None},
 ]
 
 

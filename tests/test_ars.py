@@ -22,6 +22,8 @@ def test_parse_real_fixture():
     assert result['images'] == []
     assert result['source_url'] == ars.ARS_URL + '?id=' + NUMBER
     cert = result['certificate']
+    # The English card name is the title, as for PSA and CGC.
+    assert cert['title'] == 'Student and Researcher, Mayu Shikibe'
     assert cert['fields']['カード名称'] == '学生兼研究者 式部 茉優'
     assert cert['fields']['Card Name'] == 'Student and Researcher, Mayu Shikibe'
     assert cert['fields']['Card ID'] == 'LO-1606-S'

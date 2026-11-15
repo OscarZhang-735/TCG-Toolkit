@@ -2,7 +2,7 @@
 
 生产地址：https://tcgtoolkit.rinne.love
 前端：https://oscarzhang-735.github.io/TCG-Toolkit/
-服务器：ubuntu@99.79.33.22，部署目录 `/opt/tcg-http`。
+服务器：ubuntu@15.175.5.88，部署目录 `/opt/tcg-http`。
 
 ## 编排
 
@@ -19,7 +19,7 @@
 - `PGDATABASE=tcg`、`PGUSER=tcg`、随机 `PGPASSWORD` 和另一个随机 `TCG_PG_ADMIN_PASSWORD`。
 - `TCG_POSTGRES_IMAGE`：与本次发布匹配的 PostgreSQL 17 digest；大版本升级必须另行安排。
 - `TCG_DB_SUBNET=10.205.0.0/24`：数据库内部网络，可按宿主机网络调整。
-- `PROXY_GO_API` / `PROXY_GO_API_KEY`：PSA 证书网页查询使用的 `proxy-go` 网关地址和密钥，地址支持基础 URL 或完整 `/v1/fetch`。缺少任一项时 PSA 查询返回 503 `psa_not_configured`。迁移 Proxy-Go 到服务器时更新这两项并重新创建 Web 容器；地址须能从容器访问。游游亭和 ARS 请求保持原有行为，PSA 返回结构与验收方式见[开发文档](../docs/developer.md#评级卡证书查询)。
+- `PROXY_GO_API` / `PROXY_GO_API_KEY`：PSA、CGC 证书网页查询使用的 `proxy-go` 网关地址和密钥，地址支持基础 URL 或完整 `/v1/fetch`。缺少任一项时查询返回 503 `psa_not_configured` 或 `cgc_not_configured`。迁移 Proxy-Go 到服务器时更新这两项并重新创建 Web 容器；地址须能从容器访问。ARS 直连官网。返回结构与验收方式见[开发文档](../docs/developer.md#评级卡证书查询)。
 - 保留 `API_DOMAIN`、`TCG_PROXY_IPS`、RapidAPI、搜索代理、SMTP 参数及稳定的 `TCG_EMAIL_CODE_SECRET`。
 
 `.env` 保持权限 600，不提交到 Git。当前代理网关为 `172.19.0.1`；保留现有 default 网络，若改变网关应同步更新信任 IP。
@@ -53,7 +53,7 @@ sudo python3 /opt/tcg-http/releases/源码指纹/deploy.py /opt/tcg-http sha256:
 4. 启动 Web，检查 HTTPS、版本、数据库健康、匿名拒绝及 CORS。
 5. 成功后更新 current.json/previous.json，随后由原工作流发布 Pages。
 
-发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 14。`tcg-db migrate` 为尚未登记的现有 schema 1 登记基线，再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段、`0004` 创建收藏分组、`0005` 使收藏默认未分组（历史收藏均为未分组），随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种和 `0014` 的单会话迁移，保留用户及业务数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
+发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 15。`tcg-db migrate` 为尚未登记的现有 schema 1 登记基线，再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段、`0004` 创建收藏分组、`0005` 使收藏默认未分组（历史收藏均为未分组），随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移和 `0015` 的评级卡快照表迁移，保留用户及业务数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
 
 迁移 `0011` 将 schema 升为 11，创建卡牌库分组表，并为卡牌增加可空的分组字段及账号归属约束。先停止旧 Web/Worker，使用新镜像执行 `tcg-db migrate`，再启动新版本。已有卡牌保持未分组，数量、备注、图片、时间和排序均保留。WebUI 卡牌库提供分组栏、移动到分组（含多选批量移动）、按分组添加和按分组导出；导出文件记录分组名，导入时恢复分组并自动创建缺失的分组。
 
@@ -98,6 +98,10 @@ sudo python3 /opt/tcg-http/releases/当前版本/deploy.py /opt/tcg-http --rollb
 跨 schema 或 PostgreSQL → SQLite 回退必须人工选择匹配备份和旧 release。切回旧 SQLite 将不包含 PostgreSQL 阶段新增的数据；先保存 PostgreSQL 备份，再恢复旧 Compose 和发布状态。脚本拒绝自动执行这种回退。
 
 ## 验收
+
+评级卡 WebUI 需要 schema **15**（`0015_graded_cards.py`）；共同发布先备份并迁移，再启动匹配的 Web。确认前端发布包含 `graded-cards.js`、`graded-cards-ui.js`、`grading-scan.js` 和 `jsqr.js`。反向代理的读取超时需覆盖慢查询（建议至少 300 秒）；HTTPS 下才能在公网使用摄像头扫码。
+
+登录后进入“评级卡牌”，分别验证 PSA/CGC/ARS 新增、刷新页面后的持久化、重复提示、重新查询、详情和正反面图片、照片识别、删除确认及另一个账号的数据隔离。ARS 无图片时显示占位。自动化命令与浏览器验收范围见[评级卡验收](../docs/developer.md#评级卡验收)。
 
 `/api/health` 只有在 PostgreSQL 可连接且 schema 匹配时才返回 200。SMTP 不参与数据库健康检查；首次部署另行检查邮件配置及 TLS 认证。真实投递应使用受控邮箱验收。
 

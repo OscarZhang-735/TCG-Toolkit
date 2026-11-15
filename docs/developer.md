@@ -155,7 +155,7 @@ API 响应继续显式选择公开字段，不直接序列化 ORM 实体，避�
 ### Alembic 迁移
 
 `tcg-db migrate` 使用 Alembic，并在同一个 PostgreSQL 事务锁和事务内执行接管、升级及版本校验。
-已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种和 `0014` 的单会话迁移，升级到 schema 14，保留用户和业务数据。`0014` 将每账号的会话收敛为一条，规则见下文。
+已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移和 `0015` 的评级卡快照表迁移，升级到 schema 15，保留用户和业务数据。`0014` 将每账号的会话收敛为一条，规则见下文。
 新空库通过基线迁移初始化。原 `001_initial.sql` 保持不可变，仅供基线使用；业务代码不再执行 SQL 字符串。
 `schema_migrations` 保留为发布版本兼容标记，现有 JSON 状态接口和回退判断继续可用。
 
@@ -198,9 +198,73 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 
 ## 评级卡证书查询
 
+### WebUI 与保存接口
+
+登录后的 `#graded` 页面使用后端 `PROVIDERS` 注册表获取机构名称、扫码 URL 规则和预期查询时限。`GET /api/grading/providers` 返回 `{"items":[{"id":"psa","name":"PSA","timeout_seconds":225,"scan_patterns":["…"]}, …]}`；PSA、CGC 为 225 秒，ARS 为 40 秒。这是界面等待提示与浏览器超时的依据，底层 HTTP 超时仍按各机构客户端设置。
+
+以下接口均需本站 Bearer Token，响应含 `Cache-Control: no-store`。写接口还要求可信 `Origin` 和 `Content-Type: application/json`，包括 DELETE。
+
+| 方法与路径 | 输入与结果 |
+| --- | --- |
+| `GET /api/graded-cards` | 返回 `{"items":[记录, …]}`，按添加时间倒序，同秒按写入顺序倒序 |
+| `POST /api/graded-cards` | `{"provider":"psa","cert_number":"98428602"}`；查询成功后保存并返回 201 和记录 |
+| `POST /api/graded-cards/{id}/refresh` | JSON `{}`；重新查询，成功返回 200 和更新后的记录 |
+| `DELETE /api/graded-cards/{id}` | JSON `{}`；删除本账号记录，成功返回 204 |
+
+记录字段为 `id`、`provider`、`cert_number`、`source_url`、`title`、`grade`、`fields`、`population`、`images`、`created_at`、`refreshed_at`；时间为 Unix 秒。证书编号为字符串，服务端只去除首尾空白并接受 1–32 位 ASCII 数字。前端额外支持移除数字间的空格和连字符、从机构官网链接提取编号。
+
+同一账号的 `(provider, cert_number)` 唯一，重复新增返回 409 `{"detail":{"type":"graded_card_duplicate","id":"已有记录ID"}}`。已有重复在查询前直接返回；同时新增由数据库唯一约束仲裁。不同账号可分别保存同一证书。访问不存在或属于其他账号的记录均返回 404 `graded_card_not_found`，查询失败不会写入新记录或覆盖旧快照。
+
+数据库版本 **15**（Alembic `0015`）新增 `graded_cards` 表，保存每张证书最近一次成功查询的 JSON 快照。升级前备份，使用匹配版本运行 `tcg-db migrate`；生产共同发布流程会执行迁移。此迁移保留既有账号、会话和卡牌数据，不提供自动降级。
+
+查询与数据库操作分开执行，等待机构响应时不持有数据库连接。直接查询、新增和刷新共享进程内并发上限：每账号 3 项、全进程 8 项，超限返回 429 `grading_busy`。多进程部署时各进程分别计数。
+
+前端 `graded-cards.js` 统一管理新增和刷新队列，每标签页并行 2 项；浏览器等待上限为机构 `timeout_seconds` 加 30 秒。超时、网络或服务错误由用户显式重试；机构或编号错误提示修改输入。刷新失败仍显示旧数据。退出或更换账号会清空本页状态并丢弃迟到响应；关闭页面不能撤回服务器已开始的查询。队列不持久化，成功记录从数据库重新加载。
+
+`graded-cards-ui.js` 提供列表/网格、详情、筛选、排序、图片预览和删除确认。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
+
+### 评级卡验收
+
+在上文专用 PostgreSQL 测试环境中运行：
+
+```powershell
+python -m pytest -q tests/test_graded_cards.py tests/test_database.py tests/test_grading.py tests/test_cgc.py tests/test_ars.py
+node --test tests/graded_cards.test.mjs tests/grading_scan.test.mjs
+```
+
+后端覆盖持久化、排序、账号隔离、写请求保护、失败保留快照、并发重复、刷新期间删除以及查询连接释放；前端覆盖队列、重试、超时、会话切换和扫码错误处理。全量回归命令见[测试](#测试)。
+
+可重复的真实 Chromium 验收使用实际 WebUI、HTTP API 和隔离 PostgreSQL，仅替换邮件投递、机构查询和远端图片：
+
+```powershell
+python -m pip install -e ".[test,web,browser-test]"
+python -m playwright install chromium
+$env:TCG_BROWSER_TEST="1"
+python -m pytest -q tests/test_graded_webui.py
+$env:TCG_BROWSER_TEST="0"
+```
+
+该测试验证官网链接识别、保存后重载、去重、真实 PNG 照片及合成视频帧经 Canvas/jsQR 解码、摄像头权限拒绝提示与关闭后轨道释放、ARS 无图片显示、筛选、排序、详情和图片预览、失败后刷新重试、删除确认、中英文及状态提示翻译、390px 移动布局和退出清理。截图默认保存在 `data/graded-webui-acceptance/`，可用 `TCG_BROWSER_OUTPUT` 改路径。合成视频不调用电脑实体摄像头；实物标签的对焦和扫码效果需在目标设备检查。真实机构网络验收使用下文独立开关。
+
+2026-11-14 本地收尾验收结果（PostgreSQL 17 专用测试库）：
+
+| 检查 | 结果 |
+| --- | --- |
+| Python 全量回归 | 846 通过、5 项可选测试跳过；新增 schema 14→15 数据保留用例另行通过 |
+| Node 全量回归 | 207 通过；修正扫码测试预期及 Canvas 替身，清理测试遗留计时器 |
+| Chromium WebUI | 通过上述浏览器流程；修复切换语言后成功提示仍保留旧语言的问题 |
+| 真实 PSA / CGC 查询 | 两项均 HTTP 200，各返回两张证书图片，经 Proxy-Go 约 16 秒完成 |
+| 真实 ARS 查询 | HTTP 200，保留编号前导零，等级 10，图片列表为空，直连约 1 秒完成 |
+
+首次全量运行因 C 盘空间和内存分配不足中断；将本轮 `TEMP` / `TMP` 指向 D 盘后重新完成全量回归。上述通过数来自成功重跑，不含中断运行。测试未修改生产数据库。
+
+### 即时证书查询
+
 `GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa`、`cgc` 和 `ars`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
 
 配置服务端 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。PSA 查询使用 `ProxyGoClient`，以 `country="US"` 抓取 `https://www.psacard.com/en-CA/cert/{cert_number}/psa`。Proxy-Go 负责目标网站验证和代理重试；TCG 客户端默认超时 220 秒、连接超时 5 秒，不自动重试、不跟随重定向。修改 Compose 中的配置后重新创建 Web 容器。
+
+Docker Desktop 中的 Web 访问宿主机 Proxy-Go 时，地址应为 `http://host.docker.internal:18087/v1/fetch`；`127.0.0.1` 在容器内指向容器自身。宿主机直接运行 Python 则可使用 `http://127.0.0.1:18087/v1/fetch`。两种运行方式共用 `.env` 时，可在本地 Compose 覆盖文件中为 `services.web.environment.PROXY_GO_API` 单独设置容器地址。部署后应从实际 Web 容器验证证书查询，仅宿主机测试通过不能证明容器到网关可达。
 
 请求示例（`TCG_LOGIN_TOKEN` 为本站登录 Token）：
 
@@ -215,7 +279,7 @@ Invoke-RestMethod -Uri 'http://localhost:8000/api/grading/psa/certificates/98428
 - `fields`：Item Information 区域的原始标签和值，保留额外字段。
 - `population`：`{"at_grade": 整数或null, "higher": 整数或null}`，分别为同等级和更高等级数量；页面未提供时为 `null`。
 
-`images` 为 `[{"url": 图片src, "alt": 图片alt}, …]`，仅提取 `Cert image N` 证书图片，不包含 Logo 或销售缩略图，也不下载图片。此接口返回上述网页结构，不再返回 PSA 官方 API 的 JSON。
+`images` 为 `[{"url": 图片src, "alt": 图片alt, "side": "front"或"back"或null, "thumbnail_url": 缩略图URL或null}, …]`。PSA 仅提取 `Cert image N` 证书图片，按 `Cert image 1/2` 标记正反面，缩略图字段为 `null`；不包含 Logo 或销售缩略图，也不下载图片。此接口返回上述网页结构，不再返回 PSA 官方 API 的 JSON。CGC 按 Obverse/Reverse 标记正反面，保留页面上与原图不同的缩略图 URL；ARS 返回空图片列表。
 
 错误响应为 `{"detail":"错误代码"}`：
 
@@ -224,6 +288,7 @@ Invoke-RestMethod -Uri 'http://localhost:8000/api/grading/psa/certificates/98428
 | 401 | `authentication_required` | 未登录本站 |
 | 422 | `unsupported_grading_provider` / `invalid_cert_number` | 机构或编号错误 |
 | 404 | `grading_certificate_not_found` | 页面明确返回无记录 |
+| 429 | `grading_busy` | 当前账号或进程的并发查询已达上限 |
 | 503 | `psa_not_configured` | Proxy-Go 地址或密钥未配置 |
 | 504 | `psa_timeout` | 网关返回 504 或网络请求超时 |
 | 502 | `psa_authentication_failed` | Proxy-Go 网关返回 401/403 |
@@ -233,7 +298,7 @@ Invoke-RestMethod -Uri 'http://localhost:8000/api/grading/psa/certificates/98428
 
 网关 HTTP 200 后仍检查目标站状态及页面内容。服务器日志记录请求 ID、目标状态、代理字节和尝试次数；客户端错误响应不包含凭据或上游错误正文。
 
-`tests/test_grading.py` 使用模拟响应验证 PSA 网页解析和错误映射。`tests/test_grading_live.py` 按 PSA、CGC 参数化，从对应 TCG 接口调用开始，经过真实 Proxy-Go 和目标网页完成端到端验证；每个机构默认跳过，独立开关启用。运行时使用上文的专用测试 PostgreSQL 配置及可用的 Proxy-Go 配置，PSA 示例：
+`tests/test_grading.py` 使用模拟响应验证 PSA 网页解析和错误映射。`tests/test_grading_live.py` 按 PSA、CGC、ARS 参数化，从对应 TCG 接口调用开始访问真实官网；PSA/CGC 经过 Proxy-Go，ARS 直连。每个机构默认跳过，独立开关启用。运行时使用上文的专用测试 PostgreSQL 配置及可用的 Proxy-Go 配置，PSA 示例：
 
 ```powershell
 $env:TCG_LIVE_PSA_TEST="1"
@@ -281,6 +346,8 @@ python -m pytest -q -s tests/test_grading_live.py
 明确的无记录提示返回 404 `grading_certificate_not_found`；超时为 504 `ars_timeout`；429 为 502 `ars_rate_limited`；其他 HTTP/网络错误为 502 `ars_unavailable`；非 HTML、编号回显不匹配、关键结构缺失或多项高亮为 502 `ars_unreadable`。错误响应不包含上游正文。
 
 验收编号 `047088950114`：学生兼研究者 式部 茉優 / Student and Researcher, Mayu Shikibe，Lycee Overture，2019，LO-1606-S，Special Rare，高亮等级 10。采集时鉴定总数 1、提交总数 2；这些统计可能随上游更新。模拟用例在 `tests/test_ars.py`，正常及无记录页面来源见 `tests/fixtures/README.md`。
+
+真实 ARS 查询可设置 `$env:TCG_LIVE_ARS_TEST="1"` 后运行 `python -m pytest -q -s tests/test_grading_live.py`；`TCG_LIVE_ARS_OUTPUT` 可指定返回 JSON 的保存路径。三个机构开关可同时启用。
 
 ## 商户查价接口
 
@@ -440,7 +507,7 @@ IP 限制为各发送接口每分钟 5 次、注册／绑定验证及登录接�
 改密事务同时更新 Argon2id 摘要、消费验证码、撤销全部会话，并作废该用户其余待发送或有效验证码。
 登录的密码校验和会话创建也在写事务内完成，避免并发登录在改密后留下旧密码会话。
 验证码邮件晚到时不会重新激活已作废记录。前端改密成功清除本地会话，返回登录页，并提示使用新密码登录。
-当前使用 PostgreSQL schema 14。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
+当前使用 PostgreSQL schema 15。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
 
 自动化测试注入内存发信器，仍经过真实验证码校验；没有生产环境绕过开关。
 真实投递验收：配置 SMTP 后，向自己的测试邮箱发送验证码，确认邮件语言、到达时间、验证码注册和邮箱登录，再确认重发旧码失效。

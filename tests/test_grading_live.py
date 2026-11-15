@@ -1,4 +1,4 @@
-"""Opt-in HTTP certificate lookups through the configured real proxy-go."""
+"""Opt-in live HTTP lookups: PSA/CGC through Proxy-Go, ARS directly."""
 import json
 import logging
 import os
@@ -25,6 +25,10 @@ from tcg_toolkit.web import app
                  marks=pytest.mark.skipif(os.getenv('TCG_LIVE_CGC_TEST') != '1',
                                          reason='Set TCG_LIVE_CGC_TEST=1 for live CGC lookup.'),
                  id='cgc'),
+    pytest.param('ars', '047088950114', 'https://ars-grading.com/grading/searchNumber?id=047088950114',
+                 marks=pytest.mark.skipif(os.getenv('TCG_LIVE_ARS_TEST') != '1',
+                                         reason='Set TCG_LIVE_ARS_TEST=1 for live ARS lookup.'),
+                 id='ars'),
 ])
 def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, source_url):
     certificate_path = f'/api/grading/{provider}/certificates/{number}'
@@ -69,7 +73,8 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
                 certificate = result['certificate']
                 assert certificate['fields']
                 assert certificate['grade']
-                assert result['images']
+                if provider != 'ars':
+                    assert result['images']
                 if provider == 'psa':
                     assert certificate['fields']['Cert Number'] == number
                     assert certificate['fields']['Subject'] == 'CHITOSE TUTAMACHI'
@@ -78,7 +83,7 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
                     assert certificate['grade'] == 'GEM MT 10'
                     assert certificate['title']
                     assert len(result['images']) == 2
-                else:
+                elif provider == 'cgc':
                     assert certificate['fields']['Cert #'] == number
                     assert certificate['fields']['Card Name'] == 'Tsuyogaru Otona no Secret Labo Mayu'
                     assert certificate['fields']['Game'] == 'Weiss Schwarz Rose'
@@ -88,6 +93,10 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
                     assert certificate['title'] == certificate['fields']['Card Name']
                     assert [image['alt'] for image in result['images']] == ['Obverse', 'Reverse']
                     assert all('TN_' not in image['url'] for image in result['images'])
+                else:
+                    assert certificate['fields']['Card Name'] == 'Student and Researcher, Mayu Shikibe'
+                    assert certificate['grade'] == '10'
+                    assert result['images'] == []
                 for image in result['images']:
                     image_url = httpx.URL(image['url'])
                     assert image_url.scheme == 'https' and image_url.host
@@ -97,10 +106,14 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
                                   if record.name == 'tcg_toolkit.grading'
                                   and record.getMessage().startswith(
                                       f'{provider.upper()} proxy-go request_id=')]
-                assert len(proxy_messages) == 1
-                request_id = re.search(r'request_id=(\S+)', proxy_messages[0])
-                assert request_id and request_id.group(1) != 'None'
-                assert 'target_status=200' in proxy_messages[0]
+                request_id = None
+                if provider == 'ars':
+                    assert not proxy_messages
+                else:
+                    assert len(proxy_messages) == 1
+                    request_id = re.search(r'request_id=(\S+)', proxy_messages[0])
+                    assert request_id and request_id.group(1) != 'None'
+                    assert 'target_status=200' in proxy_messages[0]
 
             output = os.getenv(f'TCG_LIVE_{provider.upper()}_OUTPUT')
             if output:
@@ -108,12 +121,12 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
             print(json.dumps({
-                'flow': f'GET {certificate_path} -> proxy-go -> {provider.upper()} -> parsed certificate',
+                'flow': f'GET {certificate_path} -> {"direct" if provider == "ars" else "proxy-go"} -> {provider.upper()} -> parsed certificate',
                 'status': response.status_code,
                 'provider': result['provider'],
                 'cert_number': result['cert_number'],
                 'image_count': len(result['images']),
-                'proxy_request_id': request_id.group(1),
+                'proxy_request_id': request_id.group(1) if request_id else None,
                 'lookup_seconds': round(elapsed, 2),
             }))
         finally:

@@ -28,7 +28,7 @@ services:
       PROXY_GO_API: "${PROXY_GO_API:-}"
       PROXY_GO_API_KEY: "${PROXY_GO_API_KEY:-}"
       TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/encrypted-proxy}"
-      TCG_TRUSTED_ORIGINS: http://99.79.33.22:18080,https://oscarzhang-735.github.io
+      TCG_TRUSTED_ORIGINS: http://15.175.5.88:18080,https://oscarzhang-735.github.io
       FORWARDED_ALLOW_IPS: ""
     volumes:
       - /etc/localtime:/etc/localtime:ro

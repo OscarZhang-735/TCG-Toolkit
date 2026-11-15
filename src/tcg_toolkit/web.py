@@ -30,6 +30,7 @@ from .official import router as official_router
 from .yuyutei_cart import router as yuyutei_router
 from .product_details import router as product_router
 from .grading import router as grading_router
+from .graded_cards import router as graded_cards_router
 from .subscriptions import router as subscriptions_router
 from .notification_email import router as notification_email_router
 from .subscription_worker import SubscriptionWorker
@@ -90,6 +91,7 @@ app.include_router(official_router)
 app.include_router(yuyutei_router)
 app.include_router(product_router)
 app.include_router(grading_router)
+app.include_router(graded_cards_router)
 app.include_router(notification_email_router)
 app.include_router(subscriptions_router)
 app.include_router(search_router)
@@ -123,7 +125,8 @@ async def request_proxy_mode(request, call_next):
 async def browser_cache_policy(request, call_next):
     response = await call_next(request)
     if any(request.url.path == path or request.url.path.startswith(path + '/')
-           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/subscriptions', '/api/prices', '/api/grading')):
+           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/subscriptions', '/api/prices',
+                        '/api/grading', '/api/graded-cards')):
         response.headers['Cache-Control'] = 'no-store'
     elif not request.url.path.startswith('/api/'):
         # Static filenames are stable across releases; validate cached modules.

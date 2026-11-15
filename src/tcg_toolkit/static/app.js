@@ -1,5 +1,6 @@
 import {createProxySettings} from './proxy-settings.js';
 import {clearCards, activateCards, ownedQuantity, setCardsCurrency} from './cards-ui.js';
+import {clearGraded, activateGraded} from './graded-cards-ui.js';
 import {createFavorites, cardKey} from './favorites.js';
 import {bindFavoriteGroups} from './favorite-groups-ui.js';
 import {createSelection} from './favorite-selection.js';
@@ -503,7 +504,7 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
   userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;
@@ -516,7 +517,7 @@ export function clearUser() {
 export function activateUser(id, request, email = null) {
   clearUser(); userId = id; requestAPI = request; notificationEmail = email;
   history = readHistory(localStorage, userId); $('search').inert = false;
-  proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
+  proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); activateGraded(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
   refreshLanguage();
 }
 // The account page reports the effective address after loading or changing it.

@@ -127,6 +127,23 @@ class OwnedCard(Base):
     )
 
 
+class GradedCard(Base):
+    __tablename__ = "graded_cards"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    # A grading.PROVIDERS id. Deliberately unconstrained: adding a provider needs no migration.
+    provider: Mapped[str]
+    # Digits kept as text so leading zeros survive.
+    cert_number: Mapped[str]
+    # JSON of the latest successful lookup: source_url, certificate and images.
+    snapshot: Mapped[str]
+    created_at: Mapped[int]
+    refreshed_at: Mapped[int]
+    sort_id: Mapped[int] = mapped_column(Identity(always=True))
+    __table_args__ = (UniqueConstraint("user_id", "provider", "cert_number", name="graded_cards_user_cert_key"),)
+
+
 class CartOperation(Base):
     __tablename__ = "cart_operations"
 

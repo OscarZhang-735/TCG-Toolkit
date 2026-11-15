@@ -20,9 +20,12 @@ URL = '/api/grading/cgc/certificates/' + NUMBER
 SOURCE_URL = f'https://www.cgccards.com/certlookup/{NUMBER}/'
 IMAGE_BASE = ('https://ccg-imaging-cgc-tradingcards-production.s3.amazonaws.com/'
               '17635520-875d-4082-ab53-cd12c96ea49a/')
+# Originals come from the links; the page's TN_ thumbnails are kept for grids.
 IMAGES = [
-    {'url': IMAGE_BASE + 'CAR6091052-028_OBV.jpg', 'alt': 'Obverse'},
-    {'url': IMAGE_BASE + 'CAR6091052-028_REV.jpg', 'alt': 'Reverse'},
+    {'url': IMAGE_BASE + 'CAR6091052-028_OBV.jpg', 'alt': 'Obverse', 'side': 'front',
+     'thumbnail_url': IMAGE_BASE + 'TN_CAR6091052-028_OBV.jpg'},
+    {'url': IMAGE_BASE + 'CAR6091052-028_REV.jpg', 'alt': 'Reverse', 'side': 'back',
+     'thumbnail_url': IMAGE_BASE + 'TN_CAR6091052-028_REV.jpg'},
 ]
 FIELDS = {
     'Cert #': NUMBER, 'Card Name': 'Tsuyogaru Otona no Secret Labo Mayu',

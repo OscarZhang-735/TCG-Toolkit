@@ -1,6 +1,16 @@
-"""Authenticated grading certificate lookups through provider adapters."""
+"""Authenticated grading certificate lookups through a provider registry.
+
+Every adapter returns the same shape: ``certificate`` with ``title``, ``grade``,
+``fields`` and ``population``, and ``images`` as ``{url, alt, side, thumbnail_url}``.
+``PROVIDERS`` is the only list of providers; the API and the web UI read it.
+"""
 import logging
 import re
+import threading
+from collections import Counter
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Callable
 from urllib.parse import urlencode, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
@@ -16,6 +26,8 @@ from .external.proxy_go import ProxyGoClient, ProxyGoConfigError, ProxyGoGateway
 router = APIRouter(prefix='/api/grading', dependencies=[Depends(current_user)])
 PSA_URL = 'https://www.psacard.com/en-CA/cert/{cert_number}/psa'
 CGC_URL = 'https://www.cgccards.com/certlookup/{cert_number}/'
+PSA_SIDES = {'Cert image 1': 'front', 'Cert image 2': 'back'}
+CGC_SIDES = {'obverse': 'front', 'reverse': 'back'}
 logger = logging.getLogger(__name__)
 
 
@@ -51,7 +63,9 @@ def parse_psa(html, cert_number):
         if not source or parsed.scheme not in ('http', 'https') or not parsed.netloc:
             unreadable()
         if not any(item['url'] == url for item in images):
-            images.append({'url': url, 'alt': image['alt']})
+            # PSA lists the slab front first, then the back; src is already a small image.
+            images.append({'url': url, 'alt': image['alt'], 'side': PSA_SIDES.get(image['alt']),
+                           'thumbnail_url': None})
 
     # Population panels may be streamed outside <main>; absent counts stay null.
     population = {'at_grade': None, 'higher': None}
@@ -112,7 +126,9 @@ def parse_cgc(html, cert_number):
         if parsed.scheme not in ('http', 'https') or not parsed.netloc:
             unreadable()
         if not any(item['url'] == url for item in images):
-            images.append({'url': url, 'alt': image.get('title') or image.get('alt', '')})
+            alt = image.get('title') or image.get('alt', '')
+            images.append({'url': url, 'alt': alt, 'side': CGC_SIDES.get(alt.strip().lower()),
+                           'thumbnail_url': _thumbnail(source_url, image.get('src'), url)})
 
     population = {'at_grade': None, 'higher': None}
     labels = {f"In {fields['Grade']} Grade": 'at_grade', 'In Higher Grades': 'higher'}
@@ -127,6 +143,20 @@ def parse_cgc(html, cert_number):
             'certificate': {'title': fields['Card Name'], 'grade': fields['Grade'],
                             'fields': fields, 'population': population},
             'images': images}
+
+
+def _thumbnail(base, source, original):
+    """The page's own small image (CGC ``TN_`` files); optional, so bad values are dropped."""
+    if not source:
+        return None
+    try:
+        url = urljoin(base, source)
+        parsed = urlsplit(url)
+    except ValueError:
+        return None
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc or url == original:
+        return None
+    return url
 
 
 def fetch_cgc(cert_number):
@@ -222,7 +252,7 @@ def parse_ars(html, cert_number):
         unreadable()
     return {'provider': 'ars', 'cert_number': cert_number,
             'source_url': ARS_URL + '?' + urlencode({'id': cert_number}),
-            'certificate': {'fields': fields, 'grade': grade,
+            'certificate': {'title': fields['Card Name'], 'fields': fields, 'grade': grade,
                 'population': {'total_grading': totals[0], 'total_submission': totals[1],
                                'grades': grades, 'remarks': remarks}},
             'images': []}
@@ -244,15 +274,91 @@ def fetch_ars(cert_number):
     return parse_ars(response.text, cert_number)
 
 
-PROVIDERS = {'psa': fetch_psa, 'ars': fetch_ars, 'cgc': fetch_cgc}
+@dataclass(frozen=True)
+class GradingProvider:
+    """One grading company. ``scan_patterns`` recognise the URL in its slab QR codes.
+
+    Patterns are matched case-insensitively against the whole scanned text and group 1
+    is the certificate number. The browser compiles the same strings with ``RegExp``,
+    so they may only use syntax both engines share (no named groups or inline flags).
+    """
+    id: str
+    name: str
+    fetch: Callable[[str], dict]
+    timeout_seconds: int
+    scan_patterns: tuple[str, ...] = ()
 
 
-@router.get('/{provider}/certificates/{cert_number}')
-async def certificate(provider: str, cert_number: str):
-    adapter = PROVIDERS.get(provider)
-    if adapter is None:
+# Insertion order is the order the web UI lists providers in.
+PROVIDERS = {provider.id: provider for provider in (
+    # Labels encode https://www.psacard.com/cert/<n>/; the site also adds /psa and locale paths.
+    GradingProvider('psa', 'PSA', fetch_psa, 225, (
+        r'^https?://(?:www\.)?psacard\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?cert/([0-9]{1,32})(?:/[^?#]*)?(?:[?#].*)?$',)),
+    # Labels encode https://www.cgccards.com/certlookup/<n>/<grade>/; older cards point at cgccomics.
+    GradingProvider('cgc', 'CGC', fetch_cgc, 225, (
+        r'^https?://(?:www\.)?cgc(?:cards|comics)\.com/certlookup/([0-9]{1,32})(?:/[^?#]*)?(?:[?#].*)?$',)),
+    # Labels encode https://ars-grading.com/grading/searchNumber?id=<n>.
+    GradingProvider('ars', 'ARS', fetch_ars, 40, (
+        r'^https?://(?:www\.)?ars-grading\.com/grading/searchNumber\?(?:[^#]*&)?id=([0-9]{1,32})(?:[&#].*)?$',)),
+)}
+
+
+class LookupSlots:
+    """Non-blocking caps on certificate lookups in flight.
+
+    A PSA or CGC lookup can hold a worker thread for about 225 seconds, and sync routes
+    share one threadpool. Process-local, like the auth rate limiter.
+    """
+
+    def __init__(self, per_user=3, total=8):
+        self.per_user, self.total = per_user, total
+        self._lock = threading.Lock()
+        self._users = Counter()
+        self._active = 0
+
+    @contextmanager
+    def hold(self, user_id):
+        with self._lock:
+            if self._active >= self.total or self._users[user_id] >= self.per_user:
+                raise HTTPException(429, detail='grading_busy')
+            self._active += 1
+            self._users[user_id] += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._active -= 1
+                self._users[user_id] -= 1
+                if self._users[user_id] <= 0:
+                    del self._users[user_id]
+
+
+LOOKUP_SLOTS = LookupSlots()
+
+
+def normalize_request(provider_id, cert_number):
+    provider = PROVIDERS.get(provider_id)
+    if provider is None:
         raise HTTPException(422, detail='unsupported_grading_provider')
     cert_number = cert_number.strip()
     if not re.fullmatch(r'[0-9]{1,32}', cert_number):
         raise HTTPException(422, detail='invalid_cert_number')
-    return await run_in_threadpool(adapter, cert_number)
+    return provider, cert_number
+
+
+def lookup_certificate(provider_id, cert_number, user_id):
+    """Validate, take a lookup slot and fetch. Blocking: call it from a worker thread."""
+    provider, cert_number = normalize_request(provider_id, cert_number)
+    with LOOKUP_SLOTS.hold(user_id):
+        return provider.fetch(cert_number)
+
+
+@router.get('/providers')
+def providers():
+    return {'items': [{'id': item.id, 'name': item.name, 'timeout_seconds': item.timeout_seconds,
+                       'scan_patterns': list(item.scan_patterns)} for item in PROVIDERS.values()]}
+
+
+@router.get('/{provider}/certificates/{cert_number}')
+async def certificate(provider: str, cert_number: str, user=Depends(current_user)):
+    return await run_in_threadpool(lookup_certificate, provider, cert_number, user['id'])
