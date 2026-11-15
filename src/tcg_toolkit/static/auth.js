@@ -13,7 +13,7 @@ let user = null, searchApp = null, registering = false, errorKey = '';
 let bindError = '', authGeneration = 0, forgotten = false;
 let avatarBusy = false, avatarStatus = '', avatarCropError = '', avatarPicking = false;
 let nicknameBusy = false, nicknameError = '';
-const api = createAuthenticatedRequest(() => signedOut('auth_expired'), apiRequest);
+const api = createAuthenticatedRequest(() => signedOut('auth_expired'), apiRequest, getToken);
 const registrationEmail = createEmailChallenge({request: apiRequest});
 const bindingEmail = createEmailChallenge({request: api.fetch});
 const passwordUI = createPasswordUI({request: apiRequest, authenticatedRequest: api.fetch,
@@ -193,6 +193,7 @@ $('auth-form').addEventListener('submit', async event => {
   const challenge = registrationEmail.payload($('auth-code').value);
   if (registering && !challenge) { errorKey = 'email_request_code'; refresh(); return; }
   const started = authGeneration;
+  const token = getToken();
   $('auth-submit').disabled = true; $('auth-switch').disabled = true; $('auth-forgot').disabled = true;
   errorKey = ''; refresh();
   try {
@@ -201,10 +202,10 @@ $('auth-form').addEventListener('submit', async event => {
       body: JSON.stringify({username: $('auth-username').value, password: $('auth-password').value, ...(registering ? {confirm_password: $('auth-confirm-password').value, email: $('auth-email').value, ...challenge} : {})})
     });
     const result = await response.json();
-    if (started !== authGeneration) return;
+    if (started !== authGeneration || token !== getToken()) return;
     if (!response.ok) {errorKey = authError(result.detail, response.status); refresh(); return;}
     setToken(result.token); await signedIn(result.user);
-  } catch { if (started === authGeneration) { errorKey = 'auth_unavailable'; refresh(); } }
+  } catch { if (started === authGeneration && token === getToken()) { errorKey = 'auth_unavailable'; refresh(); } }
   finally { $('auth-submit').disabled = false; $('auth-switch').disabled = false; $('auth-forgot').disabled = false; }
 });
 $('password-toggle').addEventListener('click', () => {
@@ -334,15 +335,17 @@ $('avatar-crop-form').addEventListener('submit', async event => {
   }
 });
 $('logout').addEventListener('click', async () => {
+  const token = getToken();
   yuyuteiClient.clearCredentials();
   $('logout').disabled = true;
   api.invalidate(); searchApp?.clearUser();
   try {
     const response = await apiRequest('/api/auth/logout', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: '{}'});
+    if (token !== getToken()) return;
     if (!response.ok) throw new Error('logout');
     signedOut();
-  } catch { $('account-status').textContent = t('auth_logout_failed'); }
+  } catch { if (token === getToken()) $('account-status').textContent = t('auth_logout_failed'); }
   finally { $('logout').disabled = false; }
 });
 $('auth-language').addEventListener('change', () => {setLanguage($('auth-language').value); refresh();});
@@ -363,7 +366,7 @@ async function restoreSession() {
     const value = response.ok ? await response.json() : null;
     if (generation !== restoreGeneration || token !== getToken()) return;
     if (response.ok) { location.hash = destination; await signedIn(value); }
-    else if (response.status === 401) signedOut();
+    else if (response.status === 401) signedOut('auth_expired');
     else {errorKey = 'auth_unavailable'; refresh();}
   } catch {if (generation === restoreGeneration) {errorKey = 'auth_unavailable'; refresh();}}
   finally {if (generation === restoreGeneration) $('auth-submit').disabled = false;}

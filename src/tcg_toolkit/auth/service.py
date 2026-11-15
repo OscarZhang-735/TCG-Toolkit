@@ -37,7 +37,8 @@ class AuthService:
     def _session(self, db, user_id):
         token = secrets.token_urlsafe(32)
         now = int(time.time())
-        db.execute(delete(LoginSession).where(LoginSession.user_id == user_id, LoginSession.expires_at <= now))
+        # Login holds the user row lock, so concurrent sign-ins replace one another.
+        db.execute(delete(LoginSession).where(LoginSession.user_id == user_id))
         db.add(LoginSession(token_hash=token_hash(token), user_id=user_id, expires_at=now + SESSION_SECONDS))
         return token
 

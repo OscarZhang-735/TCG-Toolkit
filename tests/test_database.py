@@ -90,12 +90,40 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
         assert db.get(Favorite, 'favorite').snapshot == '{}'
         assert db.get(Favorite, 'favorite').group_id is None
         assert db.get(OwnedCard, 'card').quantity == 3
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0013'
+        assert MigrationContext.configure(db.connection()).get_current_revision() == '0014'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
     with app.state.auth.store.connect() as db:
         assert compare_metadata(MigrationContext.configure(db), Base.metadata) == []
+
+
+def test_schema_thirteen_keeps_one_session_per_account(empty_database):
+    with Database(empty_database) as store, store.connect() as db:
+        command.upgrade(schema.alembic_config(db), '0013')
+        db.execute(User.__table__.insert(), [
+            dict(id=user, username=user, password_hash='hash', created_at=1)
+            for user in ('alice', 'bob', 'single', 'empty')])
+        db.execute(LoginSession.__table__.insert(), [
+            dict(token_hash='alice-old', user_id='alice', expires_at=9999999998),
+            dict(token_hash='alice-new', user_id='alice', expires_at=9999999999),
+            dict(token_hash='bob-a', user_id='bob', expires_at=9999999999),
+            dict(token_hash='bob-z', user_id='bob', expires_at=9999999999),
+            dict(token_hash='single-token', user_id='single', expires_at=9999999999)])
+    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
+    with UserStore(empty_database) as store, store.session() as db:
+        assert {row.user_id: row.token_hash for row in db.scalars(select(LoginSession))} == {
+            'alice': 'alice-new', 'bob': 'bob-z', 'single': 'single-token'}
+        assert db.scalar(select(func.count()).select_from(User)) == 4
+        with pytest.raises(IntegrityError) as error, db.begin_nested():
+            db.add(LoginSession(token_hash='alice-extra', user_id='alice', expires_at=9999999999))
+            db.flush()
+        assert error.value.orig.diag.constraint_name == 'sessions_user'
+        db.add(LoginSession(token_hash='empty-first', user_id='empty', expires_at=9999999999))
+    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
+    with UserStore(empty_database) as store, store.session() as db:
+        assert {row.user_id: row.token_hash for row in db.scalars(select(LoginSession))} == {
+            'alice': 'alice-new', 'bob': 'bob-z', 'single': 'single-token', 'empty': 'empty-first'}
 
 
 def test_schema_ten_keeps_historical_cards_ungrouped(empty_database):
@@ -248,9 +276,9 @@ def test_schema_nine_resets_all_accounts_to_24_hours(empty_database):
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0014_failure.py').write_text(
+    (scripts / 'versions' / '0015_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0014'\ndown_revision='0013'\n"
+        "revision='0015'\ndown_revision='0014'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = schema.alembic_config

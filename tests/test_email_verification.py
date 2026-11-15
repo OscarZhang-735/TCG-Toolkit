@@ -230,8 +230,10 @@ def test_configuration_missing_only_disables_email(client):
     token = legacy_user()
     app.state.auth.verification = EmailVerification(app.state.auth.store, Mailbox(), '')
     assert client.post('/api/auth/register/email-code', json={'email': 'alice@example.com'}).json()['detail'] == 'email_unavailable'
-    assert client.post('/api/auth/login', json={'username': 'legacy', 'password': 'password123'}).status_code == 200
     assert client.get('/api/auth/me', headers={'Authorization': 'Bearer ' + token}).status_code == 200
+    login = client.post('/api/auth/login', json={'username': 'legacy', 'password': 'password123'})
+    assert login.status_code == 200
+    assert client.get('/api/auth/me', headers={'Authorization': 'Bearer ' + login.json()['token']}).status_code == 200
 
 
 

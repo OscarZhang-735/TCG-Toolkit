@@ -2,6 +2,7 @@ from sqlalchemy import select, func, update
 from tcg_toolkit.db_models import AvatarCleanup, FavoriteGroup, LoginSession, SchemaMigration, User
 from auth_helpers import registration_body, register_user
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from io import BytesIO
 import httpx
 from PIL import Image
@@ -53,6 +54,52 @@ def test_register_session_logout_login(client):
     with store.session() as db:
         db.execute(update(LoginSession).values(expires_at=0))
     assert client.get("/api/auth/me").status_code == 401
+
+
+@pytest.mark.parametrize("identifier", ["ALICE", "alice@example.com"])
+def test_new_login_replaces_other_device_and_stale_logout_is_harmless(client, identifier):
+    first = register_user(client, **BODY).json()["token"]
+    other = register_user(client, "bob").json()["token"]
+    # A different device does not send the first device's Authorization header.
+    response = client.post("/api/auth/login", json={**BODY, "username": identifier})
+    assert response.status_code == 200
+    latest = response.json()["token"]
+    assert latest != first
+    assert client.get("/api/auth/me", headers={"Authorization": "Bearer " + first}).status_code == 401
+    assert client.post("/api/auth/logout", json={}, headers={"Authorization": "Bearer " + first}).status_code == 204
+    assert client.get("/api/auth/me", headers={"Authorization": "Bearer " + latest}).status_code == 200
+    assert app.state.auth.current_user(other)
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(LoginSession).where(
+            LoginSession.user_id == response.json()["user"]["id"])) == 1
+
+
+def test_failed_login_keeps_active_session(client):
+    token = register_user(client, **BODY).json()["token"]
+    response = client.post("/api/auth/login", json={**BODY, "password": "wrong password!"},
+                           headers={"Authorization": "Bearer " + token})
+    assert response.status_code == 401
+    assert app.state.auth.current_user(token)
+
+
+def test_concurrent_logins_leave_one_active_session(client):
+    original = register_user(client, **BODY).json()
+    start = Barrier(2)
+
+    def login():
+        # Separate stores exercise database locking across application instances.
+        with UserStore(app.state.auth.store.conninfo) as store:
+            start.wait(timeout=5)
+            return AuthService(store).login(BODY["username"], BODY["password"])[1]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tokens = list(pool.map(lambda _: login(), range(2)))
+    assert len(set(tokens)) == 2
+    assert app.state.auth.current_user(original["token"]) is None
+    assert sum(app.state.auth.current_user(token) is not None for token in tokens) == 1
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(LoginSession).where(
+            LoginSession.user_id == original["user"]["id"])) == 1
 
 
 def test_validation_and_errors(client):

@@ -38,7 +38,7 @@ class LoginSession(Base):
     token_hash: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     expires_at: Mapped[int]
-    __table_args__ = (Index("sessions_expiry", "expires_at"), Index("sessions_user", "user_id"))
+    __table_args__ = (Index("sessions_expiry", "expires_at"), Index("sessions_user", "user_id", unique=True))
 
 
 class AvatarCleanup(Base):

@@ -36,11 +36,12 @@ def test_old_password_change_works_without_email_and_revokes_all_sessions(client
     first = legacy_user()
     second = app.state.auth.login('legacy', 'password123')[1]
     other = legacy_user('other')
-    client.headers['Authorization'] = 'Bearer ' + first
+    assert app.state.auth.current_user(first) is None
+    client.headers['Authorization'] = 'Bearer ' + second
     app.state.auth.verification.secret = b''
     assert client.post('/api/auth/password/change', json={**NEW, 'method': 'password',
                        'current_password': 'wrongpassword'}).json()['detail'] == 'invalid_password'
-    assert app.state.auth.current_user(first)
+    assert app.state.auth.current_user(second)
     assert client.post('/api/auth/password/change', json={**NEW, 'method': 'password',
                        'current_password': 'password123'}).status_code == 204
     assert app.state.auth.current_user(first) is None and app.state.auth.current_user(second) is None
@@ -155,9 +156,10 @@ def test_concurrent_reset_succeeds_once(client):
         assert sum(pool.map(lambda _: reset(), range(2))) == 1
 
 
-def test_login_in_progress_cannot_leave_old_password_session_after_change(client, monkeypatch):
+def test_login_in_progress_cannot_leave_old_password_session_after_reset(client, monkeypatch):
     import tcg_toolkit.auth.service as module
-    original = account(client)
+    account(client)
+    body = code_body(client, 'reset')
     verifying, release = Event(), Event()
     real_verify = module.verify_password
     def paused_verify(encoded, password):
@@ -169,12 +171,23 @@ def test_login_in_progress_cannot_leave_old_password_session_after_change(client
     with ThreadPoolExecutor(max_workers=2) as pool:
         login = pool.submit(app.state.auth.login, 'alice', 'password123')
         assert verifying.wait(5)
-        change = pool.submit(app.state.auth.change_password, original['user']['id'], original['token'],
-                             NEW['new_password'], 'password', 'password123')
+        # Reset uses its email proof even after login replaces the original session.
+        reset = pool.submit(app.state.auth.reset_password, 'alice@example.com', body['challenge_id'],
+                            body['code'], NEW['new_password'])
         release.set()
         token = login.result()[1]
-        change.result()
+        reset.result()
     assert app.state.auth.current_user(token) is None
+
+
+def test_replaced_session_cannot_change_password_after_earlier_authentication(client):
+    original = account(client)
+    token = app.state.auth.login('alice', 'password123')[1]
+    with pytest.raises(AuthError) as exc:
+        app.state.auth.change_password(original['user']['id'], original['token'], NEW['new_password'],
+                                        'password', 'password123')
+    assert exc.value.status_code == 401
+    assert app.state.auth.current_user(token)
 
 
 @pytest.mark.parametrize('body', [
