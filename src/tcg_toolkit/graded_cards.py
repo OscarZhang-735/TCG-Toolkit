@@ -11,10 +11,13 @@ corners the user confirmed, then stored as public WebP in the avatar COS bucket.
 """
 import json
 import re
+from io import BytesIO
 import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
+from PIL import Image
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, StrictStr
 from sqlalchemy import select
@@ -24,6 +27,7 @@ from sqlalchemy.orm import Session
 from .auth.avatar import GRADED_PREFIX, cleanup_avatar, is_avatar_object, avatar_bucket, store_webp
 from .auth.dependencies import current_user, require_trusted_origin, write_guard
 from .card_detect import ImageError, crop_card, detect_card, load_image
+from .card_enhance import calibrate
 from .database import is_unique_violation
 from .db_models import AvatarCleanup, GradedCard
 from .grading import LOOKUPS, lookup_certificate, normalize_request, present
@@ -212,6 +216,23 @@ def decode(content):
         return load_image(content)
     except ImageError as exc:
         raise HTTPException(422, detail=exc.code) from None
+
+
+@router.post('/calibrate-image', dependencies=[Depends(require_trusted_origin)])
+async def calibrate_image(request: Request, user=Depends(current_user)):
+    """Optional brightness calibration (glare, uneven light) of a photo before cropping.
+
+    Returns a same-size JPEG; nothing is stored, so the browser can undo it by keeping
+    the original.
+    """
+    content = await read_image(request, user)
+
+    def run():
+        output = BytesIO()
+        Image.fromarray(calibrate(decode(content))).save(output, format='JPEG', quality=92)
+        return output.getvalue()
+
+    return Response(await run_in_threadpool(run), media_type='image/jpeg')
 
 
 @router.post('/detect-card', dependencies=[Depends(require_trusted_origin)])

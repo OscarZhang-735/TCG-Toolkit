@@ -430,3 +430,25 @@ test('photos are sent raw: detection, crop upload with corners, and restoring th
   assert.equal(await graded.restoreImage('s', 'back'), 'graded_error_missing');
   assert.deepEqual(graded.state.records, [], 'a card deleted elsewhere disappears');
 });
+
+test('brightness calibration sends the photo raw and returns the calibrated image', async () => {
+  const calibrated = new Blob(['calibrated'], {type: 'image/jpeg'}), calls = [];
+  let status = 200;
+  const api = async (url, options = {}) => {
+    const {pathname} = new URL(url, 'http://local');
+    calls.push({pathname, method: options.method, type: options.headers?.['Content-Type'], body: options.body});
+    if (pathname === '/api/grading/providers') return reply({items: PROVIDERS});
+    if (pathname === '/api/graded-cards' && !options.method) return reply({items: []});
+    if (pathname === '/api/graded-cards' && options.method === 'GET') return reply({items: []});
+    return status === 200 ? {ok: true, status, blob: async () => calibrated} : reply(status === 422 ? {detail: 'graded_image_invalid'} : {}, status);
+  };
+  const graded = createGradedCards(() => {});
+  await graded.activate(api);
+  const photo = new Blob(['jpeg'], {type: 'image/jpeg'});
+  assert.equal(await graded.calibrateImage(photo), calibrated);
+  assert.deepEqual(calls.at(-1), {pathname: '/api/graded-cards/calibrate-image', method: 'POST', type: 'image/jpeg', body: photo});
+  status = 422;
+  await assert.rejects(graded.calibrateImage(photo), error => error.key === 'graded_image_invalid');
+  status = 500;
+  await assert.rejects(graded.calibrateImage(photo), error => error.key === 'graded_image_failed');
+});

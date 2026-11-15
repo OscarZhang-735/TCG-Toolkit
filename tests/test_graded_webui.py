@@ -235,6 +235,24 @@ def test_graded_webui(monkeypatch, tmp_path):
                 photos = Path(os.getenv('TCG_BROWSER_OUTPUT', 'data/graded-webui-acceptance'))
                 photos.mkdir(parents=True, exist_ok=True)
                 crop.screenshot(path=str(photos / 'crop-dialog.png'))
+                # Optional brightness calibration replaces the photo in place and can be undone.
+                original_src = page.locator('#graded-crop-image').get_attribute('src')
+                corners_before = handles.evaluate_all('hs => hs.map(h => [h.getAttribute("cx"), h.getAttribute("cy")])')
+                calibrate = page.locator('#graded-crop-calibrate')
+                expect(calibrate).to_have_text('Calibrate brightness')
+                calibrate.click()
+                expect(page.locator('#graded-crop-hint')).to_contain_text('Brightness calibrated')
+                expect(calibrate).to_have_attribute('aria-pressed', 'true')
+                expect(calibrate).to_have_text('Undo calibration')
+                calibrated_src = page.locator('#graded-crop-image').get_attribute('src')
+                assert calibrated_src != original_src
+                assert handles.evaluate_all('hs => hs.map(h => [h.getAttribute("cx"), h.getAttribute("cy")])') == corners_before
+                crop.screenshot(path=str(photos / 'crop-calibrated.png'))
+                calibrate.click()
+                expect(page.locator('#graded-crop-image')).to_have_attribute('src', original_src)
+                expect(calibrate).to_have_attribute('aria-pressed', 'false')
+                calibrate.click()  # re-applied from memory, no new request
+                expect(page.locator('#graded-crop-image')).to_have_attribute('src', calibrated_src)
                 assert float(handles.first.get_attribute('cx')) < moved
                 page.locator('#graded-crop-save').click()
                 expect(crop).not_to_be_visible()

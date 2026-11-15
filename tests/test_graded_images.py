@@ -1,6 +1,7 @@
 """Card outline detection and the upload / crop / restore flow for graded card photos."""
 from io import BytesIO
 
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
@@ -8,7 +9,7 @@ from PIL import Image
 from auth_helpers import register_user
 from card_photos import _background, corner_error, photo
 from test_graded_cards import PATH, add, client  # noqa: F401  (fixture)
-from tcg_toolkit import card_detect, graded_cards
+from tcg_toolkit import card_detect, card_enhance, graded_cards
 
 BUCKET = 'https://cards.example.com'
 
@@ -173,3 +174,56 @@ def test_upload_validation_ownership_and_storage(client, cos, monkeypatch):  # n
     assert upload(client, card['id'], 'front', data, truth).json() == {'detail': 'graded_card_not_found'}
     assert client.request('DELETE', f"{PATH}/{card['id']}/images/front", json={}).status_code == 404
     assert not objects
+
+
+def glare_scene():
+    """A card on a dark table: white top half with print, purple artwork with print below,
+    and a bright glare veil washing over the artwork (as on photographed slabs)."""
+    scene = np.full((1200, 900, 3), 45, np.uint8)
+    scene[150:1050, 200:700] = (205, 202, 195)  # diffuse white: well below specular glare
+    scene[600:1000, 220:680] = (110, 70, 140)
+    for row in range(200, 1000, 40):
+        scene[row:row + 6, 240:660] = (40, 30, 50) if row < 600 else (235, 215, 120)  # print, gold lines
+    veil = np.zeros((1200, 900), np.float32)
+    veil[650:950, 250:650] = 1.0
+    veil = cv2.GaussianBlur(veil, (0, 0), 25)[:, :, None]
+    glared = np.clip(scene * (1 - 0.9 * veil) + 255 * 0.9 * veil, 0, 255).astype(np.uint8)
+    return scene, glared
+
+
+def contrast(region):
+    return float(np.percentile(region, 95) - np.percentile(region, 5))
+
+
+def test_calibration_lifts_the_glare_veil_and_keeps_the_rest():
+    scene, glared = glare_scene()
+    result = card_enhance.calibrate(glared)
+    assert result.shape == glared.shape and result.dtype == np.uint8
+    lightness = lambda image: cv2.cvtColor(image, cv2.COLOR_RGB2LAB)[:, :, 0].astype(np.float32)
+    before, after = lightness(glared), lightness(result)
+    artwork = (slice(732, 755), slice(320, 580))  # purple between the gold lines, under the veil
+    assert after[artwork].mean() < before[artwork].mean() - 20, 'the veil over the artwork is lifted'
+    veiled = (slice(720, 880), slice(300, 600))
+    assert contrast(after[veiled]) > contrast(before[veiled]) * 1.5, 'the print under it reads better'
+    clean = (slice(220, 520), slice(240, 660))
+    assert abs(after[clean].mean() - before[clean].mean()) < 10, 'unaffected areas stay close'
+    assert card_enhance.glare_mask(glared)[veiled].mean() > 0.5
+
+
+def test_a_white_card_is_not_mistaken_for_glare():
+    scene, _ = glare_scene()
+    # Only the margins against the dark table may pick up a little.
+    assert card_enhance.glare_mask(scene)[250:950, 260:640].mean() < 0.08
+
+
+def test_calibrate_endpoint_returns_a_same_size_jpeg(client):  # noqa: F811
+    _, glared = glare_scene()
+    output = BytesIO(); Image.fromarray(glared).save(output, 'PNG')
+    response = client.post(f'{PATH}/calibrate-image', content=output.getvalue(), headers={'Content-Type': 'image/png'})
+    assert response.status_code == 200 and response.headers['content-type'] == 'image/jpeg'
+    assert response.headers['cache-control'] == 'no-store'
+    with Image.open(BytesIO(response.content)) as image:
+        assert image.format == 'JPEG' and image.size == (900, 1200)
+    assert client.post(f'{PATH}/calibrate-image', content=b'x', headers={'Content-Type': 'text/plain'}).status_code == 415
+    assert client.post(f'{PATH}/calibrate-image', content=output.getvalue(), headers={
+        'Content-Type': 'image/png', 'Origin': 'https://evil.test'}).status_code == 403

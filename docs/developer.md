@@ -212,6 +212,7 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 | `DELETE /api/graded-cards/lookups/{request_id}` | JSON `{}`；取消本账号该 `request_id` 的查询，返回 204；查询已保存则 409 `graded_lookup_finished` |
 | `DELETE /api/graded-cards/{id}` | JSON `{}`；删除本账号记录，成功返回 204；该卡上传的图片进入 COS 删除队列 |
 | `POST /api/graded-cards/detect-card` | 请求体为图片（`image/jpeg`、`image/png`、`image/webp`，≤ 12 MB）；返回 `{"width":…,"height":…,"corners":[[x,y]×4] 或 null}`，坐标为该图片像素，顺序为左上、右上、右下、左下 |
+| `POST /api/graded-cards/calibrate-image` | 请求体为图片；返回同尺寸的亮度校准 JPEG（`image/jpeg`），不保存任何内容 |
 | `PUT /api/graded-cards/{id}/images/{front\|back}?corners=x1,y1,…,x4,y4` | 请求体为图片；按四个角透视校正截取为 WebP（长边 ≤ 1600 像素）存入 COS，替换该面图片，返回 200 和记录 |
 | `DELETE /api/graded-cards/{id}/images/{front\|back}` | JSON `{}`；移除上传的图片，恢复机构图片或占位，返回 200 和记录 |
 
@@ -231,7 +232,11 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 
 **上传与扫描卡牌图片。** 详情页点击正面或反面图片打开选项：查看大图（有图片时）、上传图片、扫描卡牌（`capture=environment` 调用摄像头拍照）、移除上传的图片（已上传时）。浏览器先把照片缩到长边 ≤ 2400 像素并重新编码为 JPEG（同时应用 EXIF 方向），再调用 `detect-card`；截取对话框 `graded-crop.js` 在照片上叠加 SVG 四角框，预置识别结果（识别失败则为整张照片稍向内缩），可用鼠标、触摸拖动或方向键（Shift 加速）调整，“整张图片”“自动识别”可重置。保存时把同一张 JPEG 与四角坐标发给 `PUT …/images/{side}`，服务端透视校正截取。记录的 `images` 统一为正面、反面两项 `{url, alt, side, thumbnail_url, uploaded}`：上传图片优先；机构未标注正反面的图片（如 PCG-CN）按页面顺序依次作为正面、反面。
 
-边框识别位于 `card_detect.py`（依赖 `opencv-python-headless`，Pillow 先解码并应用 EXIF 方向）：在长边 900 像素的副本上，用多组 Canny 边缘及 Otsu 阈值图找轮廓，取凸包拟合四边形（圆角卡砖退化为外接旋转矩形），筛选面积占照片 8%–98.5%、短长边比 0.45–0.92、填充度 ≥ 0.8、两个以上角不贴照片边缘的候选，再按面积 × 矩形度 × 四边梯度支撑度评分取最高者，因此卡砖照片优先截取整块卡砖，裸卡截取卡牌。测试用 `tests/card_photos.py` 合成不同背景、旋转和透视的照片验证角点误差（≤ 4%），实物照片的效果仍需在设备上确认，失败时可手动调整。上传图片沿用头像的 COS 存储桶 `TCG_AVATAR_COS_URL`，对象为 `/tcgtoolkit/graded/<随机32位十六进制>.webp`；替换、移除和删除卡片时旧对象进入头像共用的 `avatar_cleanup` 删除队列（后台任务重试）。未配置存储桶时上传返回 503 `graded_image_storage_failed`。识别与上传每账号每分钟共 30 次。错误代码：415/422 `graded_image_invalid`、413 `graded_image_too_large`、422 `graded_image_dimensions`（每边 > 6000 像素）、422 `graded_image_crop`（坐标无效或截取过小）、404 `graded_card_not_found`／`graded_image_side`、429 `rate_limited`。筛选区在没有卡片时也保留（卡牌库与收藏页同样在加载完成后始终显示筛选区）。评级卡图片为静态图片，不使用其他页面的鼠标跟随倾斜效果，点击仍可放大预览。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
+边框识别位于 `card_detect.py`（依赖 `opencv-python-headless`，Pillow 先解码并应用 EXIF 方向）：在长边 900 像素的副本上，用多组 Canny 边缘及 Otsu 阈值图找轮廓，取凸包拟合四边形（圆角卡砖退化为外接旋转矩形），筛选面积占照片 8%–98.5%、短长边比 0.45–0.92、填充度 ≥ 0.8、两个以上角不贴照片边缘的候选，再按面积 × 矩形度 × 四边梯度支撑度评分取最高者。除轮廓外还用 Hough 直线组合四边形：反光和保护袋常使卡砖外框断开、无法形成闭合轮廓，但四条边仍是长直线。候选还需四角在 72°–108° 之间、对边长度比 ≥ 0.72（排除由卡砖上边与卡牌下边拼成的形状）；边缘支撑度取四边中最弱一边的平均梯度强度与强边缘覆盖率之和。选出最高分后，若有包住它、得分不低于 80% 且支撑度不低于 70% 的更大四边形则取之，因此卡砖照片优先截取整块卡砖（不被内部卡牌边框截短，也不被保护袋上较弱的折边拉长），裸卡截取卡牌。测试用 `tests/card_photos.py` 合成不同背景、旋转和透视的照片验证角点误差（≤ 4%），实物照片的效果仍需在设备上确认，失败时可手动调整。
+
+**亮度校准（可选）。** 截取对话框的“亮度校准”按钮把当前照片发给 `calibrate-image`，用返回的同尺寸 JPEG 替换预览和待上传图片，四角坐标不变；按钮随即变为“撤销亮度校准”，原图和校准图都保留在浏览器内存中，撤销与再次应用无需重新请求。处理位于 `card_enhance.py`：① 高光区检测——同时满足较亮（HSV 明度 > 165 起计）、低饱和，并且比所在表面更亮（比文字闭运算后的局部表面亮，或比排除饱和高光后的大范围“漫反射白”参考亮），以免把白色卡面、白色衣服误判为反光；② 在高光区内用局部暗通道先验去除白色反光“薄雾”，按反光外较暗表面（墨色、画面）的暗通道估计遮罩强度，上限 0.6；③ 局部光照归一化——以局部亮包络估计光照，把较暗区域提升到光照充足水平（增益 0.9–1.25）；④ CLAHE 轻度增强对比度。大尺度模糊在缩小副本上计算，2400 像素照片约 0.5–1 秒。测试用合成的“画面上覆盖反光”场景验证反光下画面变暗、对比度提高、未受影响区域基本不变及白色卡面不被误判。
+
+上传图片沿用头像的 COS 存储桶 `TCG_AVATAR_COS_URL`，对象为 `/tcgtoolkit/graded/<随机32位十六进制>.webp`；替换、移除和删除卡片时旧对象进入头像共用的 `avatar_cleanup` 删除队列（后台任务重试）。未配置存储桶时上传返回 503 `graded_image_storage_failed`。识别与上传每账号每分钟共 30 次。错误代码：415/422 `graded_image_invalid`、413 `graded_image_too_large`、422 `graded_image_dimensions`（每边 > 6000 像素）、422 `graded_image_crop`（坐标无效或截取过小）、404 `graded_card_not_found`／`graded_image_side`、429 `rate_limited`。筛选区在没有卡片时也保留（卡牌库与收藏页同样在加载完成后始终显示筛选区）。评级卡图片为静态图片，不使用其他页面的鼠标跟随倾斜效果，点击仍可放大预览。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
 
 ### 评级卡验收
 

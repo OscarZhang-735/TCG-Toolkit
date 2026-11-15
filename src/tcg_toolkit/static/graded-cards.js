@@ -358,6 +358,23 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
       if (current === generation) { state.imageBusy.delete(busy); onChange(); }
     }
   }
+  // Optional brightness calibration (glare, uneven light): resolves to a same-size JPEG.
+  // Nothing is stored; the caller keeps the original to undo it. Rejects with {key}.
+  async function calibrateImage(blob) {
+    let response;
+    try {
+      response = await request('/api/graded-cards/calibrate-image', {method: 'POST', cache: 'no-store',
+        signal: controller.signal, headers: {'Content-Type': blob.type || 'image/jpeg'}, body: blob});
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      throw Object.assign(new Error('network'), {key: imageError(undefined, 0)});
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw Object.assign(new Error('calibration failed'), {key: imageError(data?.detail, response.status)});
+    }
+    return response.blob();
+  }
   const uploadImage = (id, side, blob, corners) => changeImage(id, side, () =>
     sendImage(`/graded-cards/${encodeURIComponent(id)}/images/${side}?corners=${cornersParam(corners)}`, 'PUT', blob));
   const restoreImage = (id, side) => changeImage(id, side, () =>
@@ -366,7 +383,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   const timeoutSeconds = id => state.providers.find(item => item.id === id)?.timeout_seconds ?? DEFAULT_TIMEOUT_S;
 
   return {state, clear, load, add, retry, dismiss, refresh, dismissRefresh, remove, queuePosition, providerName,
-    detectCard, uploadImage, restoreImage,
+    detectCard, calibrateImage, uploadImage, restoreImage,
     timeoutSeconds, busy: () => state.pending.some(item => item.status !== 'failed')
       || Object.values(state.refreshing).some(entry => entry.status !== 'failed'),
     activate(api) { clear(); request = api; return load(); }};

@@ -578,13 +578,16 @@ async function prepareImage(file) {
 async function openCrop(file) {
   const target = imageTarget, session = ++cropGeneration;
   if (!target) return;
-  crop = {...target, blob: null, url: '', width: 0, height: 0, status: 'preparing', hint: '', error: ''};
+  // original / calibrated: both versions stay in memory so calibration can be undone at once.
+  crop = {...target, blob: null, url: '', width: 0, height: 0, status: 'preparing', hint: '', error: '',
+    original: null, calibrated: null, calibratedOn: false};
   renderCrop();
   if (!$('graded-crop-dialog').open) $('graded-crop-dialog').showModal();
   try {
     const prepared = await prepareImage(file);
     if (session !== cropGeneration) return;
     Object.assign(crop, prepared, {url: URL.createObjectURL(prepared.blob)});
+    crop.original = {blob: crop.blob, url: crop.url};
     cropEditor.set(prepared.width, prepared.height, fullCorners(prepared.width, prepared.height));
     await detectOutline(session);
   } catch (error) {
@@ -607,18 +610,47 @@ async function detectOutline(session = cropGeneration) {
   }
   crop.status = 'ready'; renderCrop();
 }
+// Brightness calibration: the server returns a same-size JPEG, so the corners still fit.
+async function toggleCalibration() {
+  if (!crop?.original || crop.status !== 'ready') return;
+  if (crop.calibratedOn) { useVersion('original'); return; }
+  const session = cropGeneration;
+  if (!crop.calibrated) {
+    crop.status = 'calibrating'; crop.error = ''; renderCrop();
+    try {
+      const blob = await graded.calibrateImage(crop.original.blob);
+      if (session !== cropGeneration) return;
+      crop.calibrated = {blob, url: URL.createObjectURL(blob)};
+    } catch (error) {
+      if (session !== cropGeneration) return;
+      crop.status = 'ready'; crop.error = error.key || 'graded_image_failed'; renderCrop();
+      return;
+    }
+  }
+  useVersion('calibrated');
+}
+function useVersion(kind) {
+  Object.assign(crop, {blob: crop[kind].blob, url: crop[kind].url, calibratedOn: kind === 'calibrated', status: 'ready'});
+  renderCrop();
+}
 function renderCrop() {
   if (!crop) return;
-  const working = crop.status === 'preparing' || crop.status === 'detecting' || crop.status === 'saving';
+  const working = ['preparing', 'detecting', 'saving', 'calibrating'].includes(crop.status);
   $('graded-crop-title').textContent = t(crop.side === 'front' ? 'graded_crop_title_front' : 'graded_crop_title_back');
   $('graded-crop-hint').textContent = t(crop.status === 'preparing' || crop.status === 'detecting' ? 'graded_crop_detecting'
-    : crop.status === 'saving' ? 'graded_crop_saving' : crop.hint || 'graded_crop_manual');
+    : crop.status === 'saving' ? 'graded_crop_saving' : crop.status === 'calibrating' ? 'graded_crop_calibrating'
+      : crop.calibratedOn ? 'graded_crop_calibrated' : crop.hint || 'graded_crop_manual');
   $('graded-crop-error').textContent = crop.error ? t(crop.error) : '';
   const image = $('graded-crop-image');
   if (crop.url && image.getAttribute('src') !== crop.url) image.src = crop.url;
   $('graded-crop-stage').hidden = !crop.url;
   $('graded-crop-busy').hidden = !working;
-  for (const id of ['graded-crop-detect', 'graded-crop-full', 'graded-crop-save']) $(id).disabled = working || !crop.blob;
+  for (const id of ['graded-crop-detect', 'graded-crop-full', 'graded-crop-save', 'graded-crop-calibrate']) $(id).disabled = working || !crop.blob;
+  const calibrate = $('graded-crop-calibrate');
+  calibrate.setAttribute('aria-pressed', String(crop.calibratedOn));
+  calibrate.querySelector('.bi').className = `bi ${crop.status === 'calibrating' ? 'bi-arrow-repeat spin'
+    : crop.calibratedOn ? 'bi-arrow-counterclockwise' : 'bi-brightness-high'}`;
+  calibrate.querySelector('span').textContent = t(crop.calibratedOn ? 'graded_crop_uncalibrate' : 'graded_crop_calibrate');
   $('graded-crop-save').querySelector('.bi').className = `bi ${crop.status === 'saving' ? 'bi-arrow-repeat spin' : 'bi-check-lg'}`;
   cropEditor.setLabels(['graded_corner_tl', 'graded_corner_tr', 'graded_corner_br', 'graded_corner_bl'].map(key => t(key)));
   requestAnimationFrame(() => cropEditor.redraw());
@@ -634,7 +666,7 @@ async function saveCrop() {
 }
 function closeCrop() {
   cropGeneration++;
-  if (crop?.url) URL.revokeObjectURL(crop.url);
+  for (const version of [crop?.original, crop?.calibrated]) if (version?.url) URL.revokeObjectURL(version.url);
   crop = null; imageTarget = null;
   $('graded-crop-image').removeAttribute('src');
 }
@@ -758,6 +790,7 @@ for (const id of ['graded-image-file', 'graded-image-camera']) {
   });
 }
 $('graded-crop-detect').addEventListener('click', () => detectOutline());
+$('graded-crop-calibrate').addEventListener('click', toggleCalibration);
 $('graded-crop-full').addEventListener('click', () => {
   if (!crop?.blob) return;
   cropEditor.set(crop.width, crop.height, fullCorners(crop.width, crop.height, 0));
