@@ -88,6 +88,10 @@ def test_graded_webui(monkeypatch):
                 # Filters stay on screen with no cards, here and on the other card pages.
                 expect(page.locator('#graded-filters')).to_be_visible()
                 expect(page.locator('#graded-provider-chips label')).to_have_count(len(grading.PROVIDERS))
+                # Logo chips like the card library's game filter; every logo file must load.
+                logos = page.locator('#graded-provider-chips img.chip-logo')
+                expect(logos).to_have_count(len(grading.PROVIDERS))
+                page.wait_for_function("[...document.querySelectorAll('#graded-provider-chips img.chip-logo')].every(img => img.complete && img.naturalWidth > 0)")
                 page.goto(origin + '/#cards')
                 expect(page.locator('#cards-empty')).to_be_visible()
                 expect(page.locator('#cards-filters')).to_be_visible()

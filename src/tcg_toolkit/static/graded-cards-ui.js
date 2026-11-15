@@ -10,6 +10,7 @@ const $ = id => document.getElementById(id);
 // List/grid choice is shared with the other pages (app.js owns the toggle).
 const currentView = () => localStorage.getItem('view') === 'grid' ? 'grid' : 'list';
 const PROVIDER_KEY = 'gradedProvider';
+const PROVIDER_LOGOS = {psa: './grading-psa.png', cgc: './grading-cgc.png', ars: './grading-ars.png', pcgcn: './grading-pcgcn.png'};
 // A code held in front of the camera is read many times; act on it once per interval.
 const SCAN_REPEAT_MS = 4000;
 const STATUS_MS = 6000;
@@ -241,6 +242,11 @@ function providerChips() {
       render();
     });
     chip.append(input, icon('bi-check-lg'), node('span', providerName(id)), node('span', number(counts.get(id) ?? 0), 'chip-count'));
+    // Same logo chips as the card library's game filter; a provider without a logo keeps a plain chip.
+    if (PROVIDER_LOGOS[id]) {
+      const logo = document.createElement('img'); logo.className = 'chip-logo'; logo.src = PROVIDER_LOGOS[id];
+      logo.alt = ''; logo.setAttribute('aria-hidden', 'true'); chip.append(logo);
+    }
     return chip;
   }));
 }
