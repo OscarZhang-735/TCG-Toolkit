@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import event, func, select
 
 from auth_helpers import register_user
-from tcg_toolkit.db_models import Subscription, SubscriptionEmail, SubscriptionRun, User
+from tcg_toolkit.db_models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
 from tcg_toolkit import subscriptions as api
 from tcg_toolkit.subscription_worker import SubscriptionWorker, next_hour
 from tcg_toolkit.web import app
@@ -62,6 +62,12 @@ def add(client, url=URL, interval_hours=None):
     if interval_hours is not None:
         assert client.put('/api/subscriptions/settings', json={'interval_hours': interval_hours}).status_code == 200
     response = client.post('/api/subscriptions', json=dict(game='wsr', product_url=url))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def favorite(client, item=None, group_id=None):
+    response = client.post('/api/favorites', json={**(item or snapshot()), 'group_id': group_id})
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -202,10 +208,50 @@ def test_unchanged_is_silent_and_restock_is_not(client):
     assert json.loads(emails()[0].changes)[0]['before']['stock_status'] == 'out_of_stock'
 
 
+@pytest.mark.parametrize('price', [100, 200])
+@pytest.mark.parametrize('condition', [None, 0, 1])
+def test_checks_refresh_favorite_details_preserving_identity_and_condition(client, price, condition):
+    group = client.post('/api/favorites/groups', json={'name': 'Collection'}).json()
+    item = {**snapshot(URL + '/', price=50, quantity=2), 'name': 'Old name',
+            'card_number': 'OLD-001', 'rarity': 'C'}
+    if condition is not None:
+        item['cart'] = {'gid': 56, 'ver': 'OS01', 'cid': '10240', 'kizu': condition}
+    saved = favorite(client, item, group['id'])
+    add(client)
+    updated = {**snapshot(price=price), 'name': 'Updated name', 'card_number': 'NEW-001',
+               'rarity': 'SR', 'image_url': 'https://yuyu-tei.jp/images/new.jpg',
+               'stock_text': 'Updated stock'}
+    service = worker(lambda game, url: updated)
+    assert service.check_due()
+    expected = saved if condition == 1 else {
+        **saved, 'item': {**saved['item'], **updated, 'product_url': item['product_url']},
+        'refreshed_at': NOW,
+    }
+    assert client.get('/api/favorites').json()['items'] == [expected]
+    assert len(emails()) == (price != 100)
+
+
+def test_checks_only_refresh_matching_users_products(client):
+    checked = favorite(client)
+    unrelated = favorite(client, snapshot(URL + '1'))
+    add(client)
+    alice = client.headers['Authorization']
+    login(client, 'bob')
+    other_user = favorite(client)
+    assert worker(lambda game, url: snapshot(url, price=200)).check_due()
+    assert client.get('/api/favorites').json()['items'] == [other_user]
+    client.headers['Authorization'] = alice
+    assert client.get('/api/favorites').json()['items'] == [
+        unrelated, {**checked, 'item': snapshot(price=200), 'refreshed_at': NOW},
+    ]
+
+
 def test_many_cards_one_digest_per_user_and_shared_fetch(client):
+    favorites = [favorite(client), favorite(client, snapshot(URL + '1'))]
     add(client)
     add(client, URL + '1')
     login(client, 'bob')
+    favorites.append(favorite(client))
     add(client)
     calls = []
     def fetch(game, url):
@@ -217,10 +263,17 @@ def test_many_cards_one_digest_per_user_and_shared_fetch(client):
     assert sorted(calls) == [URL, URL + '1']
     assert sorted(len(json.loads(row.changes)) for row in emails()) == [1, 2]
     assert {message['To'] for message in service.mailer.messages} == {'alice@example.com', 'bob@example.com'}
+    with app.state.auth.store.session() as db:
+        for saved in favorites:
+            row = db.get(Favorite, saved['id'])
+            assert json.loads(row.snapshot) == snapshot(saved['item']['product_url'], price=200)
+            assert row.refreshed_at == NOW
 
 
 @pytest.mark.parametrize('failure', ['product_timeout', 'product_unavailable', 'product_unreadable', 'unknown'])
 def test_source_failure_preserves_baseline_and_other_cards_continue(client, failure):
+    failed_favorite = favorite(client)
+    other_favorite = favorite(client, snapshot(URL + '1'))
     saved = add(client)
     add(client, URL + '1')
     def fetch(game, url):
@@ -236,12 +289,19 @@ def test_source_failure_preserves_baseline_and_other_cards_continue(client, fail
         assert row.snapshot == json.dumps(saved['item'])
         assert row.last_error and row.checked_at == NOW
     assert len(json.loads(emails()[0].changes)) == 1
+    assert client.get('/api/favorites').json()['items'] == [
+        {**other_favorite, 'item': snapshot(URL + '1', price=200), 'refreshed_at': NOW},
+        failed_favorite,
+    ]
     service.fetcher = lambda game, url: snapshot(url, price=200)
     service.clock = lambda: NOW + 86400
     service.check_due()
     assert len(emails()) == 2
     with app.state.auth.store.session() as db:
         assert db.get(Subscription, saved['id']).last_error is None
+        refreshed = db.get(Favorite, failed_favorite['id'])
+        assert json.loads(refreshed.snapshot) == snapshot(price=200)
+        assert refreshed.refreshed_at == NOW + 86400
 
 
 def test_retry_schedule_exhaustion_and_restart(client):
@@ -300,6 +360,7 @@ def test_cancelled_subscriptions_are_excluded_from_pending_mail(client, remove_a
 
 
 def test_atomic_snapshot_and_outbox_on_database_failure(client):
+    saved_favorite = favorite(client)
     saved = add(client)
     service = worker(lambda game, url: snapshot(url, price=200))
     def fail_insert(mapper, connection, target):
@@ -314,8 +375,55 @@ def test_atomic_snapshot_and_outbox_on_database_failure(client):
         assert json.loads(db.get(Subscription, saved['id']).snapshot)['price'] == 100
         assert db.scalar(select(SubscriptionRun)).state == 'failed'
         assert db.scalar(select(func.count()).select_from(SubscriptionEmail)) == 0
+    assert client.get('/api/favorites').json()['items'] == [saved_favorite]
     assert service.check_due()
     assert len(emails()) == 1
+    assert client.get('/api/favorites').json()['items'] == [
+        {**saved_favorite, 'item': snapshot(price=200), 'refreshed_at': NOW},
+    ]
+
+
+def test_concurrent_unfavorite_and_check_do_not_deadlock(client, monkeypatch):
+    from tcg_toolkit import favorites as favorite_api
+
+    saved = favorite(client)
+    add(client)
+    favorite_locked, worker_locking = Event(), Event()
+    original_owned = favorite_api.owned
+
+    def pause_after_favorite_lock(*args, **kwargs):
+        row = original_owned(*args, **kwargs)
+        if kwargs.get('lock'):
+            favorite_locked.set()
+            assert worker_locking.wait(10)
+        return row
+
+    # Let deletion hold the favorite while the worker starts its matching lock.
+    # Both operations also need the subscription, so opposite orders deadlock.
+    def resume_delete(conn, cursor, statement, parameters, context, executemany):
+        if 'FROM favorites' in statement and 'FOR UPDATE' in statement:
+            worker_locking.set()
+
+    monkeypatch.setattr(favorite_api, 'owned', pause_after_favorite_lock)
+    engine = app.state.auth.store.engine
+    service = worker(lambda game, url: snapshot(url, price=200))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        deletion = pool.submit(client.request, 'DELETE', '/api/favorites/' + saved['id'], json={})
+        listening = False
+        try:
+            assert favorite_locked.wait(10)
+            event.listen(engine, 'before_cursor_execute', resume_delete)
+            listening = True
+            checking = pool.submit(service.check_due)
+            assert deletion.result(timeout=15).status_code == 204
+            assert checking.result(timeout=15)
+        finally:
+            worker_locking.set()
+            if listening:
+                event.remove(engine, 'before_cursor_execute', resume_delete)
+    assert client.get('/api/favorites').json()['items'] == []
+    assert client.get('/api/subscriptions').json()['items'] == []
+    assert emails() == []
 
 
 def test_concurrent_workers_do_not_repeat_checks_or_mail(client):

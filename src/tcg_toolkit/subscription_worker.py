@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from .auth.email_verification import SMTPMailer
-from .db_models import Subscription, SubscriptionEmail, SubscriptionRun, User
+from .db_models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
 from .product_details import fetch_product_snapshot
 from .notification_email import notification_recipient
 
@@ -144,10 +144,18 @@ class SubscriptionWorker:
             if self.stopping.is_set():
                 raise InterruptedError('Subscription checks stopped')
             with self.store.session() as db:
-                # Match settings/creation lock order: account, then subscriptions.
+                # Lock favorites before subscriptions, matching favorite removal.
                 account = db.get(User, user_id, with_for_update=True)
                 if account is None:
                     continue
+                favorites = defaultdict(list)
+                for favorite in db.scalars(select(Favorite).join(Subscription,
+                        (Favorite.user_id == Subscription.user_id)
+                        & (Favorite.game == Subscription.game)
+                        & (func.rtrim(Favorite.product_url, '/') == Subscription.product_url))
+                        .where(Favorite.user_id == user_id, Subscription.id.in_(ids))
+                        .order_by(Favorite.id).with_for_update(of=Favorite)):
+                    favorites[(favorite.game, favorite.product_url.rstrip('/'))].append(favorite)
                 rows = db.scalars(select(Subscription).where(Subscription.id.in_(ids),
                                   Subscription.next_check_at <= started_at)
                                   .order_by(Subscription.id).with_for_update()).all()
@@ -163,6 +171,13 @@ class SubscriptionWorker:
                         changes.append(dict(subscription_id=row.id, before=before, after=snapshot,
                                             checked_at=slot))
                     row.snapshot = json.dumps(snapshot)
+                    for favorite in favorites[(row.game, row.product_url)]:
+                        saved = json.loads(favorite.snapshot)
+                        # Subscriptions only fetch normal-condition offers.
+                        if (saved.get('cart') or {}).get('kizu', 0) != 0:
+                            continue
+                        favorite.snapshot = json.dumps({**saved, **snapshot, 'product_url': favorite.product_url})
+                        favorite.refreshed_at = slot
                 if changes:
                     now = int(self.clock())
                     db.add(SubscriptionEmail(id=str(uuid.uuid4()), user_id=user_id, run_id=run_id, run_date=local_date,
