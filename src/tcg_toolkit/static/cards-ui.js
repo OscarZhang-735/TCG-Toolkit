@@ -426,7 +426,8 @@ function render() {
   $('cards-by-rarity').replaceChildren(...chips(stats.rarities));
   $('cards-count').hidden = !state.ready;
   $('cards-count').textContent = t('counts', {matching: number(rows.length), loaded: number(groupRows.length)});
-  $('cards-filters').hidden = !state.ready || !groupRows.length;
+  // Kept with no cards too, like the other pages, so the page layout does not jump.
+  $('cards-filters').hidden = !state.ready;
   $('cards-rows').replaceChildren(...(cardsView === 'list' ? rows.map(cardRow) : []));
   $('cards-table').hidden = !rows.length || cardsView !== 'list';
   $('cards-grid').hidden = !rows.length || cardsView !== 'grid';

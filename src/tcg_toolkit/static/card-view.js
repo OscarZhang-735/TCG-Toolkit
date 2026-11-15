@@ -22,7 +22,8 @@ const webUrl = value => {
 };
 // `large` names the full-size image when it is not derivable from the thumbnail (graded
 // card originals); `fallback` replaces the "No image" placeholder text.
-export function cardImage(item, {noReferrer = false, large = null, fallback = null} = {}) {
+// `tilt: false` keeps the picture still under the pointer (graded slabs).
+export function cardImage(item, {noReferrer = false, large = null, fallback = null, tilt: tilting = true} = {}) {
   const frame = el('span', 'card-image');
   const placeholder = el('span', 'image-fallback', fallback ?? t('no_image'));
   frame.append(placeholder);
@@ -36,9 +37,11 @@ export function cardImage(item, {noReferrer = false, large = null, fallback = nu
   image.addEventListener('load', () => { placeholder.hidden = true; markOrientation(image); });
   image.addEventListener('error', () => { image.hidden = true; placeholder.hidden = false; frame.classList.remove('zoomable'); frame.removeAttribute('role'); frame.removeAttribute('tabindex'); }, {once: true});
   image.src = src;
-  const tilt = el('span', 'tilt'); tilt.append(image, el('span', 'glare'));
-  frame.append(tilt);
-  if (canTilt.matches) attachTilt(frame, tilt, image, full);
+  if (tilting) {
+    const tilt = el('span', 'tilt'); tilt.append(image, el('span', 'glare'));
+    frame.append(tilt);
+    if (canTilt.matches) attachTilt(frame, tilt, image, full);
+  } else frame.append(image);
   if (full) {
     frame.classList.add('zoomable'); frame.tabIndex = 0; frame.setAttribute('role', 'button');
     frame.setAttribute('aria-label', t('image_preview', {name: item.name})); frame.title = t('image_preview', {name: item.name});

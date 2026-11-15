@@ -341,7 +341,7 @@ function renderFavorites() {
   $('favorites-title').textContent = group ? group.name : t('favorite_cards');
   // Without any groups the group column would only hold dashes.
   $('favorites-list').classList.toggle('without-groups', !state.groups.length);
-  favoriteFilters.element.hidden = !rows.length;
+  favoriteFilters.element.hidden = !state.ready;
   $('favorites-rows').replaceChildren(...(view === 'list' ? matches.map(item => tableRow(item, true)) : []));
   $('favorites-grid').replaceChildren(...(view === 'grid' ? matches.map(item => gridCard(item, true)) : []));
   $('favorites-list').hidden = view !== 'list' || !matches.length;

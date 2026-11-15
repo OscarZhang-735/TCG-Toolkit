@@ -7,6 +7,8 @@ Every adapter returns the same shape: ``certificate`` with ``title``, ``grade``,
 import logging
 import re
 import threading
+import time
+from contextvars import ContextVar
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -167,6 +169,7 @@ def fetch_cgc(cert_number):
 def _fetch_proxied_certificate(provider, cert_number, url, parse):
     try:
         with ProxyGoClient() as client:
+            _cancellable(client)
             response = client.get(url, country='US')
     except ProxyGoConfigError:
         raise HTTPException(503, detail=f'{provider}_not_configured') from None
@@ -261,6 +264,7 @@ def parse_ars(html, cert_number):
 def fetch_ars(cert_number):
     try:
         with httpx.Client(timeout=20, follow_redirects=False, trust_env=False) as client:
+            _cancellable(client)
             response = client.get(ARS_URL, params={'id': cert_number})
         if response.status_code == 429:
             raise HTTPException(502, detail='ars_rate_limited')
@@ -339,6 +343,7 @@ def parse_pcgcn(payload, cert_number):
 def fetch_pcgcn(cert_number):
     try:
         with httpx.Client(timeout=20, follow_redirects=False, trust_env=False) as client:
+            _cancellable(client)
             response = client.get(PCGCN_API, params={'pageNo': 1, 'pageSize': 1, 'proof_number': cert_number})
         if response.status_code == 429:
             raise HTTPException(502, detail='pcgcn_rate_limited')
@@ -367,6 +372,10 @@ class GradingProvider:
     fetch: Callable[[str], dict]
     timeout_seconds: int
     scan_patterns: tuple[str, ...] = ()
+    # Saved cards show this field as their name when present (see ``present``).
+    title_field: str = ''
+    # Fields that only translate the others; the web UI folds them away.
+    english_field: Callable[[str], bool] | None = None
 
 
 # Insertion order is the order the web UI lists providers in.
@@ -378,11 +387,140 @@ PROVIDERS = {provider.id: provider for provider in (
     GradingProvider('cgc', 'CGC', fetch_cgc, 225, (
         r'^https?://(?:www\.)?cgc(?:cards|comics)\.com/certlookup/([0-9]{1,32})(?:/[^?#]*)?(?:[?#].*)?$',)),
     # Labels encode https://ars-grading.com/grading/searchNumber?id=<n>.
+    # The Japanese card name is the original; ARS repeats every field under an English label.
     GradingProvider('ars', 'ARS', fetch_ars, 40, (
-        r'^https?://(?:www\.)?ars-grading\.com/grading/searchNumber\?(?:[^#]*&)?id=([0-9]{1,32})(?:[&#].*)?$',)),
+        r'^https?://(?:www\.)?ars-grading\.com/grading/searchNumber\?(?:[^#]*&)?id=([0-9]{1,32})(?:[&#].*)?$',),
+        title_field='カード名称', english_field=str.isascii),
+    # PCG-CN's name is a Chinese translation; c2j keeps the card's original name.
     GradingProvider('pcgcn', 'PCG-CN', fetch_pcgcn, 40, (
-        r'^https?://card\.pcgcard\.cn/(?:card/?|h5/index\.html\#/pages/f/r)\?(?:[^#]*&)?query=([0-9]{1,32})(?:&[^#]*)?$',)),
+        r'^https?://card\.pcgcard\.cn/(?:card/?|h5/index\.html\#/pages/f/r)\?(?:[^#]*&)?query=([0-9]{1,32})(?:&[^#]*)?$',),
+        title_field='Original Name'),
 )}
+
+
+def present(provider_id, certificate):
+    """(title, fields, english_fields) for showing a saved certificate.
+
+    Applied when reading, so cards saved before a provider's rule changed show the same
+    way. Lookup responses themselves keep the parser's title and every field.
+    """
+    provider = PROVIDERS.get(provider_id)
+    fields = dict(certificate.get('fields') or {})
+    title = certificate.get('title') or ''
+    if provider is None:
+        return title, fields, {}
+    if provider.title_field:
+        title = fields.get(provider.title_field) or title
+    english = {key: value for key, value in fields.items() if provider.english_field and provider.english_field(key)}
+    return title, {key: value for key, value in fields.items() if key not in english}, english
+
+
+# Cancellation: a lookup started with a request id can be stopped from another request.
+# Stopping closes the upstream HTTP client (an in-flight read fails at once) and, through
+# ``LookupToken.finish``, guarantees a cancelled lookup is never saved.
+_current_lookup: ContextVar['LookupToken | None'] = ContextVar('grading_lookup', default=None)
+
+
+class LookupToken:
+    def __init__(self, cancelled=False):
+        self._lock = threading.Lock()
+        self._closers = []
+        self.cancelled, self.finished = cancelled, False
+
+    def attach(self, close):
+        with self._lock:
+            if not self.cancelled:
+                self._closers.append(close)
+                return
+        close()
+
+    def cancel(self):
+        """True when the result will not be used; False once it was already kept."""
+        with self._lock:
+            if self.finished:
+                return False
+            self.cancelled = True
+            closers, self._closers = self._closers, []
+        for close in closers:
+            try:
+                close()
+            except Exception:  # closing is best effort; the token already blocks the save
+                logger.debug('closing a cancelled lookup failed', exc_info=True)
+        return True
+
+    def finish(self):
+        """Claims the result for saving; False if the lookup was cancelled first."""
+        with self._lock:
+            if self.cancelled:
+                return False
+            self.finished = True
+            return True
+
+
+def _cancellable(client):
+    token = _current_lookup.get()
+    if token is not None:
+        token.attach(client.close)
+    return client
+
+
+def _raise_if_cancelled():
+    token = _current_lookup.get()
+    if token is not None and token.cancelled:
+        raise HTTPException(409, detail='grading_lookup_cancelled')
+
+
+class LookupRegistry:
+    """Lookups in flight by (user, request id); process-local like ``LookupSlots``.
+
+    Outcomes are remembered for a few minutes so a cancel that arrives before its lookup
+    starts still stops it, and one that arrives after the save can say so.
+    """
+    TTL = 300
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._active = {}
+        self._outcomes = {}
+
+    def _purge(self, now):
+        self._outcomes = {key: value for key, value in self._outcomes.items() if now - value[1] < self.TTL}
+
+    @contextmanager
+    def track(self, user_id, request_id=None):
+        key = (user_id, request_id)
+        with self._lock:
+            self._purge(self._clock())
+            token = LookupToken(cancelled=request_id is not None and self._outcomes.get(key, ('',))[0] == 'cancelled')
+            if request_id is not None:
+                self._active[key] = token
+        reset = _current_lookup.set(token)
+        try:
+            yield token
+        finally:
+            _current_lookup.reset(reset)
+            if request_id is not None:
+                with self._lock:
+                    if self._active.get(key) is token:
+                        del self._active[key]
+                    self._outcomes[key] = ('finished' if token.finished else 'cancelled', self._clock())
+
+    def cancel(self, user_id, request_id):
+        """'cancelled' (nothing will be saved) or 'finished' (already saved)."""
+        key = (user_id, request_id)
+        with self._lock:
+            self._purge(self._clock())
+            token = self._active.get(key)
+            if token is None:
+                if self._outcomes.get(key, ('',))[0] == 'finished':
+                    return 'finished'
+                self._outcomes[key] = ('cancelled', self._clock())
+                return 'cancelled'
+        return 'cancelled' if token.cancel() else 'finished'
+
+
+LOOKUPS = LookupRegistry()
 
 
 class LookupSlots:
@@ -431,8 +569,16 @@ def normalize_request(provider_id, cert_number):
 def lookup_certificate(provider_id, cert_number, user_id):
     """Validate, take a lookup slot and fetch. Blocking: call it from a worker thread."""
     provider, cert_number = normalize_request(provider_id, cert_number)
+    _raise_if_cancelled()
     with LOOKUP_SLOTS.hold(user_id):
-        return provider.fetch(cert_number)
+        try:
+            result = provider.fetch(cert_number)
+        except Exception:
+            # A closed client surfaces as an upstream error; report the cancel instead.
+            _raise_if_cancelled()
+            raise
+    _raise_if_cancelled()
+    return result
 
 
 @router.get('/providers')

@@ -54,11 +54,12 @@ const ORDER = {
   title: (a, b) => fold(a.title).localeCompare(fold(b.title)),
 };
 export const SORTS = Object.keys(ORDER);
-// Search covers the title, number, grade, provider and every certificate field.
+// Search covers the title, number, grade, provider and every certificate field, folded or not.
 export function filterGraded(records, {query = '', hiddenProviders = new Set(), sort = 'newest'} = {}) {
   const needle = fold(query).trim();
   const rows = records.filter(row => !hiddenProviders.has(row.provider) && (!needle ||
-    [row.title, row.cert_number, row.grade, row.provider, ...Object.values(row.fields ?? {})]
+    [row.title, row.cert_number, row.grade, row.provider, ...Object.values(row.fields ?? {}),
+      ...Object.values(row.english_fields ?? {})]
       .some(value => fold(value).includes(needle))));
   return ORDER[sort] ? rows.sort(ORDER[sort]) : rows;  // stable: ties keep the server's order
 }
@@ -72,9 +73,15 @@ export function slabImages(images = []) {
   return {front: front ?? rest.shift() ?? null, back: back ?? rest.shift() ?? null};
 }
 
+// Lets the server cancel a lookup this tab started; getRandomValues also works over plain HTTP.
+const randomId = () => Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)),
+  byte => byte.toString(16).padStart(2, '0')).join('');
+
 export function createGradedCards(onChange, {now = () => Date.now(), maxConcurrent = MAX_CONCURRENT,
-  setTimer = (callback, ms) => setTimeout(callback, ms), clearTimer = id => clearTimeout(id)} = {}) {
+  setTimer = (callback, ms) => setTimeout(callback, ms), clearTimer = id => clearTimeout(id), newId = randomId} = {}) {
   let request, generation = 0, controller = new AbortController(), running = 0;
+  // Lookups in flight by job ('add:<key>' / 'refresh:<id>'): their request id and local stop.
+  const inflight = new Map();
   // Adds and refreshes share one queue, so a tab never runs more than maxConcurrent slow
   // lookups at once (the server allows three per account).
   let queue = [];
@@ -84,7 +91,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
 
   function clear() {
     generation++; controller.abort(); controller = new AbortController();
-    queue = []; running = 0;
+    queue = []; running = 0; inflight.clear();
     Object.assign(state, initial());
     onChange();
   }
@@ -108,7 +115,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     let timedOut = false;
     parent.signal.addEventListener('abort', abort, {once: true});
     const timer = setTimer(() => { timedOut = true; local.abort(); }, seconds * 1000 + CLIENT_GRACE_MS);
-    return {signal: local.signal, timedOut: () => timedOut,
+    return {signal: local.signal, timedOut: () => timedOut, stop: abort,
       dispose() { clearTimer(timer); parent.signal.removeEventListener('abort', abort); }};
   }
   async function load() {
@@ -153,10 +160,30 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     Object.assign(item, {status: 'queued', startedAt: null, error: null});
     enqueue({kind: 'add', key});
   }
-  // Takes a queued or failed lookup off the list; one in flight finishes on the server anyway.
+  // Stops a lookup in flight here and on the server. If the server had already saved the
+  // card, the list is reloaded so it appears anyway.
+  function cancelInflight(job, provider, certNumber) {
+    const entry = inflight.get(job);
+    if (!entry) return;
+    inflight.delete(job); entry.stop();
+    const current = generation;
+    call(`/graded-cards/lookups/${entry.requestId}`, 'DELETE', {}, controller.signal).then(() => {
+      if (current !== generation) return;
+      state.notice = {key: 'graded_cancelled_notice', provider, cert_number: certNumber}; onChange();
+    }, async error => {
+      if (current !== generation || error.name === 'AbortError') return;
+      if (error.status === 409 && error.detail === 'graded_lookup_finished') {
+        await load();
+        if (current === generation) { state.notice = {key: 'graded_cancel_late_notice', provider, cert_number: certNumber}; onChange(); }
+      }
+      // Otherwise (offline) the server may still finish; the card then appears on the next load.
+    });
+  }
+  // Takes a lookup off the list: queued ones never run, running ones are cancelled.
   function dismiss(key) {
     const item = state.pending.find(entry => entry.key === key);
-    if (!item || item.status === 'loading') return;
+    if (!item) return;
+    if (item.status === 'loading') cancelInflight(`add:${key}`, item.provider, item.cert_number);
     state.pending = state.pending.filter(entry => entry !== item);
     queue = queue.filter(job => !(job.kind === 'add' && job.key === key));
     onChange();
@@ -167,9 +194,14 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     state.refreshing[id] = {status: 'queued', startedAt: null, error: null};
     enqueue({kind: 'refresh', id});
   }
-  // Clears a failed refresh, or cancels one still waiting in the queue.
+  // Clears a failed refresh, or cancels one waiting or running (the saved card stays).
   function dismissRefresh(id) {
-    if (!['failed', 'queued'].includes(state.refreshing[id]?.status)) return;
+    const entry = state.refreshing[id];
+    if (!entry) return;
+    if (entry.status === 'loading') {
+      const row = state.records.find(card => card.id === id);
+      cancelInflight(`refresh:${id}`, row?.provider, row?.cert_number);
+    }
     queue = queue.filter(job => !(job.kind === 'refresh' && job.id === id));
     delete state.refreshing[id]; onChange();
   }
@@ -184,9 +216,11 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     const current = generation, item = state.pending.find(entry => entry.key === key);
     if (!item || item.status !== 'queued') return;
     Object.assign(item, {status: 'loading', startedAt: now(), error: null}); onChange();
-    const limit = deadline(item.provider);
+    const limit = deadline(item.provider), job = `add:${key}`, lookup = {requestId: newId(), stop: limit.stop};
+    inflight.set(job, lookup);
     try {
-      const card = await call('/graded-cards', 'POST', {provider: item.provider, cert_number: item.cert_number}, limit.signal);
+      const card = await call('/graded-cards', 'POST', {provider: item.provider, cert_number: item.cert_number,
+        request_id: lookup.requestId}, limit.signal);
       if (current !== generation) return;
       state.pending = state.pending.filter(entry => entry !== item);
       state.records = [card, ...state.records.filter(row => row.id !== card.id)];
@@ -195,10 +229,15 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
       if (current !== generation) return;
       if (error.status === 409 && error.detail?.type === 'graded_card_duplicate') return await duplicate(item, error.detail.id, current);
       if (error.name === 'AbortError' && !limit.timedOut()) return;
+      if (error.detail === 'grading_lookup_cancelled') {  // cancelled from another tab
+        state.pending = state.pending.filter(entry => entry !== item);
+        return;
+      }
       Object.assign(item, {status: 'failed', error: limit.timedOut() ? clientTimeout() : gradingError(error.detail, error.status)});
       state.notice = {key: 'graded_failed_notice', provider: item.provider, cert_number: item.cert_number};
     } finally {
       limit.dispose();
+      if (inflight.get(job) === lookup) inflight.delete(job);
       if (current === generation) onChange();
     }
   }
@@ -216,9 +255,10 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     if (!entry || entry.status !== 'queued') return;
     if (!row) { delete state.refreshing[id]; return; }
     Object.assign(entry, {status: 'loading', startedAt: now(), error: null}); onChange();
-    const limit = deadline(row.provider);
+    const limit = deadline(row.provider), job = `refresh:${id}`, lookup = {requestId: newId(), stop: limit.stop};
+    inflight.set(job, lookup);
     try {
-      const card = await call(`/graded-cards/${encodeURIComponent(id)}/refresh`, 'POST', {}, limit.signal);
+      const card = await call(`/graded-cards/${encodeURIComponent(id)}/refresh`, 'POST', {request_id: lookup.requestId}, limit.signal);
       if (current !== generation) return;
       state.records = state.records.map(saved => saved.id === id ? card : saved);
       delete state.refreshing[id];
@@ -226,6 +266,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     } catch (error) {
       if (current !== generation) return;
       if (error.name === 'AbortError' && !limit.timedOut()) return;
+      if (error.detail === 'grading_lookup_cancelled') { delete state.refreshing[id]; return; }
       if (error.status === 404 && error.detail === 'graded_card_not_found') {
         // Deleted in another tab: drop it here too.
         state.records = state.records.filter(saved => saved.id !== id);
@@ -235,6 +276,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
       Object.assign(entry, {status: 'failed', error: limit.timedOut() ? clientTimeout() : gradingError(error.detail, error.status)});
     } finally {
       limit.dispose();
+      if (inflight.get(job) === lookup) inflight.delete(job);
       if (current === generation) onChange();
     }
   }

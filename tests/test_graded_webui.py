@@ -26,13 +26,23 @@ def test_graded_webui(monkeypatch):
 
     monkeypatch.setenv('TCG_AVATAR_COS_URL', '')
     state = {'fail': False}
-    calls = []
+    calls, titles = [], {}
+    blocking, released = '11111111', threading.Event()
     for provider, number in [('psa', '98428602'), ('cgc', '6091052028'), ('ars', '047088950114'), ('pcgcn', '10198854')]:
         source = (FIXTURES / f'{provider}_certificate.{"json" if provider == "pcgcn" else "html"}').read_text(encoding='utf-8')
         parsed = getattr(grading, f'parse_{provider}')(json.loads(source) if provider == 'pcgcn' else source, number)
+        titles[provider] = grading.present(provider, parsed['certificate'])[0]
 
         def fetch(requested, result=parsed):
             calls.append((result['provider'], requested))
+            if requested == blocking:
+                # Like a slow upstream page: only the cancel (closing the client) ends it.
+                class Upstream:
+                    def close(self):
+                        released.set()
+                grading._cancellable(Upstream())
+                assert released.wait(timeout=30)
+                raise HTTPException(502, detail=f"{result['provider']}_unavailable")
             if state['fail']:
                 raise HTTPException(504, detail=f"{result['provider']}_timeout")
             time.sleep(0.2)  # expose the real pending UI before returning
@@ -75,6 +85,17 @@ def test_graded_webui(monkeypatch):
                 expect(page.locator('#graded-panel')).to_be_visible()
                 expect(page.locator('#graded-add')).to_be_enabled()
                 expect(page.locator('#graded-empty')).to_be_visible()
+                # Filters stay on screen with no cards, here and on the other card pages.
+                expect(page.locator('#graded-filters')).to_be_visible()
+                expect(page.locator('#graded-provider-chips label')).to_have_count(len(grading.PROVIDERS))
+                page.goto(origin + '/#cards')
+                expect(page.locator('#cards-empty')).to_be_visible()
+                expect(page.locator('#cards-filters')).to_be_visible()
+                page.goto(origin + '/#favorites')
+                expect(page.locator('#favorites-empty')).to_be_visible()
+                expect(page.locator('#favorites-panel .filters')).to_be_visible()
+                page.goto(origin + '/#graded')
+                expect(page.locator('#graded-filters')).to_be_visible()
                 expect(page.locator('a[href="#graded"]')).to_have_attribute('aria-current', 'page')
 
                 def add(value, provider=None):
@@ -99,8 +120,7 @@ def test_graded_webui(monkeypatch):
                 # Real file input, canvas decoding and bundled jsQR; no decoder stub.
                 page.locator('#graded-add').click()
                 page.locator('#graded-photo').set_input_files(str(FIXTURES / 'grading_psa_qr.png'))
-                expect(page.locator('#graded-scan-status')).to_contain_text('Queued PSA 98428602')
-                page.locator('#graded-cancel').click()
+                expect(page.locator('#graded-dialog')).not_to_be_visible()
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(2)
                 assert page.evaluate('typeof window.jsQR') == 'function'
                 # Decode actual video frames without using the workstation's physical camera.
@@ -136,6 +156,8 @@ def test_graded_webui(monkeypatch):
                 add('047088950114', 'ars')
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(3)
                 expect(page.locator('#graded-rows')).to_contain_text('047088950114')
+                # ARS shows its original Japanese card name.
+                expect(page.locator('#graded-rows tr[data-id]').filter(has_text='047088950114')).to_contain_text(titles['ars'])
 
                 page.locator('#graded-query').fill('6091052028')
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(1)
@@ -147,6 +169,49 @@ def test_graded_webui(monkeypatch):
                 page.locator('#graded-panel [data-view="grid"]').click()
                 expect(page.locator('#graded-grid article[data-id]')).to_have_count(3)
                 expect(page.locator('#graded-grid')).to_contain_text('No front image')
+                # Slab images stay still: no pointer-following tilt layer.
+                expect(page.locator('#graded-panel .card-image img').first).to_be_attached()
+                expect(page.locator('#graded-panel .tilt')).to_have_count(0)
+
+                # ARS English fields are folded until asked for.
+                page.locator('#graded-grid article[data-id]').filter(has_text='047088950114').locator('.graded-title').click()
+                english = page.locator('#graded-detail-body details.graded-english')
+                expect(english).to_have_count(1)
+                expect(english.locator('dl')).to_be_hidden()
+                expect(page.locator('#graded-detail-body')).to_contain_text(titles['ars'])
+                english.locator('summary').click()
+                expect(english.locator('dl')).to_be_visible()
+                expect(english).to_contain_text('Student and Researcher, Mayu Shikibe')
+                page.locator('#graded-detail-close').click()
+
+                # A slow lookup is a card of the same size; cancelling ends the upstream request.
+                add(blocking, 'psa')
+                pending = page.locator('#graded-grid article.graded-pending')
+                expect(pending).to_have_count(1)
+                expect(pending.locator('.loading-ring')).to_be_visible()
+                expect(pending).to_contain_text('This may take up to a few minutes')
+                expect(pending.locator('.graded-elapsed')).to_contain_text('Waiting 0:0')
+                saved = page.locator('#graded-grid article[data-id]').first
+                for part in ('', ' .graded-images'):
+                    box, reference = (page.locator(f'#graded-grid article.graded-pending{part}').bounding_box(),
+                                      page.locator(f'#graded-grid article[data-id]{part}').first.bounding_box())
+                    assert abs(box['width'] - reference['width']) < 1, part
+                    assert abs(box['height'] - reference['height']) < 1, part
+                shots = Path(os.getenv('TCG_BROWSER_OUTPUT', 'data/graded-webui-acceptance'))
+                shots.mkdir(parents=True, exist_ok=True)
+                page.locator('#graded-grid').screenshot(path=str(shots / 'pending-grid.png'))
+                page.locator('#graded-panel [data-view="list"]').click()
+                expect(page.locator('#graded-rows tr.graded-pending-row .loading-ring')).to_be_visible()
+                page.locator('#graded-table').screenshot(path=str(shots / 'pending-list.png'))
+                page.locator('#graded-panel [data-view="grid"]').click()
+                pending.get_by_role('button', name='Cancel lookup').click()
+                expect(pending).to_have_count(0)
+                assert released.wait(timeout=10), 'the server-side lookup was not stopped'
+                expect(page.locator('#graded-status')).to_contain_text(f'Cancelled the lookup of PSA {blocking}')
+                expect(page.locator('#graded-grid article[data-id]')).to_have_count(3)
+                page.reload()
+                expect(page.locator('#graded-grid article[data-id]')).to_have_count(3)
+                expect(page.locator('#graded-grid')).not_to_contain_text(blocking)
 
                 tile = page.locator('#graded-grid article[data-id]').filter(has_text='6091052028')
                 tile.locator('.graded-title').click()
@@ -193,13 +258,13 @@ def test_graded_webui(monkeypatch):
                 expect(page.locator('#graded-grid article[data-id]')).to_have_count(2)
                 page.locator('#graded-add').click()
                 page.locator('#graded-photo').set_input_files(str(FIXTURES / 'grading_pcgcn_qr.png'))
-                expect(page.locator('#graded-scan-status')).to_contain_text('Queued PCG-CN 10198854')
-                page.locator('#graded-cancel').click()
+                expect(page.locator('#graded-dialog')).not_to_be_visible()
                 expect(page.locator('#graded-grid article[data-id]')).to_have_count(3)
                 add('https://card.pcgcard.cn/h5/index.html#/pages/f/r?type=1&query=10198854')
                 expect(page.locator('#graded-grid article[data-id]')).to_have_count(3)
                 pcg = page.locator('#graded-grid article[data-id]').filter(has_text='10198854')
                 expect(pcg).to_contain_text('PCG-CN')
+                expect(pcg.locator('.graded-title')).to_have_text(titles['pcgcn'])  # original, not the Chinese name
                 pcg.locator('.graded-title').click()
                 expect(page.locator('#graded-detail-body')).to_contain_text('YZ-411')
                 expect(page.locator('#graded-detail-body')).to_contain_text('Surface')

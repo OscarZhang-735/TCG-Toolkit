@@ -14,7 +14,7 @@ const PROVIDER_KEY = 'gradedProvider';
 const SCAN_REPEAT_MS = 4000;
 const STATUS_MS = 6000;
 const blankFilters = () => ({query: '', sort: 'newest', hiddenProviders: new Set()});
-let filters = blankFilters(), pendingDelete = null, detailId = null, detailSignature = '', chipsSignature = '';
+let filters = blankFilters(), pendingDelete = null, detailId = null, detailSignature = '', chipsSignature = '', englishOpen = false;
 let ticker = 0, statusNotice = null, statusTimer = 0, dialogError = '', linkNotice = null;
 // Add dialog scanning: one camera session at a time; generations drop late results.
 let scanner = null, scanStarting = false, scanGeneration = 0, photoBusy = false, photoGeneration = 0;
@@ -37,7 +37,6 @@ function textButton(name, label, handler, className = 'secondary compact') {
 const number = value => value.toLocaleString(getLanguage());
 const providerName = id => graded.providerName(id);
 const dateText = seconds => new Date(seconds * 1000).toLocaleString(getLanguage(), {dateStyle: 'medium', timeStyle: 'short'});
-const duration = seconds => seconds < 90 ? t('graded_seconds', {count: seconds}) : t('graded_minutes', {count: Math.ceil(seconds / 60)});
 const busyStatus = status => status === 'queued' || status === 'loading';
 const labelOf = (provider, certNumber) => `${providerName(provider)} ${certNumber}`;
 
@@ -48,7 +47,7 @@ function gradeBadge(grade) { return grade ? node('span', grade, 'graded-grade') 
 function slabSide(row, image, side, {compact = false} = {}) {
   const label = t(side === 'front' ? 'graded_front' : 'graded_back');
   const frame = cardImage({name: `${row.title || row.cert_number} · ${label}`, card_number: row.cert_number,
-    image_url: image ? image.thumbnail_url || image.url : ''}, {noReferrer: true, large: image?.url,
+    image_url: image ? image.thumbnail_url || image.url : ''}, {noReferrer: true, large: image?.url, tilt: false,
     fallback: compact ? label : t(side === 'front' ? 'graded_no_front' : 'graded_no_back')});
   if (compact) return frame;
   const figure = node('figure', '', 'graded-side');
@@ -62,27 +61,33 @@ function slabPair(row, compact = false) {
   return box;
 }
 
-// Spinner, elapsed time and the provider's longest wait; the ticker updates the time text.
-function waiting(label, startedAt, provider) {
-  const box = node('div', '', 'graded-waiting');
-  const ring = node('span', '', 'loading-ring'); ring.setAttribute('aria-hidden', 'true');
+// Elapsed time plus "can take minutes"; the ticker rewrites the time and, past the
+// provider's limit, swaps the hint for an "overdue" note.
+function waitingText(label, startedAt, provider) {
   const text = node('div', '', 'graded-waiting-text');
-  const limit = graded.timeoutSeconds(provider);
   const elapsed = node('span', '', 'graded-elapsed');
-  elapsed.dataset.started = String(startedAt); elapsed.dataset.limit = String(limit * 1000);
+  elapsed.dataset.started = String(startedAt); elapsed.dataset.limit = String(graded.timeoutSeconds(provider) * 1000);
   const hint = node('span', '', 'graded-wait-hint');
-  hint.dataset.normal = t('graded_wait_hint', {max: duration(limit)}); hint.dataset.late = t('graded_overdue');
+  hint.dataset.normal = t('graded_wait_hint'); hint.dataset.late = t('graded_overdue');
   text.append(node('strong', label), elapsed, hint);
-  box.append(ring, text);
   updateElapsed(elapsed, Date.now());
+  return text;
+}
+function ring() { const el = node('span', '', 'loading-ring'); el.setAttribute('aria-hidden', 'true'); return el; }
+// Re-query state on a saved card: spinner with time and a cancel button.
+function waiting(label, startedAt, provider, actions = []) {
+  const box = node('div', '', 'graded-waiting');
+  const text = waitingText(label, startedAt, provider);
+  if (actions.length) { const row = node('div', '', 'graded-actions'); row.append(...actions); text.append(row); }
+  box.append(ring(), text);
   return box;
 }
 function queued(text, actions = []) {
   const box = node('div', '', 'graded-waiting queued');
-  const box2 = node('div', '', 'graded-waiting-text');
-  box2.append(node('strong', text));
-  box.append(icon('bi-hourglass-split'), box2);
-  if (actions.length) { const row = node('div', '', 'graded-actions'); row.append(...actions); box2.append(row); }
+  const body = node('div', '', 'graded-waiting-text');
+  body.append(node('strong', text));
+  box.append(icon('bi-hourglass-split'), body);
+  if (actions.length) { const row = node('div', '', 'graded-actions'); row.append(...actions); body.append(row); }
   return box;
 }
 function failure(error, provider, title, actions) {
@@ -96,13 +101,33 @@ function failure(error, provider, title, actions) {
   return box;
 }
 
-function pendingStatus(item) {
+// A lookup not saved yet is laid out like a saved card (same header, image area and footer)
+// so the grid and list keep their rhythm; the image area carries the spinner.
+const cancelLabel = item => t(item.status === 'loading' ? 'graded_cancel_lookup' : 'detail_cancel');
+function pendingMarker(item) {
+  const marker = node('span', '', 'graded-pending-marker');
+  marker.append(item.status === 'loading' ? ring() : icon(item.status === 'queued' ? 'bi-hourglass-split' : 'bi-exclamation-triangle'));
+  return marker;
+}
+function pendingImages(item, compact = false) {
+  const box = node('div', '', compact ? 'graded-thumbs graded-pending-images' : 'graded-images graded-pending-images');
+  for (const side of ['front', 'back']) {
+    const frame = node('span', '', 'card-image');
+    if (compact) { box.append(frame); continue; }
+    const figure = node('figure', '', 'graded-side');
+    figure.append(frame, node('figcaption', t(side === 'front' ? 'graded_front' : 'graded_back')));
+    box.append(figure);
+  }
+  box.append(pendingMarker(item));
+  return box;
+}
+function pendingText(item) {
   const label = t('graded_querying', {provider: providerName(item.provider), number: item.cert_number});
-  if (item.status === 'loading') return waiting(label, item.startedAt, item.provider);
+  if (item.status === 'loading') return waitingText(label, item.startedAt, item.provider);
   if (item.status === 'queued') {
-    const ahead = graded.queuePosition('add', item.key);
-    return queued(ahead > 0 ? t('graded_queued', {count: number(ahead)}) : t('graded_queued_next'),
-      [textButton('bi-x-lg', t('detail_cancel'), () => graded.dismiss(item.key))]);
+    const ahead = graded.queuePosition('add', item.key), text = node('div', '', 'graded-waiting-text');
+    text.append(node('strong', label), node('span', ahead > 0 ? t('graded_queued', {count: number(ahead)}) : t('graded_queued_next')));
+    return text;
   }
   const actions = [];
   if (item.error.retryable) actions.push(textButton('bi-arrow-counterclockwise', t('favorite_retry'), () => graded.retry(item.key), 'compact'));
@@ -116,16 +141,25 @@ function pendingTile(item) {
   if (busyStatus(item.status)) card.setAttribute('aria-busy', 'true');
   const tags = node('div', '', 'card-tags'); tags.append(providerTag(item.provider));
   const top = node('div', '', 'card-top'); top.append(tags, node('span', item.cert_number, 'mono'));
-  card.append(top, pendingStatus(item));
+  card.append(top, pendingImages(item), pendingText(item));
+  if (busyStatus(item.status)) {
+    const foot = node('div', '', 'card-foot');
+    foot.append(textButton('bi-x-lg', cancelLabel(item), () => graded.dismiss(item.key)));
+    card.append(foot);
+  }
   return card;
 }
 function pendingRow(item) {
   const tr = node('tr', '', `graded-pending-row ${item.status}`);
   tr.dataset.key = item.key;
   if (busyStatus(item.status)) tr.setAttribute('aria-busy', 'true');
-  const head = node('td'); head.append(providerTag(item.provider), node('span', item.cert_number, 'mono graded-row-number'));
-  const body = node('td'); body.colSpan = 6; body.append(pendingStatus(item));
-  tr.append(head, body);
+  const cell = (child, className = '') => { const td = node('td', '', className); if (child) td.append(child); tr.append(td); return td; };
+  cell(pendingImages(item, true)); cell(providerTag(item.provider)); cell(gradeBadge(''));
+  cell(pendingText(item), 'graded-title-cell'); cell(node('span', item.cert_number, 'mono'));
+  cell(node('span', '—', 'graded-date'));
+  const actions = node('div', '', 'row-actions');
+  if (busyStatus(item.status)) actions.append(iconButton('bi-x-lg', cancelLabel(item), () => graded.dismiss(item.key)));
+  cell(actions, 'action-col');
   return tr;
 }
 
@@ -133,7 +167,10 @@ function pendingRow(item) {
 function refreshStatus(row) {
   const entry = graded.state.refreshing[row.id];
   if (!entry) return null;
-  if (entry.status === 'loading') return waiting(t('graded_requerying'), entry.startedAt, row.provider);
+  if (entry.status === 'loading') {
+    return waiting(t('graded_requerying'), entry.startedAt, row.provider,
+      [textButton('bi-x-lg', t('graded_cancel_lookup'), () => graded.dismissRefresh(row.id))]);
+  }
   if (entry.status === 'queued') {
     return queued(t('graded_refresh_queued'), [textButton('bi-x-lg', t('detail_cancel'), () => graded.dismissRefresh(row.id))]);
   }
@@ -219,7 +256,7 @@ function render() {
   const rows = filterGraded(state.records, filters), pending = state.pending;
   $('graded-count').hidden = !state.ready;
   $('graded-count').textContent = t('counts', {matching: number(rows.length), loaded: number(state.records.length)});
-  $('graded-filters').hidden = !state.ready || !state.records.length;
+  $('graded-filters').hidden = !state.ready;
   providerChips();
   $('graded-sort').value = filters.sort;
   // Placeholders for lookups in progress come first and ignore the filters.
@@ -265,7 +302,7 @@ function flash() {
 function updateElapsed(element, now) {
   const elapsed = now - Number(element.dataset.started);
   element.textContent = t('graded_elapsed', {time: formatElapsed(elapsed)});
-  const late = elapsed > Number(element.dataset.limit), box = element.closest('.graded-waiting');
+  const late = elapsed > Number(element.dataset.limit), box = element.parentElement;
   box?.classList.toggle('overdue', late);
   const hint = box?.querySelector('.graded-wait-hint');
   if (hint) hint.textContent = late ? hint.dataset.late : hint.dataset.normal;
@@ -352,7 +389,7 @@ async function startScan() {
     if (session === scanGeneration) { scanStarting = false; renderDialog(); }
   }
 }
-// A certificate link is queued straight away and scanning continues; bare digits fill
+// A certificate link closes the dialog once queued; bare digits fill
 // the number field so the provider can be confirmed first.
 function handleScan(text, fromCamera) {
   const value = String(text).trim(), now = Date.now();
@@ -362,6 +399,11 @@ function handleScan(text, fromCamera) {
   linkNotice = null;
   if (parsed?.provider) {
     const result = queueLookup(parsed.provider, parsed.cert_number), label = labelOf(parsed.provider, parsed.cert_number);
+    if (result.status === 'queued') {
+      stopScan();
+      $('graded-dialog').close();
+      return;
+    }
     scanAdded.unshift({label, status: result.status});
     scanMessage = {key: {queued: 'graded_scan_added', exists: 'graded_scan_exists'}[result.status] ?? 'graded_scan_pending',
       params: {label}, tone: result.status === 'queued' ? 'success' : ''};
@@ -424,7 +466,7 @@ function populationSection(population) {
   return section;
 }
 function openDetail(id) {
-  detailId = id; detailSignature = '';
+  detailId = id; detailSignature = ''; englishOpen = false;
   renderDetail(true);
 }
 function renderDetail(opening = false) {
@@ -446,10 +488,19 @@ function renderDetail(opening = false) {
     cert.append(node('span', t('graded_cert_number'), 'graded-detail-label'), numberButton(row.cert_number));
     info.append(tags, cert, node('p', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'));
     const status = refreshStatus(row); if (status) info.append(status);
-    const fields = Object.entries(row.fields ?? {});
-    if (fields.length) {
+    const fields = Object.entries(row.fields ?? {}), english = Object.entries(row.english_fields ?? {});
+    if (fields.length || english.length) {
       const section = node('section', '', 'graded-section');
-      section.append(node('h3', t('graded_fields')), fieldList(fields));
+      section.append(node('h3', t('graded_fields')));
+      if (fields.length) section.append(fieldList(fields));
+      if (english.length) {
+        // Translations of the fields above (ARS): folded until asked for.
+        const more = node('details', '', 'graded-english'), summary = node('summary', t('graded_english_fields'));
+        more.open = englishOpen;
+        more.addEventListener('toggle', () => { englishOpen = more.open; });
+        more.append(summary, fieldList(english));
+        section.append(more);
+      }
       info.append(section);
     }
     const population = populationSection(row.population); if (population) info.append(population);

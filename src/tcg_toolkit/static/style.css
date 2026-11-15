@@ -1228,7 +1228,6 @@ button.switch:hover .switch-track { filter: brightness(.95); }
 @media (max-width: 700px) { .page-notice { top: auto; bottom: 16px; left: 16px; right: 16px; max-width: none; } }
 
 /* Graded cards: the card library's list and grid, with both sides of the slab. */
-.graded-intro { margin: 8px 0 0; max-width: 760px; font-size: 13px; line-height: 1.6; color: var(--color-text-muted); }
 .graded-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 240px); gap: 16px; align-items: end; }
 .graded-filter-row .field select { margin-top: 6px; }
 #graded-filters .chips:empty { display: none; }
@@ -1250,6 +1249,9 @@ button.graded-title { display: inline; height: auto; padding: 0; border: 0; back
 button.graded-title:hover { background: none; border: 0; text-decoration: underline; }
 .graded-card button.graded-title { display: -webkit-box; font-size: 14px; line-height: 1.45; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .graded-meta { margin: 0; font-size: 12px; color: var(--color-text-muted); }
+/* A taller neighbour stretches the card: the footer moves down, the 3-line title stays clamped. */
+.graded-card button.graded-title { flex: none; }
+.graded-card > .graded-meta { margin-top: auto; }
 .graded-date { white-space: nowrap; font-size: 12px; color: var(--color-text-muted); }
 td.graded-title-cell { min-width: 220px; }
 .graded-title-cell .graded-waiting, .graded-title-cell .graded-error { margin-top: 8px; }
@@ -1270,7 +1272,7 @@ a.row-action:hover { background: var(--color-hover); color: var(--color-text); }
 .graded-waiting-text, .graded-error-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
 .graded-waiting-text strong, .graded-error-text strong { font-size: 13px; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
 .graded-elapsed { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
-.graded-waiting.overdue .graded-wait-hint { color: #b45309; }
+.overdue > .graded-wait-hint { color: #b45309; }
 .graded-error { color: #991b1b; background: #fef2f2; border: 1px solid #fca5a5; }
 .graded-error > .bi { flex: none; margin-top: 1px; font-size: 18px; }
 .graded-error-text { color: #991b1b; }
@@ -1278,9 +1280,21 @@ a.row-action:hover { background: var(--color-hover); color: var(--color-text); }
 .graded-error-code { white-space: normal; overflow-wrap: anywhere; color: #b91c1c; }
 .graded-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .graded-actions button { height: 30px; padding: 0 10px; font-size: 12px; gap: 5px; }
-.graded-pending-row td { vertical-align: top; }
-.graded-pending-row .graded-row-number { margin-left: 8px; }
-.graded-pending-row .graded-waiting, .graded-pending-row .graded-error { max-width: 640px; }
+.graded-pending-row .graded-error { max-width: 640px; }
+/* Placeholders keep the saved card's image area; the spinner sits over it. */
+.graded-pending-images { position: relative; }
+.graded-pending-marker { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.graded-images.graded-pending-images .graded-pending-marker { bottom: 19px; }
+.graded-pending-marker .loading-ring { width: 40px; height: 40px; border-width: 4px; }
+.graded-thumbs .graded-pending-marker .loading-ring { width: 22px; height: 22px; border-width: 3px; }
+.graded-pending-marker > .bi { font-size: 26px; color: var(--color-text-subtle); }
+.graded-thumbs .graded-pending-marker > .bi { font-size: 16px; }
+.graded-pending.failed .graded-pending-marker > .bi, .graded-pending-row.failed .graded-pending-marker > .bi { color: #b91c1c; }
+.graded-pending .card-foot { margin-top: auto; }
+.graded-english { margin-top: 10px; }
+.graded-english summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
+.graded-english summary:hover { color: var(--color-text); }
+.graded-english[open] summary { margin-bottom: 8px; }
 /* A card pointed at (duplicate add) is outlined for a moment. */
 .graded-card.graded-flash { animation: graded-flash 2.2s ease-out; }
 tr.graded-flash > td { animation: graded-row-flash 2.2s ease-out; }

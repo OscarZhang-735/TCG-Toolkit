@@ -207,21 +207,24 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 | 方法与路径 | 输入与结果 |
 | --- | --- |
 | `GET /api/graded-cards` | 返回 `{"items":[记录, …]}`，按添加时间倒序，同秒按写入顺序倒序 |
-| `POST /api/graded-cards` | `{"provider":"psa","cert_number":"98428602"}`；查询成功后保存并返回 201 和记录 |
-| `POST /api/graded-cards/{id}/refresh` | JSON `{}`；重新查询，成功返回 200 和更新后的记录 |
+| `POST /api/graded-cards` | `{"provider":"psa","cert_number":"98428602","request_id":"可选"}`；查询成功后保存并返回 201 和记录 |
+| `POST /api/graded-cards/{id}/refresh` | JSON `{}` 或 `{"request_id":"…"}`；重新查询，成功返回 200 和更新后的记录 |
+| `DELETE /api/graded-cards/lookups/{request_id}` | JSON `{}`；取消本账号该 `request_id` 的查询，返回 204；查询已保存则 409 `graded_lookup_finished` |
 | `DELETE /api/graded-cards/{id}` | JSON `{}`；删除本账号记录，成功返回 204 |
 
-记录字段为 `id`、`provider`、`cert_number`、`source_url`、`title`、`grade`、`fields`、`population`、`images`、`created_at`、`refreshed_at`；时间为 Unix 秒。证书编号为字符串，服务端只去除首尾空白并接受 1–32 位 ASCII 数字。前端额外支持移除数字间的空格和连字符、从机构官网链接提取编号。
+记录字段为 `id`、`provider`、`cert_number`、`source_url`、`title`、`grade`、`fields`、`english_fields`、`population`、`images`、`created_at`、`refreshed_at`；时间为 Unix 秒。`title` 与两组字段由 `grading.present()` 在读取时按注册表生成，旧快照同样适用：`GradingProvider.title_field` 指定作为名称的字段（ARS 为原版 `カード名称`，PCG-CN 为原名 `Original Name`，缺失时回退到解析器的 `title`）；`english_field` 判定只是译文的字段（ARS 为英文标签），这些字段放入 `english_fields`，WebUI 详情中默认折叠。直接查询接口 `GET /api/grading/...` 的返回保持解析器原样。证书编号为字符串，服务端只去除首尾空白并接受 1–32 位 ASCII 数字。前端额外支持移除数字间的空格和连字符、从机构官网链接提取编号。
 
 同一账号的 `(provider, cert_number)` 唯一，重复新增返回 409 `{"detail":{"type":"graded_card_duplicate","id":"已有记录ID"}}`。已有重复在查询前直接返回；同时新增由数据库唯一约束仲裁。不同账号可分别保存同一证书。访问不存在或属于其他账号的记录均返回 404 `graded_card_not_found`，查询失败不会写入新记录或覆盖旧快照。
 
 数据库版本 **15**（Alembic `0015`）新增 `graded_cards` 表，保存每张证书最近一次成功查询的 JSON 快照。升级前备份，使用匹配版本运行 `tcg-db migrate`；生产共同发布流程会执行迁移。此迁移保留既有账号、会话和卡牌数据，不提供自动降级。
 
-查询与数据库操作分开执行，等待机构响应时不持有数据库连接。直接查询、新增和刷新共享进程内并发上限：每账号 3 项、全进程 8 项，超限返回 429 `grading_busy`。多进程部署时各进程分别计数。
+查询与数据库操作分开执行，等待机构响应时不持有数据库连接。
 
-前端 `graded-cards.js` 统一管理新增和刷新队列，每标签页并行 2 项；浏览器等待上限为机构 `timeout_seconds` 加 30 秒。超时、网络或服务错误由用户显式重试；机构或编号错误提示修改输入。刷新失败仍显示旧数据。退出或更换账号会清空本页状态并丢弃迟到响应；关闭页面不能撤回服务器已开始的查询。队列不持久化，成功记录从数据库重新加载。
+`request_id` 为浏览器生成的 8–64 位字母、数字或连字符，归属当前账号。取消时服务端关闭该查询正在使用的上游 HTTP 客户端（进行中的读取立即失败，释放并发名额），并通过一次性令牌保证已取消的查询不会保存，原请求返回 409 `grading_lookup_cancelled`。先到达的取消会让随后到达的同 ID 查询直接结束；取消与保存的结果在进程内保留 5 分钟，取消晚于保存时返回 409 `graded_lookup_finished`，前端据此重新加载列表。取消登记和并发上限一样是进程内状态。直接查询、新增和刷新共享进程内并发上限：每账号 3 项、全进程 8 项，超限返回 429 `grading_busy`。多进程部署时各进程分别计数。
 
-`graded-cards-ui.js` 提供列表/网格、详情、筛选、排序、图片预览和删除确认。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
+前端 `graded-cards.js` 统一管理新增和刷新队列，每标签页并行 2 项；浏览器等待上限为机构 `timeout_seconds` 加 30 秒。超时、网络或服务错误由用户显式重试；机构或编号错误提示修改输入。刷新失败仍显示旧数据。查询中的占位卡与已保存卡片布局、尺寸一致（列表中同列对齐），显示不确定加载环、已等待时间和“最多可能需要几分钟”，并提供“取消查询”：前端中止请求并调用上述取消接口；重新查询同样可取消，已保存数据不变。退出或更换账号会清空本页状态并丢弃迟到响应；关闭页面不会发送取消，服务器已开始的查询仍会完成并保存。队列不持久化，成功记录从数据库重新加载。
+
+`graded-cards-ui.js` 提供列表/网格、详情、筛选、排序、图片预览和删除确认。筛选区在没有卡片时也保留（卡牌库与收藏页同样在加载完成后始终显示筛选区）。评级卡图片为静态图片，不使用其他页面的鼠标跟随倾斜效果，点击仍可放大预览。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
 
 ### 评级卡验收
 
@@ -244,7 +247,7 @@ python -m pytest -q tests/test_graded_webui.py
 $env:TCG_BROWSER_TEST="0"
 ```
 
-该测试验证官网链接识别、保存后重载、去重、真实 PNG 照片及合成视频帧经 Canvas/jsQR 解码、摄像头权限拒绝提示与关闭后轨道释放、ARS 无图片显示、筛选、排序、详情和图片预览、失败后刷新重试、删除确认、中英文及状态提示翻译、390px 移动布局和退出清理。截图默认保存在 `data/graded-webui-acceptance/`，可用 `TCG_BROWSER_OUTPUT` 改路径。合成视频不调用电脑实体摄像头；实物标签的对焦和扫码效果需在目标设备检查。真实机构网络验收使用下文独立开关。
+该测试验证无卡片时保留筛选区（评级卡、卡牌库、收藏页）、官网链接识别、保存后重载、去重、ARS 原版卡名与英文信息折叠、PCG-CN 原名、评级卡图片无倾斜效果、查询中占位卡与已保存卡片尺寸一致、取消查询后服务端上游请求被关闭且不保存、真实 PNG 照片及合成视频帧经 Canvas/jsQR 解码、摄像头权限拒绝提示与关闭后轨道释放、ARS 无图片显示、筛选、排序、详情和图片预览、失败后刷新重试、删除确认、中英文及状态提示翻译、390px 移动布局和退出清理。截图默认保存在 `data/graded-webui-acceptance/`，可用 `TCG_BROWSER_OUTPUT` 改路径。合成视频不调用电脑实体摄像头；实物标签的对焦和扫码效果需在目标设备检查。真实机构网络验收使用下文独立开关。
 
 2026-11-14 本地收尾验收结果（PostgreSQL 17 专用测试库）：
 

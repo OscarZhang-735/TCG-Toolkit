@@ -60,7 +60,9 @@ def test_registry_and_saved_snapshots_persist_for_all_providers(client):
         assert response.headers['cache-control'] == 'no-store'
         row = response.json()
         assert row['cert_number'] == '00123' and row['provider'] == provider
-        assert row['grade'] == '10' and row['fields'] == {'Number': '00123'}
+        # ARS folds its English-labelled fields away; every other provider shows them.
+        assert row['grade'] == '10' and {**row['fields'], **row['english_fields']} == {'Number': '00123'}
+        assert bool(row['english_fields']) == (provider == 'ars')
         assert row['population'] == {'at_grade': 2, 'higher': None}
         assert row['images'][0]['side'] == 'front'
         assert row['created_at'] == row['refreshed_at']
@@ -194,3 +196,141 @@ def test_lookup_limits_are_shared_and_released_after_failure(client, monkeypatch
         assert error.value.status_code == 429
         with per_user.hold('bob'):
             pass
+
+
+def test_saved_cards_show_original_names_and_fold_ars_english_fields(client, monkeypatch):
+    ars_fields = {'カード名称': '学生兼研究者 式部 茉優', 'ブランド': 'Lycee Overture',
+                  'Card Name': 'Student and Researcher, Mayu Shikibe', 'Brand': 'Lycee Overture'}
+    results = {
+        'ars': dict(certificate('047088950114', 'ars'), certificate=dict(
+            title='Student and Researcher, Mayu Shikibe', grade='10', fields=ars_fields, population={})),
+        'pcgcn': dict(certificate('10198854', 'pcgcn'), certificate=dict(
+            title='宫小路瑞穗', grade='10', fields={'Card Name': '宫小路瑞穗', 'Original Name': '宮小路瑞穂'}, population={})),
+    }
+    for provider, result in results.items():
+        monkeypatch.setitem(grading.PROVIDERS, provider,
+                            replace(grading.PROVIDERS[provider], fetch=lambda number, result=result: result))
+    ars = add(client, '047088950114', 'ars').json()
+    assert ars['title'] == '学生兼研究者 式部 茉優'
+    assert ars['fields'] == {'カード名称': '学生兼研究者 式部 茉優', 'ブランド': 'Lycee Overture'}
+    assert ars['english_fields'] == {'Card Name': 'Student and Researcher, Mayu Shikibe', 'Brand': 'Lycee Overture'}
+    pcg = add(client, '10198854', 'pcgcn').json()
+    assert pcg['title'] == '宮小路瑞穂' and pcg['english_fields'] == {}
+    # Applied when reading, so older snapshots show the same way; a PCG-CN card without an
+    # original name keeps the Chinese name, and an unknown provider shows what was saved.
+    assert grading.present('pcgcn', {'title': '宫小路瑞穗', 'fields': {'Card Name': '宫小路瑞穗'}})[0] == '宫小路瑞穗'
+    assert grading.present('removed-provider', {'title': 'Kept', 'fields': {'A': '1'}}) == ('Kept', {'A': '1'}, {})
+
+
+def slow_fetch(started, closed):
+    """Stands in for an upstream request: blocks until its client is closed."""
+    def fetch(number):
+        class Client:
+            def close(self):
+                closed.set()
+        grading._cancellable(Client())
+        started.set()
+        assert closed.wait(timeout=10)
+        raise HTTPException(502, detail='psa_unavailable')
+    return fetch
+
+
+@pytest.mark.parametrize('refreshing', [False, True])
+def test_cancel_stops_the_upstream_request_and_nothing_is_saved(client, monkeypatch, refreshing):
+    saved = add(client).json() if refreshing else None
+    started, closed = Event(), Event()
+    fetch_with(monkeypatch, slow_fetch(started, closed))
+    request_id = 'lookup-0001'
+    path, body = ((f"{PATH}/{saved['id']}/refresh", {'request_id': request_id}) if refreshing
+                  else (PATH, {'provider': 'psa', 'cert_number': '777', 'request_id': request_id}))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(client.post, path, json=body)
+        assert started.wait(timeout=10)
+        response = client.request('DELETE', f'{PATH}/lookups/{request_id}', json={})
+        assert response.status_code == 204 and response.headers['cache-control'] == 'no-store'
+        assert closed.is_set()
+        result = future.result(timeout=10)
+    assert result.status_code == 409 and result.json()['detail'] == 'grading_lookup_cancelled'
+    assert client.get(PATH).json()['items'] == ([saved] if refreshing else [])
+    fetch_with(monkeypatch, lambda number: certificate(number))
+    assert add(client, '778').status_code == 201, 'the cancelled lookup released its slot'
+
+
+def test_cancel_before_start_after_save_and_from_another_account(client, monkeypatch):
+    fetch_with(monkeypatch, lambda number: pytest.fail('a lookup cancelled before it started must not fetch'))
+    assert client.request('DELETE', f'{PATH}/lookups/early-0001', json={}).status_code == 204
+    response = client.post(PATH, json={'provider': 'psa', 'cert_number': '1', 'request_id': 'early-0001'})
+    assert response.status_code == 409 and response.json()['detail'] == 'grading_lookup_cancelled'
+    fetch_with(monkeypatch, lambda number: certificate(number))
+    assert client.post(PATH, json={'provider': 'psa', 'cert_number': '2', 'request_id': 'late-00001'}).status_code == 201
+    response = client.request('DELETE', f'{PATH}/lookups/late-00001', json={})
+    assert response.status_code == 409 and response.json()['detail'] == 'graded_lookup_finished'
+    # Request ids belong to an account: bob cannot stop alice's lookup.
+    started, closed = Event(), Event()
+    fetch_with(monkeypatch, slow_fetch(started, closed))
+    alice = client.headers['Authorization']
+    bob = 'Bearer ' + register_user(client, 'bob').json()['token']
+    client.headers['Authorization'] = alice
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(client.post, PATH, json={'provider': 'psa', 'cert_number': '3', 'request_id': 'shared-001'},
+                             headers={'Authorization': alice})
+        assert started.wait(timeout=10)
+        client.request('DELETE', f'{PATH}/lookups/shared-001', json={}, headers={'Authorization': bob})
+        assert not closed.wait(timeout=0.3)
+        client.request('DELETE', f'{PATH}/lookups/shared-001', json={}, headers={'Authorization': alice})
+        assert future.result(timeout=10).status_code == 409
+    for bad in ('short', 'x' * 65, 'has_underscore'):
+        assert client.request('DELETE', f'{PATH}/lookups/{bad}', json={}).status_code == 422
+        assert client.post(PATH, json={'provider': 'psa', 'cert_number': '4', 'request_id': bad}).status_code == 422
+
+
+def test_registry_forgets_outcomes_after_a_while():
+    now = [0.0]
+    registry = grading.LookupRegistry(clock=lambda: now[0])
+    assert registry.cancel('alice', 'early-0001') == 'cancelled'
+    with registry.track('alice', 'early-0001') as token:
+        assert token.cancelled
+    with registry.track('alice', 'saved-0001') as token:
+        assert token.finish()
+    assert registry.cancel('alice', 'saved-0001') == 'finished'
+    now[0] = registry.TTL + 1
+    with registry.track('alice', 'early-0001') as token:
+        assert not token.cancelled, 'an old cancel does not stop a new lookup'
+    assert registry._outcomes.keys() == {('alice', 'early-0001')}
+
+
+def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch):
+    """The production fetchers register their httpx client; closing it ends a slow read."""
+    import http.server
+    import threading
+    import time
+
+    class Slow(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            time.sleep(5)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Slow)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(grading, 'ARS_URL', f'http://127.0.0.1:{server.server_port}/')
+    monkeypatch.setattr(grading, 'LOOKUP_SLOTS', grading.LookupSlots())
+    registry = grading.LookupRegistry()
+
+    def lookup():
+        with registry.track('alice', 'real-00001'):
+            return grading.lookup_certificate('ars', '047088950114', 'alice')
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(lookup)
+            time.sleep(0.5)
+            started = time.monotonic()
+            assert registry.cancel('alice', 'real-00001') == 'cancelled'
+            with pytest.raises(HTTPException) as error:
+                future.result(timeout=10)
+            assert error.value.detail == 'grading_lookup_cancelled'
+            assert time.monotonic() - started < 2
+    finally:
+        server.shutdown()

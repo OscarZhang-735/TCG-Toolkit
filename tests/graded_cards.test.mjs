@@ -1,6 +1,9 @@
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {webcrypto} from 'node:crypto';
+// Browsers (and Node 19+) provide crypto globally; request ids use getRandomValues.
+globalThis.crypto ??= webcrypto;
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = value => `data:text/javascript;base64,${Buffer.from(value).toString('base64')}`;
 const {createGradedCards, gradingError, gradeValue, formatElapsed, filterGraded, slabImages, ERROR_KEYS, MAX_CONCURRENT} =
@@ -34,9 +37,11 @@ function server({records = [], providers = PROVIDERS} = {}) {
   };
   return {api, calls, waiting, set records(value) { records = value; }, set deleteReply(value) { deleteReply = value; }};
 }
+// Safety timers stay inert unless a test drives them: real ones (up to 255 s) would keep
+// the test process alive after lookups left waiting.
 async function ready(options = {}, init = {}) {
   const backend = server(init), changes = [];
-  const graded = createGradedCards(() => changes.push(1), options);
+  const graded = createGradedCards(() => changes.push(1), {setTimer: () => 0, clearTimer: () => {}, ...options});
   await graded.activate(backend.api);
   return {graded, backend, changes};
 }
@@ -64,7 +69,7 @@ test('UI string keys used by the graded-card modules exist in both languages', a
   const sources = await Promise.all(['graded-cards.js', 'graded-cards-ui.js', 'grading-scan.js']
     .map(name => readFile(new URL(name, base), 'utf8')));
   // Server detail codes share the prefix but are not messages.
-  const codes = new Set(['graded_card_duplicate', 'graded_card_not_found']);
+  const codes = new Set(['graded_card_duplicate', 'graded_card_not_found', 'graded_lookup_finished']);
   const keys = new Set(sources.join('\n').match(/'graded_[a-z_]+'/g).map(key => key.slice(1, -1)).filter(key => !codes.has(key)));
   assert.ok(keys.size > 50);
   for (const key of keys) assert.ok(messages.en[key] && messages['zh-CN'][key], key);
@@ -152,7 +157,10 @@ test(`lookups run at most ${MAX_CONCURRENT} at a time; the rest wait their turn`
   assert.equal(graded.state.pending.find(item => item.cert_number === '1').startedAt, 1000);
   assert.equal(graded.queuePosition('add', 'ars:3'), 0);
   assert.equal(graded.busy(), true);
-  assert.deepEqual(backend.waiting.map(job => job.body), [{provider: 'psa', cert_number: '1'}, {provider: 'psa', cert_number: '2'}]);
+  assert.deepEqual(backend.waiting.map(({body: {provider, cert_number}}) => ({provider, cert_number})),
+    [{provider: 'psa', cert_number: '1'}, {provider: 'psa', cert_number: '2'}]);
+  assert.match(backend.waiting[0].body.request_id, /^[0-9a-f]{32}$/);
+  assert.notEqual(backend.waiting[0].body.request_id, backend.waiting[1].body.request_id);
   clock = 5000;
   backend.waiting[0].resolve(reply(card('c1', 'psa', '1'), 201));
   await settle();
@@ -199,12 +207,62 @@ test('failures keep the placeholder with a classified error; retry and edit path
   assert.equal(graded.add({provider: 'psa', cert_number: '404'}).status, 'pending');
   assert.equal(item('404').status, 'loading');
   assert.equal(graded.state.pending.length, 1);
-  graded.dismiss('psa:404');
-  assert.equal(item('404').status, 'loading', 'a lookup in flight cannot be dismissed');
   backend.waiting[3].resolve(reply({detail: 'grading_certificate_not_found'}, 404));
   await settle();
   graded.dismiss('psa:404');
   assert.deepEqual(graded.state.pending, []);
+});
+
+test('cancelling a running lookup stops it here and on the server', async () => {
+  let ids = 0;
+  const {graded, backend} = await ready({maxConcurrent: 1, newId: () => `request-${++ids}`});
+  graded.add({provider: 'psa', cert_number: '1'});
+  graded.add({provider: 'psa', cert_number: '2'});
+  assert.equal(backend.waiting[0].body.request_id, 'request-1');
+  graded.dismiss('psa:1');
+  await settle();
+  assert.deepEqual(graded.state.pending.map(item => [item.cert_number, item.status]), [['2', 'loading']],
+    'the slot goes to the next lookup');
+  assert.deepEqual(backend.calls.filter(call => call.method === 'DELETE').map(call => call.path), ['/api/graded-cards/lookups/request-1']);
+  assert.deepEqual(graded.state.notice, {key: 'graded_cancelled_notice', provider: 'psa', cert_number: '1'});
+  // A late answer from the cancelled request changes nothing.
+  backend.waiting[0].resolve(reply(card('late', 'psa', '1'), 201));
+  await settle();
+  assert.deepEqual(graded.state.records, []);
+});
+
+test('a cancel that arrives after the save reloads the list so the card still appears', async () => {
+  const {graded, backend} = await ready({newId: () => 'request-1'});
+  graded.add({provider: 'ars', cert_number: '5'});
+  backend.deleteReply = reply({detail: 'graded_lookup_finished'}, 409);
+  backend.records = [card('saved', 'ars', '5')];
+  graded.dismiss('ars:5');
+  await settle();
+  assert.deepEqual(graded.state.records.map(row => row.id), ['saved']);
+  assert.equal(graded.state.notice.key, 'graded_cancel_late_notice');
+});
+
+test('a running refresh can be cancelled and keeps the saved card', async () => {
+  const saved = card('s', 'psa', '1');
+  const {graded, backend} = await ready({newId: () => 'request-9'}, {records: [saved]});
+  graded.refresh('s');
+  assert.deepEqual(backend.waiting[0].body, {request_id: 'request-9'});
+  graded.dismissRefresh('s');
+  await settle();
+  assert.equal(graded.state.refreshing.s, undefined);
+  assert.deepEqual(graded.state.records, [saved]);
+  assert.ok(backend.calls.some(call => call.method === 'DELETE' && call.path === '/api/graded-cards/lookups/request-9'));
+  // Cancelled from another tab: the lookup answers 409 and the placeholder just goes away.
+  graded.add({provider: 'psa', cert_number: '2'});
+  backend.waiting[1].resolve(reply({detail: 'grading_lookup_cancelled'}, 409));
+  await settle();
+  assert.deepEqual(graded.state.pending, []);
+  assert.equal(graded.state.notice?.key, 'graded_cancelled_notice');
+});
+
+test('folded English fields are searchable too', () => {
+  const rows = [card('a', 'ars', '1', {title: '学生', fields: {'カード名称': '学生'}, english_fields: {'Card Name': 'Student'}})];
+  assert.deepEqual(filterGraded(rows, {query: 'student'}).map(row => row.id), ['a']);
 });
 
 test('network errors are retryable and dismissing a queued lookup means it never runs', async () => {
