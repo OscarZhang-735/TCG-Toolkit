@@ -14,6 +14,7 @@ import uvicorn
 from fastapi import HTTPException
 
 from auth_helpers import install_mailbox, register_user
+from card_photos import corner_error, photo
 from tcg_toolkit import grading
 from tcg_toolkit.web import app
 
@@ -21,10 +22,25 @@ pytestmark = pytest.mark.skipif(os.getenv('TCG_BROWSER_TEST') != '1', reason='Se
 FIXTURES = Path(__file__).parent / 'fixtures'
 
 
-def test_graded_webui(monkeypatch):
+def test_graded_webui(monkeypatch, tmp_path):
     from playwright.sync_api import sync_playwright, expect
 
-    monkeypatch.setenv('TCG_AVATAR_COS_URL', '')
+    # Uploaded card photos go to an in-memory bucket; the page serves its URLs from a fixture.
+    monkeypatch.setenv('TCG_AVATAR_COS_URL', 'https://cos.test')
+    bucket, removed = {}, []
+
+    class Stored:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', lambda url, content, **kwargs: (bucket.__setitem__(url, content), Stored())[1])
+    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.delete', lambda url, **kwargs: (removed.append(url), bucket.pop(url, None), Stored())[2])
+    slab, slab_corners = photo('slab', 'busy', 9, .06, (1600, 1200), 21)
+    (tmp_path / 'slab.jpg').write_bytes(slab)
+    flat, _ = photo('card', 'dark', -4, .03, (1200, 1600), 22)
+    (tmp_path / 'card.jpg').write_bytes(flat)
     state = {'fail': False}
     calls, titles = [], {}
     blocking, released = '11111111', threading.Event()
@@ -186,6 +202,69 @@ def test_graded_webui(monkeypatch):
                 english.locator('summary').click()
                 expect(english.locator('dl')).to_be_visible()
                 expect(english).to_contain_text('Student and Researcher, Mayu Shikibe')
+
+                # ARS has no images: upload a photo for the front; OpenCV proposes the outline.
+                expect(page.locator('#graded-detail-body figure').first).to_contain_text('Click to upload the front image')
+                expect(page.locator('#graded-detail-body figure').nth(1)).to_contain_text('Click to upload the back image')
+                expect(page.locator('#graded-detail-body .graded-source-tag')).to_have_count(0)
+                front = page.locator('#graded-detail-body .graded-image-button').first
+                front.click()
+                menu = page.locator('#graded-detail-body .graded-image-menu')
+                expect(menu.get_by_role('menuitem')).to_have_count(2)  # no image yet: upload or scan
+                menu.get_by_role('menuitem', name='Upload photo').click()
+                expect(menu).to_have_count(0)
+                page.locator('#graded-image-file').set_input_files(str(tmp_path / 'slab.jpg'))
+                crop = page.locator('#graded-crop-dialog')
+                expect(crop).to_be_visible()
+                expect(page.locator('#graded-crop-title')).to_have_text('Crop the front image')
+                expect(page.locator('#graded-crop-hint')).to_contain_text('Card outline found')
+                expect(page.locator('#graded-crop-save')).to_be_enabled()
+                handles = page.locator('#graded-crop-overlay .graded-crop-handle')
+                expect(handles).to_have_count(4)
+                # The proposed corners match the slab in the photo (shrunk to the browser's upload size).
+                proposed = page.evaluate('''() => [...document.querySelectorAll('#graded-crop-overlay .graded-crop-handle')]
+                    .map(h => [Number(h.getAttribute('cx')), Number(h.getAttribute('cy'))])''')
+                assert corner_error([[x * 1200 / 1200, y] for x, y in proposed], slab_corners) < 0.04
+                # Manual adjustment: drag the top-left corner, then nudge it with the keyboard.
+                box = handles.first.bounding_box()
+                page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+                page.mouse.down(); page.mouse.move(box['x'] + 30, box['y'] + 25, steps=5); page.mouse.up()
+                moved = float(handles.first.get_attribute('cx'))
+                assert abs(moved - proposed[0][0]) > 5, 'dragging moves the corner'
+                handles.first.focus(); page.keyboard.press('ArrowLeft')
+                photos = Path(os.getenv('TCG_BROWSER_OUTPUT', 'data/graded-webui-acceptance'))
+                photos.mkdir(parents=True, exist_ok=True)
+                crop.screenshot(path=str(photos / 'crop-dialog.png'))
+                assert float(handles.first.get_attribute('cx')) < moved
+                page.locator('#graded-crop-save').click()
+                expect(crop).not_to_be_visible()
+                expect(page.locator('#graded-detail-body figure').first).to_contain_text('User photo')
+                assert len(bucket) == 1
+                stored_url = next(iter(bucket))
+                assert stored_url.startswith('https://cos.test/tcgtoolkit/graded/')
+                from PIL import Image
+                from io import BytesIO
+                with Image.open(BytesIO(bucket[stored_url])) as stored:
+                    assert stored.format == 'WEBP' and 0.5 < stored.width / stored.height < 0.7  # a slab, upright
+                expect(page.locator('#graded-grid article[data-id]').filter(has_text='047088950114')
+                       .locator('.graded-images img').first).to_have_attribute('src', stored_url)
+                # Scanning the back takes the camera path and also starts from the detected outline.
+                page.locator('#graded-detail-body .graded-image-button').nth(1).click()
+                menu.get_by_role('menuitem', name='Scan card (camera)').click()
+                page.locator('#graded-image-camera').set_input_files(str(tmp_path / 'card.jpg'))
+                expect(page.locator('#graded-crop-hint')).to_contain_text('Card outline found')
+                page.locator('#graded-crop-save').click()
+                expect(crop).not_to_be_visible()
+                expect(page.locator('#graded-detail-body .graded-source-tag.uploaded')).to_have_count(2)
+                page.locator('#graded-detail-dialog').screenshot(path=str(photos / 'detail-uploaded.png'))
+                # Removing the photo frees its stored object and brings the placeholder back.
+                front.click()
+                expect(menu.get_by_role('menuitem')).to_have_count(4)
+                menu.get_by_role('menuitem', name='Remove my photo').click()
+                expect(page.locator('#graded-detail-body .graded-source-tag.uploaded')).to_have_count(1)
+                expect(page.locator('#graded-detail-body figure').first).to_contain_text('Click to upload the front image')
+                expect(page.locator('#graded-detail-body figure').first.locator('.graded-source-tag')).to_have_count(0)
+                assert removed == [stored_url]
                 page.locator('#graded-detail-close').click()
 
                 # A slow lookup is a card of the same size; cancelling ends the upstream request.
@@ -220,7 +299,12 @@ def test_graded_webui(monkeypatch):
                 tile = page.locator('#graded-grid article[data-id]').filter(has_text='6091052028')
                 tile.locator('.graded-title').click()
                 expect(page.locator('#graded-detail-body')).to_contain_text('PRISTINE 10')
-                page.locator('#graded-detail-body .card-image').first.click()
+                # Provider images are marked as official.
+                expect(page.locator('#graded-detail-body .graded-source-tag.official')).to_have_count(2)
+                expect(page.locator('#graded-detail-body .graded-source-tag.official').first).to_have_text('Official')
+                # Clicking an image opens its options; the official image can still be enlarged.
+                page.locator('#graded-detail-body .graded-image-button').first.click()
+                page.locator('#graded-detail-body .graded-image-menu').get_by_role('menuitem', name='View larger').click()
                 expect(page.locator('#image-dialog')).to_be_visible()
                 page.locator('#preview-close').click()
                 state['fail'] = True

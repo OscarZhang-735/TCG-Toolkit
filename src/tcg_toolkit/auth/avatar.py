@@ -1,4 +1,8 @@
-"""Validate account avatars and store them as public COS image objects."""
+"""Validate account avatars and store public COS image objects (avatars, graded card photos).
+
+Both kinds live in the same bucket under their own prefix and share one deletion queue
+(the avatar_cleanup table) for objects that were replaced or whose owner was deleted.
+"""
 import asyncio
 from io import BytesIO
 import logging
@@ -18,6 +22,7 @@ from ..db_models import AvatarCleanup, User
 AVATAR_LIMIT = 5 * 1024 * 1024
 AVATAR_TYPES = {'image/jpeg': 'JPEG', 'image/png': 'PNG', 'image/webp': 'WEBP'}
 AVATAR_PREFIX = '/tcgtoolkit/avatars/'
+GRADED_PREFIX = '/tcgtoolkit/graded/'
 CLEANUP_INTERVAL = 60
 logger = logging.getLogger(__name__)
 
@@ -51,13 +56,21 @@ def upload_avatar(content, media_type):
     except (OSError, ValueError, SyntaxError):
         raise HTTPException(422, detail='avatar_invalid') from None
 
-    url = str(bucket.copy_with(path=f'{AVATAR_PREFIX}{uuid4().hex}.webp'))
+    return store_webp(output.getvalue(), AVATAR_PREFIX, 'avatar_storage_failed')
+
+
+def store_webp(data, prefix, failure):
+    """Upload a WebP under a random name and return its public URL."""
+    bucket = avatar_bucket()
+    if bucket is None:
+        raise HTTPException(503, detail=failure)
+    url = str(bucket.copy_with(path=f'{prefix}{uuid4().hex}.webp'))
     try:
-        response = httpx.put(url, content=output.getvalue(), timeout=15,
+        response = httpx.put(url, content=data, timeout=15,
                              headers={'Content-Type': 'image/webp'}, trust_env=False)
         response.raise_for_status()
     except httpx.HTTPError:
-        raise HTTPException(502, detail='avatar_storage_failed') from None
+        raise HTTPException(502, detail=failure) from None
     return url
 
 
@@ -67,7 +80,7 @@ def is_avatar_object(url, bucket):
     except httpx.InvalidURL:
         return False
     return (target.copy_with(path='/') == bucket and not target.query and not target.fragment
-            and re.fullmatch(rb'/tcgtoolkit/avatars/[0-9a-f]{32}\.webp', target.raw_path) is not None)
+            and re.fullmatch(rb'/tcgtoolkit/(?:avatars|graded)/[0-9a-f]{32}\.webp', target.raw_path) is not None)
 
 
 def save_avatar(store, user_id, content, media_type):

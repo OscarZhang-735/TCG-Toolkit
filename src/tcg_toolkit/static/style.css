@@ -1335,6 +1335,41 @@ tr.graded-flash > td { animation: graded-row-flash 2.2s ease-out; }
 .graded-detail-dialog .dialog-head h2 { overflow-wrap: anywhere; }
 .graded-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 24px; align-items: start; }
 .graded-detail-images .card-image { height: 340px; }
+/* Detail images are buttons: they open the side's image options. */
+.graded-detail-images .graded-side { position: relative; }
+button.graded-image-button { width: 100%; padding: 0; border: 0; background: var(--color-placeholder); cursor: pointer; }
+button.graded-image-button:hover { background: var(--color-hover); border: 0; }
+button.graded-image-button:hover img { opacity: .92; }
+button.graded-image-button:disabled { opacity: 1; cursor: progress; }
+button.graded-image-button:disabled:hover { background: var(--color-placeholder); }
+.graded-image-edit { position: absolute; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; font-size: 14px; color: var(--color-text); background: var(--color-surface); border-radius: 50%; box-shadow: var(--shadow-sm); }
+.graded-source-tag { margin-left: 6px; padding: 0 6px; font-size: 10px; font-weight: 600; border-radius: var(--radius-pill); }
+.graded-source-tag.uploaded { color: var(--color-success); background: var(--color-success-bg); }
+.graded-source-tag.official { color: var(--color-text-secondary); background: var(--color-surface-sunken); }
+.graded-detail-images .image-fallback { padding: 0 12px; font-size: 12px; color: var(--color-text-muted); }
+.graded-image-menu { position: absolute; top: 12px; left: 50%; z-index: 5; display: flex; flex-direction: column; min-width: 180px; padding: 6px; transform: translateX(-50%); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+button.graded-image-menu-item { justify-content: flex-start; height: 36px; padding: 0 10px; gap: 10px; font-weight: 500; color: var(--color-text); background: transparent; border: 0; }
+button.graded-image-menu-item:hover, button.graded-image-menu-item:focus-visible { background: var(--color-hover); border: 0; }
+#graded-detail-image-error { margin-top: 12px; }
+
+/* Crop dialog: the photo with four draggable corners; outside the crop is shaded. */
+.form-dialog.graded-crop-dialog { width: min(760px, 94vw); }
+.graded-crop-hint { margin: -6px 0 12px; font-size: 13px; line-height: 1.5; color: var(--color-text-secondary); }
+.graded-crop-stage { position: relative; display: flex; justify-content: center; margin: 0 auto; width: fit-content; max-width: 100%; touch-action: none; user-select: none; }
+.graded-crop-stage[hidden] { display: none; }
+.graded-crop-stage img { display: block; max-width: 100%; max-height: min(62vh, 640px); border-radius: var(--radius-sm); }
+.graded-crop-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.graded-crop-shade { fill: rgb(0 0 0 / .45); }
+.graded-crop-outline { fill: none; stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 1px rgb(0 0 0 / .8)); }
+.graded-crop-handle { fill: #fff; stroke: var(--color-primary); stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; }
+.graded-crop-handle.dragging { cursor: grabbing; fill: var(--color-primary); }
+.graded-crop-handle:focus-visible { outline: none; stroke: var(--color-focus); stroke-width: 4; }
+.graded-crop-busy { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgb(255 255 255 / .35); }
+.graded-crop-busy[hidden] { display: none; }
+.graded-crop-busy .loading-ring { width: 40px; height: 40px; border-width: 4px; }
+.graded-crop-dialog .dialog-actions .graded-crop-secondary:first-child { margin-right: 0; }
+.graded-crop-dialog .dialog-actions { flex-wrap: wrap; }
+.graded-crop-dialog #graded-crop-cancel { margin-left: auto; }
 .graded-detail-info { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .graded-detail-cert { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .graded-detail-label { font-size: 12px; color: var(--color-text-muted); }

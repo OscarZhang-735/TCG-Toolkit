@@ -141,6 +141,10 @@ class GradedCard(Base):
     created_at: Mapped[int]
     refreshed_at: Mapped[int]
     sort_id: Mapped[int] = mapped_column(Identity(always=True))
+    # Photos the user uploaded (public COS WebP); shown instead of the provider's images
+    # and never touched by a lookup refresh.
+    front_image_url: Mapped[str | None]
+    back_image_url: Mapped[str | None]
     __table_args__ = (UniqueConstraint("user_id", "provider", "cert_number", name="graded_cards_user_cert_key"),)
 
 

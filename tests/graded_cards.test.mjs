@@ -6,7 +6,8 @@ import {webcrypto} from 'node:crypto';
 globalThis.crypto ??= webcrypto;
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = value => `data:text/javascript;base64,${Buffer.from(value).toString('base64')}`;
-const {createGradedCards, gradingError, gradeValue, formatElapsed, filterGraded, slabImages, ERROR_KEYS, MAX_CONCURRENT} =
+const {createGradedCards, gradingError, gradeValue, formatElapsed, filterGraded, slabImages, ERROR_KEYS, MAX_CONCURRENT,
+  fullCorners, clampCorner, cornersParam, imageError, IMAGE_ERROR_KEYS} =
   await import(asModule(await readFile(new URL('graded-cards.js', base), 'utf8')));
 const {messages} = await import(asModule(await readFile(new URL('locales.js', base), 'utf8')));
 
@@ -372,4 +373,60 @@ test('delete removes the card, treats "already gone" as done and reports other f
   assert.equal(await graded.remove('missing'), 'graded_delete_failed');
   assert.deepEqual(backend.calls.filter(call => call.method === 'DELETE').map(call => call.path),
     ['/api/graded-cards/a', '/api/graded-cards/b', '/api/graded-cards/c']);
+});
+
+test('crop corners: a slightly inset default, clamped moves and a compact query value', () => {
+  assert.deepEqual(fullCorners(1000, 500), [[40, 20], [960, 20], [960, 480], [40, 480]]);
+  assert.deepEqual(fullCorners(10, 10, 0), [[0, 0], [10, 0], [10, 10], [0, 10]]);
+  assert.deepEqual(clampCorner([-5, 900], 800, 600), [0, 600]);
+  assert.equal(cornersParam([[1.234, 2], [3, 4.56], [5, 6], [7, 8]]), '1.2,2,3,4.6,5,6,7,8');
+});
+
+test('photo errors keep the server message and fall back by status', () => {
+  assert.equal(imageError('graded_image_crop', 422), 'graded_image_crop');
+  assert.equal(imageError('graded_card_not_found', 404), 'graded_error_missing');
+  assert.equal(imageError('rate_limited', 429), 'graded_image_rate_limited');
+  assert.equal(imageError(undefined, 500), 'graded_image_failed');
+  assert.equal(imageError(undefined, 0), 'graded_error_network');
+  for (const key of IMAGE_ERROR_KEYS) assert.ok(messages.en[key] && messages['zh-CN'][key], key);
+});
+
+test('photos are sent raw: detection, crop upload with corners, and restoring the official image', async () => {
+  const saved = card('s', 'psa', '1', {images: [{url: 'https://official/front.jpg', side: 'front', uploaded: false}]});
+  const calls = [];
+  let fail = null;
+  const api = async (url, options = {}) => {
+    const {pathname, searchParams} = new URL(url, 'http://local'), method = options.method ?? 'GET';
+    calls.push({method, pathname, corners: searchParams.get('corners'), type: options.headers?.['Content-Type'], body: options.body});
+    if (fail) { const [status, detail] = fail; fail = null; return reply({detail}, status); }
+    if (pathname === '/api/grading/providers') return reply({items: PROVIDERS});
+    if (pathname === '/api/graded-cards' && method === 'GET') return reply({items: [saved]});
+    if (pathname === '/api/graded-cards/detect-card') return reply({width: 800, height: 600, corners: [[1, 2], [3, 4], [5, 6], [7, 8]]});
+    if (method === 'PUT') return reply({...saved, images: [{url: 'https://cos/x.webp', side: 'front', uploaded: true}]});
+    return reply(saved);
+  };
+  const graded = createGradedCards(() => {});
+  await graded.activate(api);
+  const photo = new Blob(['jpeg'], {type: 'image/jpeg'});
+  assert.deepEqual(await graded.detectCard(photo), {width: 800, height: 600, corners: [[1, 2], [3, 4], [5, 6], [7, 8]]});
+  assert.equal(calls.at(-1).type, 'image/jpeg');
+  assert.equal(calls.at(-1).body, photo);
+  const uploading = graded.uploadImage('s', 'front', photo, [[0, 0], [10, 0], [10, 20], [0, 20]]);
+  assert.ok(graded.state.imageBusy.has('s:front'));
+  assert.equal(await graded.uploadImage('s', 'front', photo, []), 'graded_image_failed', 'one change per side at a time');
+  assert.equal(await uploading, '');
+  assert.deepEqual(calls.at(-1), {method: 'PUT', pathname: '/api/graded-cards/s/images/front', corners: '0,0,10,0,10,20,0,20',
+    type: 'image/jpeg', body: photo});
+  assert.equal(graded.state.records[0].images[0].url, 'https://cos/x.webp');
+  assert.equal(graded.state.imageBusy.size, 0);
+  assert.equal(await graded.restoreImage('s', 'front'), '');
+  assert.equal(calls.at(-1).method, 'DELETE');
+  assert.equal(graded.state.records[0].images[0].url, 'https://official/front.jpg');
+  fail = [422, 'graded_image_crop'];
+  assert.equal(await graded.uploadImage('s', 'back', photo, [[0, 0], [1, 0], [1, 1], [0, 1]]), 'graded_image_crop');
+  fail = [413, 'graded_image_too_large'];
+  await assert.rejects(graded.detectCard(photo), error => error.key === 'graded_image_too_large');
+  fail = [404, 'graded_card_not_found'];
+  assert.equal(await graded.restoreImage('s', 'back'), 'graded_error_missing');
+  assert.deepEqual(graded.state.records, [], 'a card deleted elsewhere disappears');
 });

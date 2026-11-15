@@ -4,21 +4,28 @@ Lookups go through ``grading.lookup_certificate`` and can take minutes, so they 
 run between two short sessions: the pool has four connections and none is held while
 the provider answers. A lookup sent with a ``request_id`` can be cancelled through
 ``DELETE /lookups/{request_id}``; a cancelled lookup is never saved.
+
+Users may also replace either side's image with their own photo: ``detect-card`` finds the
+card or slab outline with OpenCV, and the upload is perspective-cropped to the four
+corners the user confirmed, then stored as public WebP in the avatar COS bucket.
 """
 import json
 import re
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, StrictStr
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .auth.dependencies import current_user, write_guard
+from .auth.avatar import GRADED_PREFIX, cleanup_avatar, is_avatar_object, avatar_bucket, store_webp
+from .auth.dependencies import current_user, require_trusted_origin, write_guard
+from .card_detect import ImageError, crop_card, detect_card, load_image
 from .database import is_unique_violation
-from .db_models import GradedCard
+from .db_models import AvatarCleanup, GradedCard
 from .grading import LOOKUPS, lookup_certificate, normalize_request, present
 
 router = APIRouter(prefix='/api/graded-cards')
@@ -50,14 +57,38 @@ def snapshot(result):
     return json.dumps({key: result[key] for key in ('source_url', 'certificate', 'images')}, ensure_ascii=False)
 
 
+SIDES = ('front', 'back')
+
+
+def slab_images(images, uploaded):
+    """Front then back, each {url, alt, side, thumbnail_url, uploaded}.
+
+    Untagged provider images fill the sides in page order (as PCG-CN lists them); a
+    user's photo replaces that side, so a later refresh never undoes it.
+    """
+    sides = {side: next((image for image in images if image.get('side') == side), None) for side in SIDES}
+    untagged = iter(image for image in images if not image.get('side'))
+    result = []
+    for side in SIDES:
+        if uploaded.get(side):
+            result.append({'url': uploaded[side], 'alt': f'Uploaded {side}', 'side': side,
+                           'thumbnail_url': None, 'uploaded': True})
+            continue
+        image = sides[side] or next(untagged, None)
+        if image is not None:
+            result.append({**image, 'side': side, 'uploaded': False})
+    return result
+
+
 def record(row: GradedCard):
     data = json.loads(row.snapshot)
     certificate = data.get('certificate') or {}
     title, fields, english = present(row.provider, certificate)
+    images = slab_images(data.get('images') or [], {'front': row.front_image_url, 'back': row.back_image_url})
     return {'id': row.id, 'provider': row.provider, 'cert_number': row.cert_number,
             'source_url': data.get('source_url'), 'title': title,
             'grade': certificate.get('grade') or '', 'fields': fields, 'english_fields': english,
-            'population': certificate.get('population') or {}, 'images': data.get('images') or [],
+            'population': certificate.get('population') or {}, 'images': images,
             'created_at': row.created_at, 'refreshed_at': row.refreshed_at}
 
 
@@ -136,4 +167,124 @@ def cancel_lookup(request_id: str, user=Depends(current_user)):
 @router.delete('/{card_id}', status_code=204, dependencies=[Depends(write_guard)])
 def remove(card_id: str, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
-        db.delete(owned(db, user['id'], card_id, lock=True))
+        row = owned(db, user['id'], card_id, lock=True)
+        stale = queue_cleanup(db, row.front_image_url, row.back_image_url)
+        db.delete(row)
+    drain_cleanup(request, stale)
+
+
+# Uploaded photos
+
+IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
+IMAGE_LIMIT = 12 * 1024 * 1024
+
+
+def queue_cleanup(db: Session, *urls):
+    """Queue our own COS objects for deletion in the caller's transaction."""
+    bucket = avatar_bucket()
+    stale = [url for url in urls if url and bucket is not None and is_avatar_object(url, bucket)]
+    for url in stale:
+        db.merge(AvatarCleanup(url=url, next_attempt_at=0))
+    return stale
+
+
+def drain_cleanup(request: Request, urls):
+    # Best effort now; the background cleanup task retries anything left in the queue.
+    for url in urls:
+        cleanup_avatar(store(request), url)
+
+
+async def read_image(request: Request, user):
+    media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
+    if media_type not in IMAGE_TYPES:
+        raise HTTPException(415, detail='graded_image_invalid')
+    request.app.state.auth_limiter.check(('graded-image', user['id']), 30)
+    content = bytearray()
+    async for chunk in request.stream():
+        if len(content) + len(chunk) > IMAGE_LIMIT:
+            raise HTTPException(413, detail='graded_image_too_large')
+        content.extend(chunk)
+    return bytes(content)
+
+
+def decode(content):
+    try:
+        return load_image(content)
+    except ImageError as exc:
+        raise HTTPException(422, detail=exc.code) from None
+
+
+@router.post('/detect-card', dependencies=[Depends(require_trusted_origin)])
+async def detect(request: Request, user=Depends(current_user)):
+    """Suggested crop for a photo: {width, height, corners} with corners null if none found."""
+    content = await read_image(request, user)
+
+    def run():
+        image = decode(content)
+        return {'width': image.shape[1], 'height': image.shape[0], 'corners': detect_card(image)}
+
+    return await run_in_threadpool(run)
+
+
+def parse_corners(text, width, height):
+    try:
+        values = [float(value) for value in text.split(',')]
+    except ValueError:
+        values = []
+    if len(values) != 8 or any(value != value for value in values):
+        raise HTTPException(422, detail='graded_image_crop')
+    # Handles may sit on the photo edge; allow a pixel of rounding, never outside.
+    if any(not -1 <= x <= width for x in values[0::2]) or any(not -1 <= y <= height for y in values[1::2]):
+        raise HTTPException(422, detail='graded_image_crop')
+    return [values[i:i + 2] for i in range(0, 8, 2)]
+
+
+@router.put('/{card_id}/images/{side}', dependencies=[Depends(require_trusted_origin)])
+async def upload_image(card_id: str, side: str, request: Request, corners: str = Query(max_length=200),
+                       user=Depends(current_user)):
+    """Crops the photo to the confirmed corners and makes it this side's image."""
+    if side not in SIDES:
+        raise HTTPException(404, detail='graded_image_side')
+    content = await read_image(request, user)
+
+    def run():
+        with store(request).session() as db:
+            owned(db, user['id'], card_id)
+        image = decode(content)
+        try:
+            data, _ = crop_card(image, parse_corners(corners, image.shape[1], image.shape[0]))
+        except ImageError as exc:
+            raise HTTPException(422, detail=exc.code) from None
+        url = store_webp(data, GRADED_PREFIX, 'graded_image_storage_failed')
+        with store(request).session() as db:
+            row = db.scalar(select(GradedCard).where(GradedCard.user_id == user['id'], GradedCard.id == card_id)
+                            .with_for_update())
+            if row is None:
+                # Deleted while uploading: the new object is orphaned, so queue it instead.
+                stale = queue_cleanup(db, url)
+            else:
+                column = f'{side}_image_url'
+                stale = queue_cleanup(db, getattr(row, column))
+                setattr(row, column, url)
+                result = record(row)
+        drain_cleanup(request, stale)
+        if row is None:
+            raise HTTPException(404, detail='graded_card_not_found')
+        return result
+
+    return await run_in_threadpool(run)
+
+
+@router.delete('/{card_id}/images/{side}', dependencies=[Depends(write_guard)])
+def restore_image(card_id: str, side: str, request: Request, user=Depends(current_user)):
+    """Drops the uploaded photo; the provider's image (or a placeholder) shows again."""
+    if side not in SIDES:
+        raise HTTPException(404, detail='graded_image_side')
+    with store(request).session() as db:
+        row = owned(db, user['id'], card_id, lock=True)
+        column = f'{side}_image_url'
+        stale = queue_cleanup(db, getattr(row, column))
+        setattr(row, column, None)
+        result = record(row)
+    drain_cleanup(request, stale)
+    return result

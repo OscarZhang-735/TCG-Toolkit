@@ -645,10 +645,25 @@
 <dialog id="graded-detail-dialog" class="form-dialog graded-detail-dialog" aria-labelledby="graded-detail-title">
 <div class="dialog-head"><h2 id="graded-detail-title"></h2><button type="button" id="graded-detail-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
 <div id="graded-detail-body" class="graded-detail"></div>
+<p id="graded-detail-image-error" class="dialog-error" role="alert"></p>
+<input id="graded-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/*" hidden/>
+<input id="graded-image-camera" type="file" accept="image/*" capture="environment" hidden/>
 <div class="dialog-actions">
 <a id="graded-detail-source" class="graded-link-button" target="_blank" rel="noopener noreferrer" hidden><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i><span></span></a>
 <button id="graded-detail-refresh" type="button" class="secondary"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i><span data-i18n="graded_refresh"></span></button>
 <button id="graded-detail-delete" type="button" class="secondary"><i class="bi bi-trash3" aria-hidden="true"></i><span data-i18n="cards_delete"></span></button>
+</div>
+</dialog>
+<dialog id="graded-crop-dialog" class="form-dialog graded-crop-dialog" aria-labelledby="graded-crop-title" aria-describedby="graded-crop-hint">
+<div class="dialog-head"><h2 id="graded-crop-title"></h2><button type="button" id="graded-crop-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<p id="graded-crop-hint" class="graded-crop-hint" role="status" aria-live="polite"></p>
+<div id="graded-crop-stage" class="graded-crop-stage"><img id="graded-crop-image" alt=""/><svg id="graded-crop-overlay" class="graded-crop-overlay" preserveAspectRatio="none" aria-hidden="false"></svg><span id="graded-crop-busy" class="graded-crop-busy" hidden><span class="loading-ring" aria-hidden="true"></span></span></div>
+<p id="graded-crop-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="graded-crop-detect" type="button" class="secondary graded-crop-secondary"><i class="bi bi-magic" aria-hidden="true"></i><span data-i18n="graded_crop_detect"></span></button>
+<button id="graded-crop-full" type="button" class="secondary graded-crop-secondary"><i class="bi bi-arrows-fullscreen" aria-hidden="true"></i><span data-i18n="graded_crop_full"></span></button>
+<button id="graded-crop-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="graded-crop-save" type="button"><i class="bi bi-check-lg" aria-hidden="true"></i><span data-i18n="graded_crop_save"></span></button>
 </div>
 </dialog>
 <dialog id="graded-delete-dialog" class="form-dialog confirm-dialog" aria-labelledby="graded-delete-title" aria-describedby="graded-delete-message">

@@ -66,6 +66,29 @@ export function filterGraded(records, {query = '', hiddenProviders = new Set(), 
 
 export const pendingKey = (provider, certNumber) => `${provider}:${certNumber}`;
 
+// Photo crops: corners are [[x, y] x4] in the uploaded image's pixels.
+export const SIDES = ['front', 'back'];
+// A small inset so the default frame's handles are visible and grabbable.
+export function fullCorners(width, height, inset = 0.04) {
+  const dx = width * inset, dy = height * inset;
+  return [[dx, dy], [width - dx, dy], [width - dx, height - dy], [dx, height - dy]];
+}
+export function clampCorner([x, y], width, height) {
+  return [Math.min(Math.max(x, 0), width), Math.min(Math.max(y, 0), height)];
+}
+export const cornersParam = corners => corners.flat().map(value => Math.round(value * 10) / 10).join(',');
+// Photo errors: server codes are their own message keys; anything else is generic.
+const IMAGE_ERRORS = new Set(['graded_image_invalid', 'graded_image_too_large', 'graded_image_dimensions',
+  'graded_image_crop', 'graded_image_storage_failed', 'graded_card_not_found']);
+export function imageError(detail, status = 0) {
+  if (detail === 'graded_card_not_found') return 'graded_error_missing';
+  if (IMAGE_ERRORS.has(detail)) return detail;
+  if (status === 429) return 'graded_image_rate_limited';
+  return status ? 'graded_image_failed' : 'graded_error_network';
+}
+export const IMAGE_ERROR_KEYS = ['graded_image_invalid', 'graded_image_too_large', 'graded_image_dimensions',
+  'graded_image_crop', 'graded_image_storage_failed', 'graded_image_rate_limited', 'graded_image_failed'];
+
 // {front, back}: images tagged with a side first, then untagged ones in page order.
 export function slabImages(images = []) {
   const front = images.find(image => image.side === 'front'), back = images.find(image => image.side === 'back');
@@ -85,7 +108,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   // Adds and refreshes share one queue, so a tab never runs more than maxConcurrent slow
   // lookups at once (the server allows three per account).
   let queue = [];
-  const initial = () => ({providers: [], records: [], pending: [], refreshing: {}, removing: new Set(),
+  const initial = () => ({providers: [], records: [], pending: [], refreshing: {}, removing: new Set(), imageBusy: new Set(),
     ready: false, loading: false, error: '', highlight: '', notice: null});
   const state = initial();
 
@@ -301,10 +324,49 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
       if (current === generation) { state.removing.delete(id); onChange(); }
     }
   }
+  // Photos go up as raw image bodies (detection, then the confirmed crop).
+  async function sendImage(path, method, blob) {
+    let response;
+    try {
+      response = await request('/api' + path, {method, cache: 'no-store', signal: controller.signal,
+        headers: {'Content-Type': blob.type || 'image/jpeg'}, body: blob});
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      throw Object.assign(new Error('network'), {key: imageError(undefined, 0)});
+    }
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw Object.assign(new Error('image request failed'), {key: imageError(data?.detail, response.status)});
+    return data;
+  }
+  // Suggested crop for a photo: {width, height, corners | null}. Rejects with {key}.
+  const detectCard = blob => sendImage('/graded-cards/detect-card', 'POST', blob);
+  // Resolves to '' on success or an error key; the card's record is replaced.
+  async function changeImage(id, side, run) {
+    const current = generation, busy = `${id}:${side}`;
+    if (!state.records.some(row => row.id === id) || state.imageBusy.has(busy)) return 'graded_image_failed';
+    state.imageBusy.add(busy); onChange();
+    try {
+      const card = await run();
+      if (current !== generation) return '';
+      state.records = state.records.map(row => row.id === id ? card : row);
+      return '';
+    } catch (error) {
+      if (current !== generation || error.name === 'AbortError') return '';
+      if (error.status === 404 || error.key === 'graded_error_missing') state.records = state.records.filter(row => row.id !== id);
+      return error.key ?? imageError(error.detail, error.status);
+    } finally {
+      if (current === generation) { state.imageBusy.delete(busy); onChange(); }
+    }
+  }
+  const uploadImage = (id, side, blob, corners) => changeImage(id, side, () =>
+    sendImage(`/graded-cards/${encodeURIComponent(id)}/images/${side}?corners=${cornersParam(corners)}`, 'PUT', blob));
+  const restoreImage = (id, side) => changeImage(id, side, () =>
+    call(`/graded-cards/${encodeURIComponent(id)}/images/${side}`, 'DELETE', {}, controller.signal));
   const providerName = id => state.providers.find(item => item.id === id)?.name ?? String(id).toUpperCase();
   const timeoutSeconds = id => state.providers.find(item => item.id === id)?.timeout_seconds ?? DEFAULT_TIMEOUT_S;
 
   return {state, clear, load, add, retry, dismiss, refresh, dismissRefresh, remove, queuePosition, providerName,
+    detectCard, uploadImage, restoreImage,
     timeoutSeconds, busy: () => state.pending.some(item => item.status !== 'failed')
       || Object.values(state.refreshing).some(entry => entry.status !== 'failed'),
     activate(api) { clear(); request = api; return load(); }};

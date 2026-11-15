@@ -1,9 +1,12 @@
 // Graded cards page: saved certificates, the queue of slow lookups shown as placeholder
-// cards with a spinner and elapsed time, the add dialog with QR scanning, and details.
-import {createGradedCards, filterGraded, formatElapsed, slabImages} from './graded-cards.js';
+// cards with a spinner and elapsed time, the add dialog with QR scanning, and details,
+// where either side's image can be replaced by an uploaded or scanned photo.
+import {createGradedCards, filterGraded, formatElapsed, slabImages, fullCorners} from './graded-cards.js';
 import {parseScan, getDecoder, decodePhoto, startCamera, cameraSupported} from './grading-scan.js';
 import {t, getLanguage} from './i18n.js';
-import {cardImage} from './card-view.js';
+import {cardImage, openPreview} from './card-view.js';
+import {loadImage} from './avatar-crop-ui.js';
+import {createCropEditor} from './graded-crop.js';
 import {numberButton} from './copy-number.js';
 import {setNavCount} from './nav-count.js';
 const $ = id => document.getElementById(id);
@@ -471,6 +474,171 @@ function populationSection(population) {
   }
   return section;
 }
+// Detail images: each side is a button opening its options (view, upload, scan, remove).
+const SIDES_UI = ['front', 'back'];
+const sideLabel = side => t(side === 'front' ? 'graded_front' : 'graded_back');
+let imageMenu = null;
+function detailGallery(row) {
+  const {front, back} = slabImages(row.images);
+  const box = node('div', '', 'graded-images graded-detail-images');
+  box.append(detailSide(row, 'front', front), detailSide(row, 'back', back));
+  return box;
+}
+function detailSide(row, side, image) {
+  const label = sideLabel(side), busy = graded.state.imageBusy.has(`${row.id}:${side}`);
+  const figure = node('figure', '', 'graded-side');
+  const button = node('button', '', 'card-image graded-image-button'); button.type = 'button';
+  button.setAttribute('aria-haspopup', 'menu'); button.setAttribute('aria-expanded', 'false');
+  button.setAttribute('aria-label', t('graded_image_options', {side: label})); button.title = t('graded_image_options', {side: label});
+  // An empty side invites an upload (the menu opens on click).
+  const placeholder = node('span', t(side === 'front' ? 'graded_detail_upload_front' : 'graded_detail_upload_back'), 'image-fallback');
+  button.append(placeholder);
+  if (image) {
+    const picture = document.createElement('img');
+    picture.alt = `${row.title || row.cert_number} · ${label}`; picture.decoding = 'async'; picture.referrerPolicy = 'no-referrer';
+    picture.addEventListener('load', () => { placeholder.hidden = true; });
+    picture.addEventListener('error', () => { picture.hidden = true; placeholder.hidden = false; }, {once: true});
+    picture.src = image.url;
+    button.append(picture);
+  }
+  const badge = node('span', '', 'graded-image-edit'); badge.append(icon(busy ? 'bi-arrow-repeat spin' : 'bi-camera'));
+  button.append(badge);
+  button.disabled = busy;
+  button.addEventListener('click', () => toggleImageMenu(figure, button, row, side, image));
+  const caption = node('figcaption', label);
+  // Where the shown image comes from: the user's photo or the grading company's.
+  if (image) caption.append(node('span', t(image.uploaded ? 'graded_image_uploaded' : 'graded_image_official'),
+    `graded-source-tag ${image.uploaded ? 'uploaded' : 'official'}`));
+  figure.append(button, caption);
+  return figure;
+}
+function closeImageMenu() {
+  if (!imageMenu) return;
+  imageMenu.menu.remove(); imageMenu.button.setAttribute('aria-expanded', 'false');
+  imageMenu = null;
+}
+function toggleImageMenu(figure, button, row, side, image) {
+  const same = imageMenu?.button === button;
+  closeImageMenu();
+  if (same) return;
+  const menu = node('div', '', 'graded-image-menu'); menu.setAttribute('role', 'menu');
+  const item = (iconName, label, handler) => {
+    const entry = node('button', '', 'graded-image-menu-item'); entry.type = 'button'; entry.setAttribute('role', 'menuitem');
+    entry.append(icon(iconName), node('span', label));
+    entry.addEventListener('click', () => { closeImageMenu(); button.focus(); handler(); });
+    return entry;
+  };
+  if (image) {
+    menu.append(item('bi-zoom-in', t('graded_image_view'), () => openPreview(
+      {name: `${row.title || row.cert_number} · ${sideLabel(side)}`, card_number: row.cert_number}, image.thumbnail_url || image.url, image.url)));
+  }
+  menu.append(item('bi-upload', t('graded_image_upload'), () => pickImage(row.id, side, 'upload')),
+    item('bi-camera', t('graded_image_scan'), () => pickImage(row.id, side, 'scan')));
+  if (image?.uploaded) menu.append(item('bi-arrow-counterclockwise', t('graded_image_restore'), () => restoreImage(row.id, side)));
+  menu.addEventListener('keydown', event => {
+    const items = [...menu.querySelectorAll('button')], index = items.indexOf(document.activeElement);
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeImageMenu(); button.focus(); }
+    else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      items[(index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    }
+  });
+  figure.append(menu);
+  button.setAttribute('aria-expanded', 'true');
+  imageMenu = {menu, button};
+  menu.querySelector('button').focus();
+}
+async function restoreImage(id, side) {
+  $('graded-detail-image-error').textContent = '';
+  const error = await graded.restoreImage(id, side);
+  if (error) $('graded-detail-image-error').textContent = t(error);
+}
+
+// Photo -> crop dialog. Photos are shrunk in the browser before upload; the server
+// detects the outline and later crops the same pixels, so corners need no rescaling.
+const MAX_UPLOAD_SIDE = 2400;
+let imageTarget = null, crop = null, cropGeneration = 0;
+const cropEditor = createCropEditor($('graded-crop-overlay'));
+function pickImage(id, side, mode) {
+  imageTarget = {id, side, mode};
+  $('graded-detail-image-error').textContent = '';
+  $(mode === 'scan' ? 'graded-image-camera' : 'graded-image-file').click();
+}
+async function prepareImage(file) {
+  let image;
+  try { image = await loadImage(file); } catch { throw Object.assign(new Error('unreadable'), {key: 'graded_image_invalid'}); }
+  const scale = Math.min(1, MAX_UPLOAD_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+  if (!blob) throw Object.assign(new Error('encode'), {key: 'graded_image_invalid'});
+  return {blob, width: canvas.width, height: canvas.height};
+}
+async function openCrop(file) {
+  const target = imageTarget, session = ++cropGeneration;
+  if (!target) return;
+  crop = {...target, blob: null, url: '', width: 0, height: 0, status: 'preparing', hint: '', error: ''};
+  renderCrop();
+  if (!$('graded-crop-dialog').open) $('graded-crop-dialog').showModal();
+  try {
+    const prepared = await prepareImage(file);
+    if (session !== cropGeneration) return;
+    Object.assign(crop, prepared, {url: URL.createObjectURL(prepared.blob)});
+    cropEditor.set(prepared.width, prepared.height, fullCorners(prepared.width, prepared.height));
+    await detectOutline(session);
+  } catch (error) {
+    if (session !== cropGeneration) return;
+    Object.assign(crop, {status: 'failed', error: error.key || 'graded_image_invalid'});
+    renderCrop();
+  }
+}
+async function detectOutline(session = cropGeneration) {
+  crop.status = 'detecting'; crop.error = ''; renderCrop();
+  try {
+    const result = await graded.detectCard(crop.blob);
+    if (session !== cropGeneration) return;
+    const scale = result.width ? crop.width / result.width : 1;
+    if (result.corners) cropEditor.set(crop.width, crop.height, result.corners.map(([x, y]) => [x * scale, y * scale]));
+    crop.hint = result.corners ? 'graded_crop_detected' : 'graded_crop_not_found';
+  } catch (error) {
+    if (session !== cropGeneration) return;
+    crop.error = error.key || 'graded_image_failed'; crop.hint = 'graded_crop_manual';
+  }
+  crop.status = 'ready'; renderCrop();
+}
+function renderCrop() {
+  if (!crop) return;
+  const working = crop.status === 'preparing' || crop.status === 'detecting' || crop.status === 'saving';
+  $('graded-crop-title').textContent = t(crop.side === 'front' ? 'graded_crop_title_front' : 'graded_crop_title_back');
+  $('graded-crop-hint').textContent = t(crop.status === 'preparing' || crop.status === 'detecting' ? 'graded_crop_detecting'
+    : crop.status === 'saving' ? 'graded_crop_saving' : crop.hint || 'graded_crop_manual');
+  $('graded-crop-error').textContent = crop.error ? t(crop.error) : '';
+  const image = $('graded-crop-image');
+  if (crop.url && image.getAttribute('src') !== crop.url) image.src = crop.url;
+  $('graded-crop-stage').hidden = !crop.url;
+  $('graded-crop-busy').hidden = !working;
+  for (const id of ['graded-crop-detect', 'graded-crop-full', 'graded-crop-save']) $(id).disabled = working || !crop.blob;
+  $('graded-crop-save').querySelector('.bi').className = `bi ${crop.status === 'saving' ? 'bi-arrow-repeat spin' : 'bi-check-lg'}`;
+  cropEditor.setLabels(['graded_corner_tl', 'graded_corner_tr', 'graded_corner_br', 'graded_corner_bl'].map(key => t(key)));
+  requestAnimationFrame(() => cropEditor.redraw());
+}
+async function saveCrop() {
+  if (!crop?.blob || crop.status !== 'ready') return;
+  const session = cropGeneration, {id, side, blob} = crop;
+  crop.status = 'saving'; crop.error = ''; renderCrop();
+  const error = await graded.uploadImage(id, side, blob, cropEditor.corners());
+  if (session !== cropGeneration) return;
+  if (error) { crop.status = 'ready'; crop.error = error; renderCrop(); return; }
+  $('graded-crop-dialog').close();
+}
+function closeCrop() {
+  cropGeneration++;
+  if (crop?.url) URL.revokeObjectURL(crop.url);
+  crop = null; imageTarget = null;
+  $('graded-crop-image').removeAttribute('src');
+}
+
 function openDetail(id) {
   detailId = id; detailSignature = ''; englishOpen = false;
   renderDetail(true);
@@ -484,7 +652,9 @@ function renderDetail(opening = false) {
   const locked = busyStatus(entry?.status) || graded.state.removing.has(row.id);
   $('graded-detail-refresh').disabled = locked;
   $('graded-detail-delete').disabled = locked;
-  const signature = [row.id, row.refreshed_at, entry?.status ?? '', entry?.startedAt ?? '', getLanguage()].join('|');
+  const busyImages = SIDES_UI.map(side => graded.state.imageBusy.has(`${row.id}:${side}`)).join(',');
+  const signature = [row.id, row.refreshed_at, entry?.status ?? '', entry?.startedAt ?? '', getLanguage(),
+    ...row.images.map(image => image.url), busyImages].join('|');
   if (signature !== detailSignature) {
     detailSignature = signature;
     $('graded-detail-title').textContent = row.title || t('graded_untitled');
@@ -510,7 +680,8 @@ function renderDetail(opening = false) {
       info.append(section);
     }
     const population = populationSection(row.population); if (population) info.append(population);
-    const gallery = slabPair(row); gallery.classList.add('graded-detail-images');
+    closeImageMenu();
+    const gallery = detailGallery(row);
     $('graded-detail-body').replaceChildren(gallery, info);
     const link = sourceLink(row);
     $('graded-detail-source').hidden = !link;
@@ -573,7 +744,33 @@ $('graded-detail-delete').addEventListener('click', () => {
   const row = graded.state.records.find(card => card.id === detailId);
   if (row) confirmDelete(row);
 });
-$('graded-detail-dialog').addEventListener('close', () => { detailId = null; detailSignature = ''; });
+$('graded-detail-dialog').addEventListener('close', () => { detailId = null; detailSignature = ''; closeImageMenu();
+  $('graded-detail-image-error').textContent = ''; });
+// Clicks elsewhere in the details close an open image menu.
+$('graded-detail-dialog').addEventListener('pointerdown', event => {
+  if (imageMenu && !imageMenu.menu.contains(event.target) && !imageMenu.button.contains(event.target)) closeImageMenu();
+});
+for (const id of ['graded-image-file', 'graded-image-camera']) {
+  $(id).addEventListener('change', event => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) openCrop(file);
+  });
+}
+$('graded-crop-detect').addEventListener('click', () => detectOutline());
+$('graded-crop-full').addEventListener('click', () => {
+  if (!crop?.blob) return;
+  cropEditor.set(crop.width, crop.height, fullCorners(crop.width, crop.height, 0));
+  crop.hint = 'graded_crop_manual'; renderCrop();
+});
+$('graded-crop-save').addEventListener('click', saveCrop);
+$('graded-crop-cancel').addEventListener('click', () => $('graded-crop-dialog').close());
+$('graded-crop-close').addEventListener('click', () => $('graded-crop-dialog').close());
+// Esc must not drop a crop that is being saved.
+$('graded-crop-dialog').addEventListener('cancel', event => { if (crop?.status === 'saving') event.preventDefault(); });
+$('graded-crop-dialog').addEventListener('close', closeCrop);
+$('graded-crop-image').addEventListener('load', () => cropEditor.redraw());
+addEventListener('resize', () => { if ($('graded-crop-dialog').open) cropEditor.redraw(); });
 $('graded-delete-cancel').addEventListener('click', () => $('graded-delete-dialog').close());
 $('graded-delete-confirm').addEventListener('click', async () => {
   const id = pendingDelete;
@@ -596,7 +793,7 @@ $('language').addEventListener('change', () => { chipsSignature = ''; detailSign
 
 export function clearGraded() {
   stopScan(); photoGeneration++; photoBusy = false;
-  for (const id of ['graded-dialog', 'graded-detail-dialog', 'graded-delete-dialog']) $(id).close();
+  for (const id of ['graded-dialog', 'graded-detail-dialog', 'graded-delete-dialog', 'graded-crop-dialog']) $(id).close();
   filters = blankFilters(); $('graded-query').value = ''; chipsSignature = ''; pendingDelete = null; detailId = null;
   clearTimeout(statusTimer); statusNotice = null;
   graded.clear();
