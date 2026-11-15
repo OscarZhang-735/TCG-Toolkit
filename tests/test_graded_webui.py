@@ -3,6 +3,7 @@ from dataclasses import replace
 from base64 import b64encode
 from pathlib import Path
 import os
+import json
 import socket
 import threading
 import time
@@ -26,8 +27,9 @@ def test_graded_webui(monkeypatch):
     monkeypatch.setenv('TCG_AVATAR_COS_URL', '')
     state = {'fail': False}
     calls = []
-    for provider, number in [('psa', '98428602'), ('cgc', '6091052028'), ('ars', '047088950114')]:
-        parsed = getattr(grading, f'parse_{provider}')((FIXTURES / f'{provider}_certificate.html').read_text(encoding='utf-8'), number)
+    for provider, number in [('psa', '98428602'), ('cgc', '6091052028'), ('ars', '047088950114'), ('pcgcn', '10198854')]:
+        source = (FIXTURES / f'{provider}_certificate.{"json" if provider == "pcgcn" else "html"}').read_text(encoding='utf-8')
+        parsed = getattr(grading, f'parse_{provider}')(json.loads(source) if provider == 'pcgcn' else source, number)
 
         def fetch(requested, result=parsed):
             calls.append((result['provider'], requested))
@@ -189,6 +191,14 @@ def test_graded_webui(monkeypatch):
                 page.locator('#graded-detail-delete').click()
                 page.locator('#graded-delete-confirm').click()
                 expect(page.locator('#graded-grid article[data-id]')).to_have_count(2)
+                add('https://card.pcgcard.cn/h5/index.html#/pages/f/r?type=1&query=10198854')
+                expect(page.locator('#graded-grid article[data-id]')).to_have_count(3)
+                pcg = page.locator('#graded-grid article[data-id]').filter(has_text='10198854')
+                expect(pcg).to_contain_text('PCG-CN')
+                pcg.locator('.graded-title').click()
+                expect(page.locator('#graded-detail-body')).to_contain_text('YZ-411')
+                expect(page.locator('#graded-detail-body')).to_contain_text('Surface')
+                page.locator('#graded-detail-close').click()
                 page.locator('#account-link').click()
                 page.locator('#logout').click()
                 expect(page.locator('#auth-panel')).to_be_visible()

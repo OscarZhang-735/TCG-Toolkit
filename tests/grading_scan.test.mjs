@@ -10,12 +10,12 @@ const {parseScan, cropBox, soften, frameFrom, createDecoder, decodeSource, decod
 // The registry's own patterns, as /api/grading/providers sends them: this also proves the
 // Python patterns compile and match in a JavaScript RegExp.
 const registry = await readFile(new URL('../src/tcg_toolkit/grading.py', import.meta.url), 'utf8');
-const PROVIDERS = [...registry.matchAll(/GradingProvider\('(\w+)', '(\w+)', \w+, (\d+), \(\s*r'([^']+)'/g)]
+const PROVIDERS = [...registry.matchAll(/GradingProvider\('(\w+)', '([^']+)', \w+, (\d+), \(\s*r'([^']+)'/g)]
   .map(([, id, name, timeout, pattern]) => ({id, name, timeout_seconds: Number(timeout), scan_patterns: [pattern]}));
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
 
 test('label QR links recognise provider and number, keeping leading zeros', () => {
-  assert.deepEqual(PROVIDERS.map(provider => provider.id), ['psa', 'cgc', 'ars']);
+  assert.deepEqual(PROVIDERS.map(provider => provider.id), ['psa', 'cgc', 'ars', 'pcgcn']);
   // Decoded from real slab labels.
   assert.deepEqual(parseScan('https://www.psacard.com/cert/98428602/', PROVIDERS), {provider: 'psa', cert_number: '98428602'});
   assert.deepEqual(parseScan('https://www.cgccards.com/certlookup/6091052028/10_0/', PROVIDERS), {provider: 'cgc', cert_number: '6091052028'});
@@ -30,6 +30,9 @@ test('label QR links recognise provider and number, keeping leading zeros', () =
 });
 
 test('bare digits keep the chosen provider; anything else is not a certificate', () => {
+  assert.deepEqual(parseScan('https://card.pcgcard.cn/h5/index.html#/pages/f/r?type=1&query=10198854', PROVIDERS),
+    {provider: 'pcgcn', cert_number: '10198854'});
+  assert.equal(parseScan('https://card.pcgcard.cn.evil.test/h5/index.html#/pages/f/r?query=10198854', PROVIDERS), null);
   assert.deepEqual(parseScan(' 6091052-028 ', PROVIDERS), {cert_number: '6091052028'});
   assert.deepEqual(parseScan('0012 3456', PROVIDERS), {cert_number: '00123456'});
   for (const text of ['', '   ', 'https://psacard.com.evil.test/cert/1/', 'https://evil.test/?u=https://www.psacard.com/cert/1/',

@@ -200,7 +200,7 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 
 ### WebUI 与保存接口
 
-登录后的 `#graded` 页面使用后端 `PROVIDERS` 注册表获取机构名称、扫码 URL 规则和预期查询时限。`GET /api/grading/providers` 返回 `{"items":[{"id":"psa","name":"PSA","timeout_seconds":225,"scan_patterns":["…"]}, …]}`；PSA、CGC 为 225 秒，ARS 为 40 秒。这是界面等待提示与浏览器超时的依据，底层 HTTP 超时仍按各机构客户端设置。
+登录后的 `#graded` 页面使用后端 `PROVIDERS` 注册表获取机构名称、扫码 URL 规则和预期查询时限。`GET /api/grading/providers` 返回 `{"items":[{"id":"psa","name":"PSA","timeout_seconds":225,"scan_patterns":["…"]}, …]}`；PSA、CGC 为 225 秒，ARS、PCG-CN 为 40 秒。这是界面等待提示与浏览器超时的依据，底层 HTTP 超时仍按各机构客户端设置。
 
 以下接口均需本站 Bearer Token，响应含 `Cache-Control: no-store`。写接口还要求可信 `Origin` 和 `Content-Type: application/json`，包括 DELETE。
 
@@ -260,7 +260,13 @@ $env:TCG_BROWSER_TEST="0"
 
 ### 即时证书查询
 
-`GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa`、`cgc` 和 `ars`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
+PCG-CN 使用机构 ID `pcgcn`，通过 `GET /api/grading/pcgcn/certificates/{cert_number}` 查询，也支持评级卡页面的新增、刷新和官网链接/二维码识别。后端直连 `https://card.pcgcard.cn/api/card/card/search_card_result/`，参数为 `pageNo=1&pageSize=1&proof_number=编号`，不使用 Proxy-Go、Token 或环境代理；20 秒超时，不重试、不跟随重定向。无需数据库迁移。
+
+官方返回 `code=2000` 且证书编号匹配时，映射卡名、原文名称、系列、卡号、年份、语言、等级、Centering/Corners/Edges/Surface 分项与评级说明。等级分布置于 `population.grades`，总数为 `total_grading`。图片按官网轮播顺序保留，官网未标明正反面，`side` 为 `null`；页面按现有规则将前两张依次展示。物流单号和账号关联字段不保存。明确的 `code=400, data=null, msg=卡片不存在` 返回 404，其余异常结构为 `pcgcn_unreadable`；超时、限流和网络错误分别为 `pcgcn_timeout`、`pcgcn_rate_limited`、`pcgcn_unavailable`。
+
+验收编号 `10198854`：SHIKIBE MAYU、CHAOS JPN. RIDDLE JOKER 1.0、YZ-411、2018，两张图片。离线用例见 `tests/test_pcgcn.py`，页面集成见 `tests/test_graded_webui.py`。
+
+`GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa`、`cgc`、`ars` 和 `pcgcn`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
 
 配置服务端 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。PSA 查询使用 `ProxyGoClient`，以 `country="US"` 抓取 `https://www.psacard.com/en-CA/cert/{cert_number}/psa`。Proxy-Go 负责目标网站验证和代理重试；TCG 客户端默认超时 220 秒、连接超时 5 秒，不自动重试、不跟随重定向。修改 Compose 中的配置后重新创建 Web 容器。
 

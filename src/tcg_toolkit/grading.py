@@ -274,6 +274,86 @@ def fetch_ars(cert_number):
     return parse_ars(response.text, cert_number)
 
 
+PCGCN_API = 'https://card.pcgcard.cn/api/card/card/search_card_result/'
+PCGCN_URL = 'https://card.pcgcard.cn/h5/index.html#/pages/f/r?type=1&query='
+
+
+def parse_pcgcn(payload, cert_number):
+    def unreadable():
+        raise HTTPException(502, detail='pcgcn_unreadable')
+
+    if not isinstance(payload, dict):
+        unreadable()
+    if payload.get('code') == 400 and payload.get('data') is None and payload.get('msg') == '卡片不存在':
+        raise HTTPException(404, detail='grading_certificate_not_found')
+    data = payload.get('data')
+    if payload.get('code') != 2000 or not isinstance(data, dict):
+        unreadable()
+    if (data.get('proof_number') != cert_number or not isinstance(data.get('name'), str)
+            or not data['name'].strip() or not isinstance(data.get('score'), str) or not data['score'].strip()):
+        unreadable()
+    # Only certificate fields: never persist logistics or account metadata.
+    labels = {'proof_number': 'Cert Number', 'name': 'Card Name', 'version': 'Set',
+              'card_number': 'Card Number', 'year': 'Year', 'language': 'Category',
+              'region_language': 'Language', 'c2j': 'Original Name', 'score': 'Grade',
+              'box': 'Centering', 'corner': 'Corners', 'edge': 'Edges', 'face': 'Surface',
+              'level_number': 'Grade Label', 'loss': 'Grading Notes'}
+    fields = {label: str(data[key]) for key, label in labels.items()
+              if isinstance(data.get(key), (str, int, float)) and data[key] != ''}
+    population = {}
+    distribution = data.get('distribution')
+    if distribution is not None:
+        if not isinstance(distribution, list):
+            unreadable()
+        grades = {}
+        for entry in distribution:
+            if (not isinstance(entry, dict) or not isinstance(entry.get('score'), str)
+                    or type(entry.get('count')) is not int or entry['count'] < 0):
+                unreadable()
+            grades[entry['score']] = entry['count']
+        population['grades'] = grades
+    if type(data.get('total_cards')) is int and data['total_cards'] >= 0:
+        population['total_grading'] = data['total_cards']
+    images = []
+    pictures = data.get('carousel_pic') or ''
+    if not isinstance(pictures, str):
+        unreadable()
+    for source in pictures.split(','):
+        url = source.strip()
+        if not url:
+            continue
+        try:
+            parsed = urlsplit(url)
+        except ValueError:
+            unreadable()
+        if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+            unreadable()
+        if not any(image['url'] == url for image in images):
+            images.append({'url': url, 'alt': f'Certificate image {len(images) + 1}',
+                           'side': None, 'thumbnail_url': None})
+    return {'provider': 'pcgcn', 'cert_number': cert_number, 'source_url': PCGCN_URL + cert_number,
+            'certificate': {'title': data['name'], 'grade': data['score'], 'fields': fields,
+                            'population': population}, 'images': images}
+
+
+def fetch_pcgcn(cert_number):
+    try:
+        with httpx.Client(timeout=20, follow_redirects=False, trust_env=False) as client:
+            response = client.get(PCGCN_API, params={'pageNo': 1, 'pageSize': 1, 'proof_number': cert_number})
+        if response.status_code == 429:
+            raise HTTPException(502, detail='pcgcn_rate_limited')
+        response.raise_for_status()
+    except httpx.TimeoutException:
+        raise HTTPException(504, detail='pcgcn_timeout') from None
+    except httpx.HTTPError:
+        raise HTTPException(502, detail='pcgcn_unavailable') from None
+    try:
+        payload = response.json()
+    except ValueError:
+        raise HTTPException(502, detail='pcgcn_unreadable') from None
+    return parse_pcgcn(payload, cert_number)
+
+
 @dataclass(frozen=True)
 class GradingProvider:
     """One grading company. ``scan_patterns`` recognise the URL in its slab QR codes.
@@ -300,6 +380,8 @@ PROVIDERS = {provider.id: provider for provider in (
     # Labels encode https://ars-grading.com/grading/searchNumber?id=<n>.
     GradingProvider('ars', 'ARS', fetch_ars, 40, (
         r'^https?://(?:www\.)?ars-grading\.com/grading/searchNumber\?(?:[^#]*&)?id=([0-9]{1,32})(?:[&#].*)?$',)),
+    GradingProvider('pcgcn', 'PCG-CN', fetch_pcgcn, 40, (
+        r'^https?://card\.pcgcard\.cn/h5/index\.html\#/pages/f/r\?(?:[^#]*&)?query=([0-9]{1,32})(?:&[^#]*)?$',)),
 )}
 
 

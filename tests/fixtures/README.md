@@ -1,5 +1,7 @@
 # 页面片段
 
+`pcgcn_certificate.json`：直连 PCG-CN 官方公开 `api/card/card/search_card_result/` 查询编号 `10198854` 的结果。移除了物流单号及账号关联字段；用于卡名、等级、分项、图片及等级分布解析测试。
+
 `grading_psa_qr.png` 是用 Python qrcode 8.2 生成的测试二维码，内容为 `https://www.psacard.com/cert/98428602/`。用于浏览器照片上传、Canvas 与内置 jsQR 的真实解码验收，不是评级卡实物照片。
 
 2026-11-14 通过 proxy-go 从 PSA 官方 `https://www.psacard.com/en-CA/cert/{number}/psa` 获取：

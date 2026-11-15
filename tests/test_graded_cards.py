@@ -51,7 +51,7 @@ def test_registry_and_saved_snapshots_persist_for_all_providers(client):
     registry = client.get('/api/grading/providers')
     assert registry.status_code == 200
     assert registry.headers['cache-control'] == 'no-store'
-    assert [item['id'] for item in registry.json()['items']] == ['psa', 'cgc', 'ars']
+    assert [item['id'] for item in registry.json()['items']] == ['psa', 'cgc', 'ars', 'pcgcn']
     assert all(item['scan_patterns'] and item['timeout_seconds'] > 0 for item in registry.json()['items'])
     saved = []
     for provider in grading.PROVIDERS:
