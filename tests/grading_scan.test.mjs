@@ -26,6 +26,8 @@ test('label QR links recognise provider and number, keeping leading zeros', () =
     ['https://www.psacard.com/cert/98428602', 'psa', '98428602'],
     ['https://www.cgccomics.com/certlookup/6091052028/', 'cgc', '6091052028'],
     ['https://ars-grading.com/grading/searchNumber?lang=en&id=047088950114#top', 'ars', '047088950114'],
+    ['https://card.pcgcard.cn/card?type=1&query=10198854', 'pcgcn', '10198854'],
+    ['https://card.pcgcard.cn/card/?query=0010198854&type=1', 'pcgcn', '0010198854'],
   ]) assert.deepEqual(parseScan(text, PROVIDERS), {provider, cert_number: number}, text);
 });
 
@@ -33,6 +35,9 @@ test('bare digits keep the chosen provider; anything else is not a certificate',
   assert.deepEqual(parseScan('https://card.pcgcard.cn/h5/index.html#/pages/f/r?type=1&query=10198854', PROVIDERS),
     {provider: 'pcgcn', cert_number: '10198854'});
   assert.equal(parseScan('https://card.pcgcard.cn.evil.test/h5/index.html#/pages/f/r?query=10198854', PROVIDERS), null);
+  for (const text of ['https://card.pcgcard.cn.evil.test/card?query=10198854',
+    'https://evil.test/card?query=10198854', 'https://card.pcgcard.cn/card?query=',
+    'https://card.pcgcard.cn/card?query=10198854abc']) assert.equal(parseScan(text, PROVIDERS), null);
   assert.deepEqual(parseScan(' 6091052-028 ', PROVIDERS), {cert_number: '6091052028'});
   assert.deepEqual(parseScan('0012 3456', PROVIDERS), {cert_number: '00123456'});
   for (const text of ['', '   ', 'https://psacard.com.evil.test/cert/1/', 'https://evil.test/?u=https://www.psacard.com/cert/1/',

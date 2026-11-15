@@ -381,7 +381,7 @@ PROVIDERS = {provider.id: provider for provider in (
     GradingProvider('ars', 'ARS', fetch_ars, 40, (
         r'^https?://(?:www\.)?ars-grading\.com/grading/searchNumber\?(?:[^#]*&)?id=([0-9]{1,32})(?:[&#].*)?$',)),
     GradingProvider('pcgcn', 'PCG-CN', fetch_pcgcn, 40, (
-        r'^https?://card\.pcgcard\.cn/h5/index\.html\#/pages/f/r\?(?:[^#]*&)?query=([0-9]{1,32})(?:&[^#]*)?$',)),
+        r'^https?://card\.pcgcard\.cn/(?:card/?|h5/index\.html\#/pages/f/r)\?(?:[^#]*&)?query=([0-9]{1,32})(?:&[^#]*)?$',)),
 )}
 
 
