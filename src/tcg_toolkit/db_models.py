@@ -127,6 +127,19 @@ class OwnedCard(Base):
     )
 
 
+class GradedCardGroup(Base):
+    __tablename__ = "graded_card_groups"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str]
+    created_at: Mapped[int]
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", name="graded_card_groups_user_id_id_key"),
+        UniqueConstraint("user_id", "name", name="graded_card_groups_user_name_key"),
+    )
+
+
 class GradedCard(Base):
     __tablename__ = "graded_cards"
 
@@ -147,8 +160,12 @@ class GradedCard(Base):
     back_image_url: Mapped[str | None]
     price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     currency: Mapped[str] = mapped_column(server_default='JPY')
+    group_id: Mapped[str | None]
     __table_args__ = (
         UniqueConstraint("user_id", "provider", "cert_number", name="graded_cards_user_cert_key"),
+        ForeignKeyConstraint(["user_id", "group_id"], ["graded_card_groups.user_id", "graded_card_groups.id"],
+                             name="graded_cards_user_group_fkey"),
+        Index("graded_cards_user_group", "user_id", "group_id"),
         CheckConstraint('price >= 0', name='graded_cards_price_nonnegative'),
         CheckConstraint("currency IN ('JPY', 'CNY', 'CAD')", name='graded_cards_currency_known'),
     )

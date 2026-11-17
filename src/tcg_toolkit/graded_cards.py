@@ -20,7 +20,7 @@ from fastapi.responses import Response
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, StrictStr
-from sqlalchemy import select
+from sqlalchemy import select, update as sql_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -28,9 +28,10 @@ from .auth.avatar import GRADED_PREFIX, cleanup_avatar, is_avatar_object, avatar
 from .auth.dependencies import current_user, require_trusted_origin, write_guard
 from .card_detect import ImageError, crop_card, detect_card, load_image
 from .card_enhance import calibrate
-from .card_schemas import CardPriceInput, price_record
+from .card_schemas import CardPriceInput, GroupName, GroupTarget, price_record
+from .cards import lock_user
 from .database import is_unique_violation
-from .db_models import AvatarCleanup, GradedCard
+from .db_models import AvatarCleanup, GradedCard, GradedCardGroup
 from .grading import LOOKUPS, lookup_certificate, normalize_request, present
 
 router = APIRouter(prefix='/api/graded-cards')
@@ -47,6 +48,7 @@ class LookupInput(BaseModel):
 class GradedCardInput(LookupInput, CardPriceInput):
     provider: StrictStr
     cert_number: StrictStr
+    group_id: str | None = Field(default=None, min_length=1)
 
 
 def keep_result(token):
@@ -94,7 +96,8 @@ def record(row: GradedCard):
             'source_url': data.get('source_url'), 'title': title,
             'grade': certificate.get('grade') or '', 'fields': fields, 'english_fields': english,
             'population': certificate.get('population') or {}, 'images': images,
-            'created_at': row.created_at, 'refreshed_at': row.refreshed_at, **price_record(row)}
+            'group_id': row.group_id, 'created_at': row.created_at, 'refreshed_at': row.refreshed_at,
+            **price_record(row)}
 
 
 def owned(db: Session, user_id, card_id, *, lock=False):
@@ -112,6 +115,66 @@ def reject_duplicate(db: Session, user_id, provider, cert_number):
         raise HTTPException(409, detail={'type': 'graded_card_duplicate', 'id': card_id})
 
 
+# Groups: the card library's model, in a table of their own. Deleting a group keeps its
+# cards, ungrouped. The user row lock orders group deletion against membership writes.
+
+def owned_group(db: Session, user_id, group_id):
+    row = db.scalar(select(GradedCardGroup).where(GradedCardGroup.user_id == user_id, GradedCardGroup.id == group_id))
+    if row is None:
+        raise HTTPException(404, detail='graded_group_not_found')
+    return row
+
+
+def group_record(row: GradedCardGroup):
+    return {'id': row.id, 'name': row.name, 'created_at': row.created_at}
+
+
+def require_available_name(db: Session, user_id, name, group_id=None):
+    query = select(GradedCardGroup.id).where(GradedCardGroup.user_id == user_id, GradedCardGroup.name == name)
+    if group_id is not None:
+        query = query.where(GradedCardGroup.id != group_id)
+    if db.scalar(query) is not None:
+        raise HTTPException(409, detail='graded_group_name_taken')
+
+
+@router.get('/groups')
+def groups(request: Request, user=Depends(current_user)):
+    with store(request).session() as db:
+        rows = db.scalars(select(GradedCardGroup).where(GradedCardGroup.user_id == user['id']).order_by(
+            GradedCardGroup.created_at, GradedCardGroup.id))
+        return {'items': [group_record(row) for row in rows]}
+
+
+@router.post('/groups', status_code=201, dependencies=[Depends(write_guard)])
+def create_group(body: GroupName, request: Request, user=Depends(current_user)):
+    with store(request).session() as db:
+        lock_user(db, user['id'])
+        require_available_name(db, user['id'], body.name)
+        row = GradedCardGroup(id=str(uuid.uuid4()), user_id=user['id'], name=body.name, created_at=int(time.time()))
+        db.add(row)
+        return group_record(row)
+
+
+@router.put('/groups/{group_id}', dependencies=[Depends(write_guard)])
+def rename_group(group_id: str, body: GroupName, request: Request, user=Depends(current_user)):
+    with store(request).session() as db:
+        lock_user(db, user['id'])
+        row = owned_group(db, user['id'], group_id)
+        require_available_name(db, user['id'], body.name, row.id)
+        row.name = body.name
+        return group_record(row)
+
+
+@router.delete('/groups/{group_id}', status_code=204, dependencies=[Depends(write_guard)])
+def remove_group(group_id: str, request: Request, user=Depends(current_user)):
+    with store(request).session() as db:
+        lock_user(db, user['id'])
+        row = owned_group(db, user['id'], group_id)
+        db.execute(sql_update(GradedCard).where(GradedCard.user_id == user['id'], GradedCard.group_id == row.id)
+                   .values(group_id=None))
+        db.delete(row)
+
+
 @router.get('')
 def graded_cards(request: Request, user=Depends(current_user)):
     with store(request).session() as db:
@@ -126,14 +189,23 @@ def add(body: GradedCardInput, request: Request, user=Depends(current_user)):
     # A card already saved answers at once instead of after a slow lookup.
     with store(request).session() as db:
         reject_duplicate(db, user['id'], provider.id, cert_number)
+        if body.group_id is not None:
+            owned_group(db, user['id'], body.group_id)
     with LOOKUPS.track(user['id'], body.request_id) as token:
         result = lookup_certificate(provider.id, cert_number, user['id'])
         keep_result(token)
         now = int(time.time())
         with store(request).session() as db:
+            lock_user(db, user['id'])
+            # The lookup can take minutes: a group deleted meanwhile saves the card ungrouped
+            # rather than losing the result.
+            group_id = body.group_id
+            if group_id is not None and db.scalar(select(GradedCardGroup.id).where(
+                    GradedCardGroup.user_id == user['id'], GradedCardGroup.id == group_id)) is None:
+                group_id = None
             row = GradedCard(id=str(uuid.uuid4()), user_id=user['id'], provider=provider.id,
                              cert_number=cert_number, snapshot=snapshot(result), created_at=now, refreshed_at=now,
-                             price=body.price, currency=body.currency)
+                             price=body.price, currency=body.currency, group_id=group_id)
             try:
                 with db.begin_nested():
                     db.add(row)
@@ -144,6 +216,17 @@ def add(body: GradedCardInput, request: Request, user=Depends(current_user)):
                     reject_duplicate(db, user['id'], provider.id, cert_number)
                 raise
             return record(row)
+
+
+@router.put('/{card_id}/group', dependencies=[Depends(write_guard)])
+def move(card_id: str, body: GroupTarget, request: Request, user=Depends(current_user)):
+    """Moves a card into a group; null takes it out of its group."""
+    with store(request).session() as db:
+        lock_user(db, user['id'])
+        group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
+        row = owned(db, user['id'], card_id, lock=True)
+        row.group_id = group_id
+        return record(row)
 
 
 @router.put('/{card_id}/price', dependencies=[Depends(write_guard)])

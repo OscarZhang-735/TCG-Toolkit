@@ -90,7 +90,7 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
         assert db.get(Favorite, 'favorite').snapshot == '{}'
         assert db.get(Favorite, 'favorite').group_id is None
         assert db.get(OwnedCard, 'card').quantity == 3
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0017'
+        assert MigrationContext.configure(db.connection()).get_current_revision() == '0018'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
@@ -137,6 +137,28 @@ def test_schema_fifteen_upgrade_keeps_graded_cards_without_uploaded_images(empty
         row = db.get(GradedCard, 'graded')
         assert (row.cert_number, row.refreshed_at, row.front_image_url, row.back_image_url) == ('98428602', 2, None, None)
         assert (row.price, row.currency) == (None, 'JPY')
+        assert row.group_id is None
+
+
+def test_schema_seventeen_upgrade_adds_graded_groups_keeping_cards_ungrouped(empty_database):
+    from tcg_toolkit.db_models import GradedCard, GradedCardGroup
+
+    with Database(empty_database) as store, store.connect() as db:
+        command.upgrade(schema.alembic_config(db), '0017')
+        db.execute(User.__table__.insert().values(id='collector', username='collector', password_hash='hash', created_at=1))
+        db.execute(Table('graded_cards', MetaData(), autoload_with=db).insert().values(
+            id='graded', user_id='collector', provider='psa', cert_number='98428602', snapshot='{"images": []}',
+            created_at=1, refreshed_at=2, price=12.5, currency='CAD'))
+        assert not inspect(db).has_table('graded_card_groups')
+    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
+    with UserStore(empty_database) as store, store.session() as db:
+        row = db.get(GradedCard, 'graded')
+        assert (row.group_id, str(row.price), row.currency) == (None, '12.50', 'CAD')
+        db.add(GradedCardGroup(id='slabs', user_id='collector', name='Slabs', created_at=3))
+        db.flush()
+        row.group_id = 'slabs'
+    with UserStore(empty_database) as store, store.session() as db:
+        assert db.get(GradedCard, 'graded').group_id == 'slabs'
 
 
 def test_schema_thirteen_keeps_one_session_per_account(empty_database):
@@ -317,9 +339,9 @@ def test_schema_nine_resets_all_accounts_to_24_hours(empty_database):
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0018_failure.py').write_text(
+    (scripts / 'versions' / '0019_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0018'\ndown_revision='0017'\n"
+        "revision='0019'\ndown_revision='0018'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = schema.alembic_config

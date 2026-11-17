@@ -550,7 +550,7 @@ button.favorite-add-option {
   border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 13px; font-weight: 500;
 }
 button.favorite-add-option:hover, button.favorite-add-option:focus-visible { background: var(--color-hover); outline: none; }
-#favorites-list.without-groups .group-col, #cards-table.without-groups .group-col { display: none; }
+#favorites-list.without-groups .group-col, #cards-table.without-groups .group-col, #graded-table.without-groups .group-col { display: none; }
 #favorites-details[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 /* Always level with the update time; a status note, if any, goes on the line below. */
 .fav-time { display: inline-flex; align-items: center; gap: 5px; }
@@ -1263,9 +1263,9 @@ button.graded-title:hover { background: none; border: 0; text-decoration: underl
 .graded-date { white-space: nowrap; font-size: 12px; color: var(--color-text-muted); }
 /* The list also carries a price column: the update time may wrap so the actions stay in view. */
 #graded-rows .graded-date { display: inline-block; min-width: 88px; white-space: normal; }
-td.graded-title-cell { min-width: 200px; }
+td.graded-title-cell { min-width: 180px; }
 /* Eight columns: tighter cell padding keeps the row actions in view on a laptop screen. */
-#graded-table th, #graded-table td { padding-left: 12px; padding-right: 12px; }
+#graded-table th, #graded-table td { padding-left: 10px; padding-right: 10px; }
 .graded-title-cell .graded-waiting, .graded-title-cell .graded-error { margin-top: 8px; }
 a.row-action { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; color: var(--color-text-muted); text-decoration: none; }
 a.row-action:hover { background: var(--color-hover); color: var(--color-text); }
@@ -1322,6 +1322,10 @@ tr.graded-flash > td { animation: graded-row-flash 2.2s ease-out; }
 .graded-form-grid { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 14px; }
 .graded-form-grid .field select, .graded-form-grid .field input { margin-top: 6px; }
 .graded-dialog .graded-price-field { display: block; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-divider); }
+.graded-dialog .graded-group-field { display: block; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-divider); }
+.graded-dialog .graded-group-field[hidden] { display: none; }
+.graded-dialog .graded-group-field:not([hidden]) + .graded-price-field { margin-top: 14px; padding-top: 0; border-top: 0; }
+.graded-dialog .graded-group-field select { margin-top: 6px; }
 .graded-scan-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .graded-scan-actions button { flex: 1; min-width: 150px; }
 .graded-scanner { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 14px; }

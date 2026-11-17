@@ -16,11 +16,11 @@ const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(resol
 const PROVIDERS = [{id: 'psa', name: 'PSA', timeout_seconds: 225, scan_patterns: []},
   {id: 'ars', name: 'ARS', timeout_seconds: 40, scan_patterns: []}];
 const card = (id, provider, cert, extra = {}) => ({id, provider, cert_number: cert, source_url: `https://example.test/${cert}`,
-  title: `Card ${id}`, grade: '10', fields: {}, population: {}, images: [], created_at: 1, refreshed_at: 1, ...extra});
+  title: `Card ${id}`, grade: '10', fields: {}, population: {}, images: [], created_at: 1, refreshed_at: 1, group_id: null, ...extra});
 
 // Lists answer at once; lookups (POST) wait in `waiting` until the test settles them, and
 // reject with AbortError when their signal aborts, like fetch.
-function server({records = [], providers = PROVIDERS} = {}) {
+function server({records = [], providers = PROVIDERS, groups = []} = {}) {
   const calls = [], waiting = [];
   let deleteReply = null;
   const api = (url, options = {}) => {
@@ -29,6 +29,25 @@ function server({records = [], providers = PROVIDERS} = {}) {
     calls.push({method, path: pathname, body});
     if (method === 'GET' && pathname === '/api/grading/providers') return Promise.resolve(reply({items: providers}));
     if (method === 'GET' && pathname === '/api/graded-cards') return Promise.resolve(reply({items: records}));
+    if (method === 'GET' && pathname === '/api/graded-cards/groups') return Promise.resolve(reply({items: groups}));
+    // Group writes answer at once, like the lists.
+    if (pathname.startsWith('/api/graded-cards/groups')) {
+      const id = pathname.split('/')[4];
+      if (method === 'POST') {
+        if (groups.some(group => group.name === body.name)) return Promise.resolve(reply({detail: 'graded_group_name_taken'}, 409));
+        const group = {id: `g${groups.length + 1}`, name: body.name, created_at: 1}; groups = [...groups, group];
+        return Promise.resolve(reply(group, 201));
+      }
+      if (!groups.some(group => group.id === id)) return Promise.resolve(reply({detail: 'graded_group_not_found'}, 404));
+      if (method === 'PUT') { groups = groups.map(group => group.id === id ? {...group, name: body.name} : group); return Promise.resolve(reply(groups.find(group => group.id === id))); }
+      groups = groups.filter(group => group.id !== id); records = records.map(row => row.group_id === id ? {...row, group_id: null} : row);
+      return Promise.resolve(reply(null, 204));
+    }
+    if (method === 'PUT' && pathname.endsWith('/group')) {
+      if (body.group_id !== null && !groups.some(group => group.id === body.group_id)) return Promise.resolve(reply({detail: 'graded_group_not_found'}, 404));
+      const id = pathname.split('/')[3], row = records.find(card => card.id === id);
+      return Promise.resolve(reply({...row, group_id: body.group_id}));
+    }
     if (method === 'DELETE') return Promise.resolve(deleteReply ?? reply(null, 204));
     let resolve, reject;
     const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
@@ -70,7 +89,8 @@ test('UI string keys used by the graded-card modules exist in both languages', a
   const sources = await Promise.all(['graded-cards.js', 'graded-cards-ui.js', 'grading-scan.js']
     .map(name => readFile(new URL(name, base), 'utf8')));
   // Server detail codes share the prefix but are not messages.
-  const codes = new Set(['graded_card_duplicate', 'graded_card_not_found', 'graded_lookup_finished']);
+  const codes = new Set(['graded_card_duplicate', 'graded_card_not_found', 'graded_lookup_finished',
+    'graded_group_name_taken', 'graded_group_not_found']);
   const keys = new Set(sources.join('\n').match(/'graded_[a-z_]+'/g).map(key => key.slice(1, -1)).filter(key => !codes.has(key)));
   assert.ok(keys.size > 50);
   for (const key of keys) assert.ok(messages.en[key] && messages['zh-CN'][key], key);
@@ -127,7 +147,7 @@ test('activation loads providers and saved cards', async () => {
   assert.equal(graded.state.ready, true);
   assert.deepEqual(graded.state.providers, PROVIDERS);
   assert.deepEqual(graded.state.records, records);
-  assert.deepEqual(backend.calls.map(call => call.path).sort(), ['/api/graded-cards', '/api/grading/providers']);
+  assert.deepEqual(backend.calls.map(call => call.path).sort(), ['/api/graded-cards', '/api/graded-cards/groups', '/api/grading/providers']);
   assert.equal(graded.providerName('psa'), 'PSA');
   assert.equal(graded.providerName('bgs'), 'BGS');
   assert.equal(graded.timeoutSeconds('ars'), 40);
@@ -415,6 +435,7 @@ test('photos are sent raw: detection, crop upload with corners, and restoring th
     if (fail) { const [status, detail] = fail; fail = null; return reply({detail}, status); }
     if (pathname === '/api/grading/providers') return reply({items: PROVIDERS});
     if (pathname === '/api/graded-cards' && method === 'GET') return reply({items: [saved]});
+    if (pathname === '/api/graded-cards/groups') return reply({items: []});
     if (pathname === '/api/graded-cards/detect-card') return reply({width: 800, height: 600, corners: [[1, 2], [3, 4], [5, 6], [7, 8]]});
     if (method === 'PUT') return reply({...saved, images: [{url: 'https://cos/x.webp', side: 'front', uploaded: true}]});
     return reply(saved);
@@ -453,6 +474,7 @@ test('brightness calibration sends the photo raw and returns the calibrated imag
     calls.push({pathname, method: options.method, type: options.headers?.['Content-Type'], body: options.body});
     if (pathname === '/api/grading/providers') return reply({items: PROVIDERS});
     if (pathname === '/api/graded-cards' && !options.method) return reply({items: []});
+    if (pathname === '/api/graded-cards/groups') return reply({items: []});
     if (pathname === '/api/graded-cards' && options.method === 'GET') return reply({items: []});
     return status === 200 ? {ok: true, status, blob: async () => calibrated} : reply(status === 422 ? {detail: 'graded_image_invalid'} : {}, status);
   };
@@ -465,4 +487,43 @@ test('brightness calibration sends the photo raw and returns the calibrated imag
   await assert.rejects(graded.calibrateImage(photo), error => error.key === 'graded_image_invalid');
   status = 500;
   await assert.rejects(graded.calibrateImage(photo), error => error.key === 'graded_image_failed');
+});
+
+test('groups: create selects the tab, cards move and filter, deleting keeps cards ungrouped', async () => {
+  const {graded, backend} = await ready({}, {records: [card('a', 'psa', '1'), card('b', 'cgc', '2')]});
+  assert.equal(await graded.createGroup('Vault'), '');
+  assert.deepEqual(graded.state.groups.map(group => group.name), ['Vault']);
+  assert.equal(graded.state.group, 'g1');
+  assert.deepEqual(graded.visible(), []);
+  assert.equal(await graded.createGroup('Vault'), 'favorite_group_name_taken');
+  assert.equal(await graded.move('a', 'g1'), '');
+  assert.deepEqual(backend.calls.at(-1), {method: 'PUT', path: '/api/graded-cards/a/group', body: {group_id: 'g1'}});
+  assert.deepEqual(graded.visible().map(row => row.id), ['a']);
+  graded.select(null);
+  assert.equal(graded.visible().length, 2);
+  graded.select('missing');
+  assert.equal(graded.state.group, null, 'unknown tabs are ignored');
+  assert.equal(await graded.renameGroup('g1', 'Safe'), '');
+  assert.equal(graded.state.groups[0].name, 'Safe');
+  graded.select('g1');
+  assert.equal(await graded.deleteGroup('g1'), '');
+  assert.equal(graded.state.group, null);
+  assert.deepEqual(graded.state.records.map(row => row.group_id), [null, null]);
+  // A group deleted in another tab: the move fails and the page reloads.
+  assert.equal(await graded.move('a', 'gone'), 'favorite_group_missing');
+});
+
+test('a new card is saved into the group chosen when it was added', async () => {
+  const {graded, backend} = await ready({}, {groups: [{id: 'g1', name: 'Vault', created_at: 1}]});
+  graded.add({provider: 'psa', cert_number: '7', group_id: 'g1'});
+  assert.equal(backend.waiting[0].body.group_id, 'g1');
+  backend.waiting[0].resolve(reply(card('n', 'psa', '7', {group_id: 'g1'}), 201));
+  await settle();
+  assert.equal(graded.state.records[0].group_id, 'g1');
+  // The group went away before this lookup started: it is sent again, ungrouped.
+  graded.add({provider: 'psa', cert_number: '8', group_id: 'g1'});
+  backend.waiting[1].resolve(reply({detail: 'graded_group_not_found'}, 404));
+  await settle();
+  assert.equal(backend.waiting[2].body.group_id, null);
+  assert.equal(graded.state.pending[0].status, 'loading');
 });

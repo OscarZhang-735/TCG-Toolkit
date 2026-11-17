@@ -349,3 +349,63 @@ def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch):
             assert time.monotonic() - started < 2
     finally:
         server.shutdown()
+
+
+def test_groups_create_rename_move_and_delete_keep_cards(client, monkeypatch):
+    groups = f'{PATH}/groups'
+    assert client.get(groups).json() == {'items': []}
+    slabs = client.post(groups, json={'name': '  Slabs  '})
+    assert slabs.status_code == 201 and slabs.json()['name'] == 'Slabs'
+    slabs = slabs.json()
+    assert client.post(groups, json={'name': 'Slabs'}).json()['detail'] == 'graded_group_name_taken'
+    assert client.post(groups, json={'name': ' '}).status_code == 422
+    vault = client.post(groups, json={'name': 'Vault'}).json()
+    assert client.put(f"{groups}/{vault['id']}", json={'name': 'Slabs'}).status_code == 409
+    assert client.put(f"{groups}/{vault['id']}", json={'name': 'Safe'}).json()['name'] == 'Safe'
+    assert [row['name'] for row in client.get(groups).json()['items']] == ['Slabs', 'Safe']
+
+    # New cards may go straight into a group; an unknown group is rejected before the lookup.
+    saved = client.post(PATH, json={'provider': 'psa', 'cert_number': '1', 'group_id': slabs['id']})
+    assert saved.status_code == 201 and saved.json()['group_id'] == slabs['id']
+    fetch_with(monkeypatch, lambda number: pytest.fail('lookup for a missing group'))
+    missing = client.post(PATH, json={'provider': 'psa', 'cert_number': '2', 'group_id': 'nope'})
+    assert (missing.status_code, missing.json()['detail']) == (404, 'graded_group_not_found')
+    plain = client.post(PATH, json={'provider': 'cgc', 'cert_number': '3'}).json()
+    assert plain['group_id'] is None
+
+    card = saved.json()['id']
+    moved = client.put(f'{PATH}/{plain["id"]}/group', json={'group_id': vault['id']})
+    assert moved.status_code == 200 and moved.json()['group_id'] == vault['id']
+    assert moved.json()['title'] == 'Saved card'  # the full record comes back
+    assert client.put(f'{PATH}/{card}/group', json={'group_id': 'nope'}).status_code == 404
+    assert client.put(f'{PATH}/missing/group', json={'group_id': None}).json()['detail'] == 'graded_card_not_found'
+    assert client.put(f'{PATH}/{card}/group', json={'group_id': None}).json()['group_id'] is None
+    assert client.put(f'{PATH}/{card}/group', json={'group_id': slabs['id']}).json()['group_id'] == slabs['id']
+
+    # Deleting a group keeps its cards, ungrouped.
+    assert client.request('DELETE', f"{groups}/{slabs['id']}", json={}).status_code == 204
+    assert client.request('DELETE', f"{groups}/{slabs['id']}", json={}).status_code == 404
+    by_id = {row['id']: row['group_id'] for row in client.get(PATH).json()['items']}
+    assert by_id == {card: None, plain['id']: vault['id']}
+
+    # Groups are per account.
+    bob = register_user(client, 'bob').json()
+    client.headers['Authorization'] = 'Bearer ' + bob['token']
+    assert client.get(groups).json() == {'items': []}
+    assert client.put(f"{groups}/{vault['id']}", json={'name': 'Mine'}).status_code == 404
+    assert client.post(groups, json={'name': 'Safe'}).status_code == 201
+    for method, path in [('POST', groups), ('PUT', f"{groups}/{vault['id']}"), ('DELETE', f"{groups}/{vault['id']}"),
+                         ('PUT', f'{PATH}/{card}/group')]:
+        assert client.request(method, path, json={'name': 'x'}, headers={'Origin': 'https://evil.test'}).status_code == 403
+
+
+def test_group_deleted_during_lookup_saves_the_card_ungrouped(client, monkeypatch):
+    group = client.post(f'{PATH}/groups', json={'name': 'Temp'}).json()
+
+    def fetch(number):
+        assert client.request('DELETE', f"{PATH}/groups/{group['id']}", json={}).status_code == 204
+        return certificate(number)
+
+    fetch_with(monkeypatch, fetch)
+    saved = client.post(PATH, json={'provider': 'psa', 'cert_number': '9', 'group_id': group['id']})
+    assert saved.status_code == 201 and saved.json()['group_id'] is None

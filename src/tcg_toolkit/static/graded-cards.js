@@ -100,6 +100,10 @@ export function slabImages(images = []) {
 const randomId = () => Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)),
   byte => byte.toString(16).padStart(2, '0')).join('');
 
+// Group errors from the server, in the wording the shared group dialogs use.
+const GROUP_ERRORS = {graded_group_name_taken: 'favorite_group_name_taken', graded_group_not_found: 'favorite_group_missing',
+  graded_card_not_found: 'graded_error_missing'};
+
 export function createGradedCards(onChange, {now = () => Date.now(), maxConcurrent = MAX_CONCURRENT,
   setTimer = (callback, ms) => setTimeout(callback, ms), clearTimer = id => clearTimeout(id), newId = randomId} = {}) {
   let request, generation = 0, controller = new AbortController(), running = 0;
@@ -108,9 +112,12 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   // Adds and refreshes share one queue, so a tab never runs more than maxConcurrent slow
   // lookups at once (the server allows three per account).
   let queue = [];
+  // groups as in the card library; group is the selected tab (null shows every card).
   const initial = () => ({providers: [], records: [], pending: [], refreshing: {}, removing: new Set(), imageBusy: new Set(),
-    priceBusy: new Set(), ready: false, loading: false, error: '', highlight: '', notice: null});
+    priceBusy: new Set(), groups: [], group: null, groupBusy: false, moving: new Set(),
+    ready: false, loading: false, error: '', highlight: '', notice: null});
   const state = initial();
+  const visible = () => state.group === null ? state.records : state.records.filter(row => row.group_id === state.group);
 
   function clear() {
     generation++; controller.abort(); controller = new AbortController();
@@ -145,10 +152,11 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     const current = generation;
     state.loading = true; state.error = ''; onChange();
     try {
-      const [providers, cards] = await Promise.all([call('/grading/providers', 'GET', null, controller.signal),
-        call('/graded-cards', 'GET', null, controller.signal)]);
+      const [providers, cards, groups] = await Promise.all([call('/grading/providers', 'GET', null, controller.signal),
+        call('/graded-cards', 'GET', null, controller.signal), call('/graded-cards/groups', 'GET', null, controller.signal)]);
       if (current !== generation) return;
-      state.providers = providers.items; state.records = cards.items; state.ready = true;
+      state.providers = providers.items; state.records = cards.items; state.groups = groups.items; state.ready = true;
+      if (!state.groups.some(group => group.id === state.group)) state.group = null;
     } catch (error) {
       if (current === generation && error.name !== 'AbortError') state.error = 'graded_load_failed';
     } finally {
@@ -165,18 +173,19 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   function enqueue(job) { queue.push(job); pump(); onChange(); }
 
   // Returns {status: 'queued' | 'pending' | 'exists', key?, id?} so the dialog can explain.
-  function add({provider, cert_number, price, currency}) {
+  // group_id: where the saved card goes (the add dialog defaults to the selected tab).
+  function add({provider, cert_number, price, currency, group_id = null}) {
     const existing = state.records.find(row => row.provider === provider && row.cert_number === cert_number);
     if (existing) { state.highlight = existing.id; onChange(); return {status: 'exists', id: existing.id}; }
     const key = pendingKey(provider, cert_number), waiting = state.pending.find(item => item.key === key);
     if (waiting) {
       if (waiting.status === 'failed') {
-        Object.assign(waiting, {price, currency});
+        Object.assign(waiting, {price, currency, group_id});
         retry(key);
       }
       return {status: 'pending', key};
     }
-    state.pending.unshift({key, provider, cert_number, price, currency, status: 'queued', startedAt: null, error: null});
+    state.pending.unshift({key, provider, cert_number, price, currency, group_id, status: 'queued', startedAt: null, error: null});
     enqueue({kind: 'add', key});
     return {status: 'queued', key};
   }
@@ -246,7 +255,8 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     inflight.set(job, lookup);
     try {
       const card = await call('/graded-cards', 'POST', {provider: item.provider, cert_number: item.cert_number,
-        request_id: lookup.requestId, price: item.price, currency: item.currency}, limit.signal);
+        request_id: lookup.requestId, price: item.price, currency: item.currency,
+        group_id: state.groups.some(group => group.id === item.group_id) ? item.group_id : null}, limit.signal);
       if (current !== generation) return;
       state.pending = state.pending.filter(entry => entry !== item);
       state.records = [card, ...state.records.filter(row => row.id !== card.id)];
@@ -254,6 +264,13 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     } catch (error) {
       if (current !== generation) return;
       if (error.status === 409 && error.detail?.type === 'graded_card_duplicate') return await duplicate(item, error.detail.id, current);
+      if (error.status === 404 && error.detail === 'graded_group_not_found') {
+        // The group went away (another tab) before the lookup started: save it ungrouped.
+        state.groups = state.groups.filter(group => group.id !== item.group_id);
+        Object.assign(item, {status: 'queued', startedAt: null, error: null, group_id: null});
+        enqueue({kind: 'add', key: item.key});
+        return;
+      }
       if (error.name === 'AbortError' && !limit.timedOut()) return;
       if (error.detail === 'grading_lookup_cancelled') {  // cancelled from another tab
         state.pending = state.pending.filter(entry => entry !== item);
@@ -286,8 +303,9 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     try {
       const card = await call(`/graded-cards/${encodeURIComponent(id)}/refresh`, 'POST', {request_id: lookup.requestId}, limit.signal);
       if (current !== generation) return;
-      // A price save can finish while this lookup is in flight.
-      state.records = state.records.map(saved => saved.id === id ? {...card, price: saved.price, currency: saved.currency} : saved);
+      // A price save or a move can finish while this lookup is in flight.
+      state.records = state.records.map(saved => saved.id === id
+        ? {...card, price: saved.price, currency: saved.currency, group_id: saved.group_id} : saved);
       delete state.refreshing[id];
       state.notice = {key: 'graded_refreshed_notice', provider: card.provider, cert_number: card.cert_number};
     } catch (error) {
@@ -322,6 +340,63 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
       return 'graded_price_failed';
     } finally {
       if (current === generation) { state.priceBusy.delete(id); onChange(); }
+    }
+  }
+  // Groups: writes resolve to a translation key ('' on success) for the open dialog.
+  async function editGroup(operation) {
+    const current = generation;
+    if (!state.ready || state.groupBusy) return 'graded_group_failed';
+    state.groupBusy = true; onChange();
+    try {
+      await operation(current);
+      return '';
+    } catch (error) {
+      return groupFailure(error, current);
+    } finally {
+      if (current === generation) { state.groupBusy = false; onChange(); }
+    }
+  }
+  // Another tab may have deleted the group or card; reload so the page matches the server.
+  function groupFailure(error, current) {
+    if (current !== generation || error.name === 'AbortError') return '';
+    const key = GROUP_ERRORS[error.detail] ?? 'graded_group_failed';
+    if (error.status === 404) load();
+    return key;
+  }
+  const createGroup = name => editGroup(async current => {
+    const group = await call('/graded-cards/groups', 'POST', {name}, controller.signal);
+    if (current === generation) { state.groups.push(group); state.group = group.id; }
+  });
+  const renameGroup = (id, name) => editGroup(async current => {
+    const group = await call(`/graded-cards/groups/${encodeURIComponent(id)}`, 'PUT', {name}, controller.signal);
+    if (current === generation) state.groups = state.groups.map(row => row.id === id ? group : row);
+  });
+  // Deleting a group keeps its cards; the server leaves them ungrouped.
+  const deleteGroup = id => editGroup(async current => {
+    await call(`/graded-cards/groups/${encodeURIComponent(id)}`, 'DELETE', {}, controller.signal);
+    if (current !== generation) return;
+    state.groups = state.groups.filter(group => group.id !== id);
+    state.records = state.records.map(row => row.group_id === id ? {...row, group_id: null} : row);
+    if (state.group === id) state.group = null;
+  });
+  function select(id) {
+    if (id !== null && !state.groups.some(group => group.id === id)) return;
+    state.group = id; onChange();
+  }
+  // groupId null takes the card out of its group; resolves to an error key ('' on success).
+  async function move(id, groupId) {
+    const current = generation, row = state.records.find(card => card.id === id);
+    if (!state.ready || !row || state.moving.has(id)) return 'graded_group_failed';
+    if (row.group_id === groupId) return '';
+    state.moving.add(id); onChange();
+    try {
+      const card = await call(`/graded-cards/${encodeURIComponent(id)}/group`, 'PUT', {group_id: groupId}, controller.signal);
+      if (current === generation) state.records = state.records.map(saved => saved.id === id ? {...saved, group_id: card.group_id} : saved);
+      return '';
+    } catch (error) {
+      return groupFailure(error, current);
+    } finally {
+      if (current === generation) { state.moving.delete(id); onChange(); }
     }
   }
   // Resolves to '' on success or an error key.
@@ -403,7 +478,8 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   const providerName = id => state.providers.find(item => item.id === id)?.name ?? String(id).toUpperCase();
   const timeoutSeconds = id => state.providers.find(item => item.id === id)?.timeout_seconds ?? DEFAULT_TIMEOUT_S;
 
-  return {state, clear, load, add, retry, dismiss, refresh, dismissRefresh, remove, queuePosition, providerName,
+  return {state, visible, clear, load, add, retry, dismiss, refresh, dismissRefresh, remove, queuePosition, providerName,
+    createGroup, renameGroup, deleteGroup, select, move,
     setPrice, detectCard, calibrateImage, uploadImage, restoreImage,
     timeoutSeconds, busy: () => state.pending.some(item => item.status !== 'failed')
       || Object.values(state.refreshing).some(entry => entry.status !== 'failed'),

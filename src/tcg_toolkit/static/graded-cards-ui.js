@@ -11,6 +11,7 @@ import {numberButton} from './copy-number.js';
 import {setNavCount} from './nav-count.js';
 import {yenPrice, priceDisplay} from './card-money.js';
 import {createRateCache, formatPrice} from './currency.js';
+import {bindGroups} from './group-ui.js';
 const $ = id => document.getElementById(id);
 // List/grid choice is shared with the other pages (app.js owns the toggle).
 const currentView = () => localStorage.getItem('view') === 'grid' ? 'grid' : 'list';
@@ -32,6 +33,10 @@ let ticker = 0, statusNotice = null, statusTimer = 0, dialogError = '', linkNoti
 let scanner = null, scanStarting = false, scanGeneration = 0, photoBusy = false, photoGeneration = 0;
 let scanMessage = null, scanAdded = [], recentScans = new Map();
 const graded = createGradedCards(render);
+// Group bar and dialogs shared with the card library; nothing switches tabs mid bulk action.
+const groups = bindGroups(graded, {prefix: 'graded', deleteMessage: 'graded_group_delete_message',
+  locked: () => selection.running});
+const groupName = id => graded.state.groups.find(group => group.id === id)?.name ?? null;
 let displayCurrency = 'JPY', requestAPI;
 const rateCache = createRateCache(() => render());
 
@@ -184,7 +189,7 @@ function pendingRow(item) {
   cell(null, 'select-col'); cell(pendingImages(item, true)); cell(providerTag(item.provider)); cell(gradeBadge(''));
   cell(pendingText(item), 'graded-title-cell'); cell(node('span', '—', 'muted'), 'numeric');
   cell(node('span', item.cert_number, 'mono'));
-  cell(node('span', '—', 'graded-date'));
+  cell(node('span', '—', 'graded-date')); cell(null, 'group-col');
   const actions = node('div', '', 'row-actions');
   if (busyStatus(item.status)) actions.append(iconButton('bi-x-lg', cancelLabel(item), () => graded.dismiss(item.key)));
   cell(actions, 'action-col');
@@ -218,11 +223,24 @@ function sourceLink(row) {
 function cardActions(row) {
   const locked = busyStatus(graded.state.refreshing[row.id]?.status) || graded.state.removing.has(row.id);
   const actions = node('div', '', 'row-actions');
-  actions.append(iconButton('bi-info-circle', t('graded_details'), () => openDetail(row.id)),
-    iconButton('bi-arrow-clockwise', t('graded_refresh'), () => graded.refresh(row.id), locked));
+  actions.append(iconButton('bi-info-circle', t('graded_details'), () => openDetail(row.id)));
+  if (graded.state.groups.length) actions.append(iconButton('bi-folder-symlink', t('favorite_move'), () => openMove(row),
+    locked || graded.state.moving.has(row.id) || graded.state.groupBusy));
+  actions.append(iconButton('bi-arrow-clockwise', t('graded_refresh'), () => graded.refresh(row.id), locked));
   const link = sourceLink(row); if (link) actions.append(link);
   actions.append(iconButton('bi-trash3', t('cards_delete'), () => confirmDelete(row), locked));
   return actions;
+}
+function openMove(row) {
+  groups.openMove(row.title || row.cert_number, row.group_id ?? '', groupId => graded.move(row.id, groupId),
+    () => graded.state.moving.has(row.id), () => graded.state.records.some(card => card.id === row.id));
+}
+// Ungrouped cards get no tag.
+function groupTag(row) {
+  const name = groupName(row.group_id);
+  if (!name) return null;
+  const tag = node('span', name, 'group-tag'); tag.title = name;
+  return tag;
 }
 function titleButton(row, className) {
   const button = node('button', row.title || t('graded_untitled'), `graded-title ${className}`); button.type = 'button';
@@ -241,7 +259,9 @@ function gradedTile(row) {
   card.append(top, images, titleButton(row, 'card-name'),
     node('span', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'), bottom);
   const status = refreshStatus(row); if (status) card.append(status);
+  // Footer as in the card library: actions on the left, the group in the bottom-right corner.
   const foot = node('div', '', 'card-foot'); foot.append(cardActions(row));
+  const tag = groupTag(row); if (tag) foot.append(tag);
   card.append(foot);
   return card;
 }
@@ -254,6 +274,7 @@ function gradedRow(row) {
   const title = cell(titleButton(row, 'cards-name'), 'graded-title-cell');
   const status = refreshStatus(row); if (status) title.append(status);
   cell(priceOf(row), 'numeric'); cell(numberButton(row.cert_number)); cell(node('span', dateText(row.refreshed_at), 'graded-date'));
+  cell(groupTag(row) ?? node('span', '—', 'muted'), 'group-col');
   cell(cardActions(row), 'action-col');
   return tr;
 }
@@ -281,6 +302,18 @@ async function bulkDelete() {
   Object.assign(selection, {running: true, done: 0, total: ids.length, failed: 0}); render();
   for (const id of ids) {
     const error = await graded.remove(id);
+    if (current !== selectionGeneration) return;
+    if (!error) selection.ids.delete(id); else selection.failed++;
+    selection.done++; render();
+  }
+  selection.running = false; render();
+}
+async function bulkMove(groupId) {
+  const ids = [...selection.ids], current = selectionGeneration;
+  if (selection.running || !ids.length) return;
+  Object.assign(selection, {running: true, done: 0, total: ids.length, failed: 0}); render();
+  for (const id of ids) {
+    const error = await graded.move(id, groupId);
     if (current !== selectionGeneration) return;
     if (!error) selection.ids.delete(id); else selection.failed++;
     selection.done++; render();
@@ -318,13 +351,14 @@ function renderSelection(rows) {
   $('graded-selection-count').textContent = selection.running ? t('favorite_bulk_progress', {done: number(selection.done), total: number(selection.total)})
     : t('favorite_selected_count', {count: number(count)}) + (selection.failed ? ' · ' + t('cards_bulk_failed', {count: number(selection.failed)}) : '');
   const idle = !selection.running && count > 0 && state.ready;
+  $('graded-bulk-move').disabled = !idle || !state.groups.length || state.groupBusy;
   $('graded-bulk-refresh').disabled = !idle;
   $('graded-bulk-delete').disabled = !idle;
 }
 
 function providerChips() {
   const state = graded.state, counts = new Map();
-  for (const row of state.records) counts.set(row.provider, (counts.get(row.provider) ?? 0) + 1);
+  for (const row of graded.visible()) counts.set(row.provider, (counts.get(row.provider) ?? 0) + 1);
   const ids = [...new Set([...state.providers.map(item => item.id), ...counts.keys()])];
   const signature = [getLanguage(), ...ids.map(id => `${id}:${counts.get(id) ?? 0}:${filters.hiddenProviders.has(id)}`)].join('|');
   if (signature === chipsSignature) return;
@@ -381,8 +415,13 @@ function render() {
   $('graded-status').textContent = state.loading ? t('graded_loading') : state.error ? t(state.error)
     : statusNotice ? t(statusNotice.key, {provider: providerName(statusNotice.provider), number: statusNotice.cert_number,
       count: number(statusNotice.count ?? 0)}) : '';
-  const rows = filterGraded(state.records, filters), pending = state.pending;
+  groups.render();
+  const groupRows = graded.visible(), group = groups.selected();
+  const rows = filterGraded(groupRows, filters), pending = state.pending;
   renderSelection(rows);
+  $('graded-list-title').textContent = group ? group.name : t('graded_list');
+  // Without any groups the group column would only hold dashes.
+  $('graded-table').classList.toggle('without-groups', !state.groups.length);
   if (state.ready) rateCache.load(state.records, requestAPI);
   $('graded-stats').hidden = !state.ready;
   $('graded-quantity-total').textContent = number(rows.length);
@@ -390,7 +429,7 @@ function render() {
   $('graded-by-grade').replaceChildren(...statChips(rows, row => row.grade || t('unknown')));
   $('graded-by-provider').replaceChildren(...statChips(rows, row => providerName(row.provider)));
   $('graded-count').hidden = !state.ready;
-  $('graded-count').textContent = t('counts', {matching: number(rows.length), loaded: number(state.records.length)});
+  $('graded-count').textContent = t('counts', {matching: number(rows.length), loaded: number(groupRows.length)});
   $('graded-filters').hidden = !state.ready;
   providerChips();
   $('graded-sort').value = filters.sort;
@@ -401,7 +440,8 @@ function render() {
   $('graded-table').hidden = !shown || view !== 'list';
   $('graded-grid').hidden = !shown || view !== 'grid';
   $('graded-empty').hidden = !state.ready || shown;
-  $('graded-empty').querySelector('h3').textContent = t(state.records.length ? 'no_matching_results' : 'graded_empty');
+  $('graded-empty').querySelector('h3').textContent = t(groupRows.length ? 'no_matching_results'
+    : state.records.length ? 'favorite_group_empty' : 'graded_empty');
   renderDialog(); renderDetail(); syncTicker(); flash();
 }
 
@@ -418,9 +458,10 @@ function announce() {
 function flash() {
   const id = graded.state.highlight;
   if (!id) return;
-  if (!filterGraded(graded.state.records, filters).some(row => row.id === id)) {
+  if (!filterGraded(graded.visible(), filters).some(row => row.id === id)) {
     if (!graded.state.records.some(row => row.id === id)) { graded.state.highlight = ''; return; }
     filters = blankFilters(); $('graded-query').value = ''; chipsSignature = '';
+    if (!graded.visible().some(row => row.id === id)) { graded.select(null); return; }
     render();
     return;
   }
@@ -485,13 +526,21 @@ function renderDialog() {
   $('graded-dialog-error').textContent = dialogError ? t(dialogError) : '';
   $('graded-cancel').textContent = t(scanAdded.length ? 'graded_done' : 'detail_cancel');
 }
-function openAdd({provider = '', cert_number = '', price = null, currency = 'JPY'} = {}) {
+function groupOptions(value) {
+  const groupsList = graded.state.groups, select = $('graded-add-group');
+  $('graded-add-group-field').hidden = !groupsList.length;
+  const none = node('option', t('favorite_group_none')); none.value = '';
+  select.replaceChildren(none, ...groupsList.map(group => { const option = node('option', group.name); option.value = group.id; return option; }));
+  select.value = groupsList.some(group => group.id === value) ? value : '';
+}
+function openAdd({provider = '', cert_number = '', price = null, currency = 'JPY', group_id} = {}) {
   if (!graded.state.ready) return;
   dialogError = ''; scanMessage = null; linkNotice = null; scanAdded = []; recentScans = new Map();
   providerOptions();
   if (provider && graded.state.providers.some(item => item.id === provider)) $('graded-provider').value = provider;
   $('graded-cert').value = cert_number;
   fillPrice('graded-add', {price, currency});
+  groupOptions(group_id === undefined ? graded.state.group : group_id);
   renderDialog();
   if (!$('graded-dialog').open) $('graded-dialog').showModal();
   $('graded-cert').focus();
@@ -503,7 +552,7 @@ function editPending(item) {
 // Queues a lookup; returns the add() result so callers can explain duplicates.
 function queueLookup(provider, certNumber) {
   localStorage.setItem(PROVIDER_KEY, provider);
-  return graded.add({provider, cert_number: certNumber, ...readPrice('graded-add')});
+  return graded.add({provider, cert_number: certNumber, ...readPrice('graded-add'), group_id: $('graded-add-group').value || null});
 }
 function stopScan() {
   scanGeneration++; scanStarting = false;
@@ -820,12 +869,13 @@ function renderDetail(opening = false) {
   $('graded-detail-delete').disabled = locked;
   const busyImages = SIDES_UI.map(side => graded.state.imageBusy.has(`${row.id}:${side}`)).join(',');
   const signature = [row.id, row.refreshed_at, entry?.status ?? '', entry?.startedAt ?? '', getLanguage(),
-    ...row.images.map(image => image.url), busyImages].join('|');
+    ...row.images.map(image => image.url), busyImages, groupName(row.group_id) ?? ''].join('|');
   if (signature !== detailSignature) {
     detailSignature = signature;
     $('graded-detail-title').textContent = row.title || t('graded_untitled');
     const info = node('div', '', 'graded-detail-info');
     const tags = node('div', '', 'card-tags'); tags.append(providerTag(row.provider), gradeBadge(row.grade));
+    const tag = groupTag(row); if (tag) tags.append(tag);
     const cert = node('div', '', 'graded-detail-cert');
     cert.append(node('span', t('graded_cert_number'), 'graded-detail-label'), numberButton(row.cert_number));
     // The price form is a single element moved into each rebuilt info column, so a draft survives.
@@ -954,10 +1004,14 @@ $('graded-delete-cancel').addEventListener('click', () => $('graded-delete-dialo
 $('graded-select').addEventListener('click', () => setSelecting(!selection.active));
 $('graded-select-all').addEventListener('change', event => {
   if (selection.running) return;
-  for (const row of filterGraded(graded.state.records, filters)) event.target.checked ? selection.ids.add(row.id) : selection.ids.delete(row.id);
+  for (const row of filterGraded(graded.visible(), filters)) event.target.checked ? selection.ids.add(row.id) : selection.ids.delete(row.id);
   render();
 });
 $('graded-bulk-refresh').addEventListener('click', bulkRefresh);
+$('graded-bulk-move').addEventListener('click', () => {
+  const count = selection.ids.size;
+  if (count && !selection.running) groups.openBulkMove(count, bulkMove);
+});
 $('graded-bulk-delete').addEventListener('click', () => {
   const count = selection.ids.size;
   if (!count || selection.running) return;
@@ -994,7 +1048,7 @@ export function clearGraded() {
   for (const id of ['graded-dialog', 'graded-detail-dialog', 'graded-delete-dialog', 'graded-crop-dialog']) $(id).close();
   filters = blankFilters(); $('graded-query').value = ''; chipsSignature = ''; pendingDelete = null; detailId = null;
   clearTimeout(statusTimer); statusNotice = null;
-  selectionGeneration++; selection = blankSelection();
+  selectionGeneration++; selection = blankSelection(); groups.close();
   graded.clear();
 }
 export function activateGraded(api) { clearGraded(); requestAPI = api; graded.activate(api); }

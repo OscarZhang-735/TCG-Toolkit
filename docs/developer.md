@@ -155,7 +155,7 @@ API 响应继续显式选择公开字段，不直接序列化 ORM 实体，避�
 ### Alembic 迁移
 
 `tcg-db migrate` 使用 Alembic，并在同一个 PostgreSQL 事务锁和事务内执行接管、升级及版本校验。
-已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移、`0015` 的评级卡快照表迁移、`0016` 的评级卡上传图片字段和 `0017` 的评级卡价格，升级到 schema 17，保留用户和业务数据。`0014` 将每账号的会话收敛为一条，规则见下文。
+已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移、`0015` 的评级卡快照表迁移、`0016` 的评级卡上传图片字段、`0017` 的评级卡价格和 `0018` 的评级卡分组，升级到 schema 18，保留用户和业务数据。`0014` 将每账号的会话收敛为一条，规则见下文。
 新空库通过基线迁移初始化。原 `001_initial.sql` 保持不可变，仅供基线使用；业务代码不再执行 SQL 字符串。
 `schema_migrations` 保留为发布版本兼容标记，现有 JSON 状态接口和回退判断继续可用。
 
@@ -207,7 +207,12 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 | 方法与路径 | 输入与结果 |
 | --- | --- |
 | `GET /api/graded-cards` | 返回 `{"items":[记录, …]}`，按添加时间倒序，同秒按写入顺序倒序 |
-| `POST /api/graded-cards` | `{"provider":"psa","cert_number":"98428602","request_id":"可选"}`；还可传入 `price` 和 `currency`，查询成功后保存并返回 201 和记录 |
+| `POST /api/graded-cards` | `{"provider":"psa","cert_number":"98428602","request_id":"可选"}`；还可传入 `price`、`currency` 和 `group_id`（分组不存在时查询前返回 404 `graded_group_not_found`；查询期间分组被删则保存为未分组），查询成功后保存并返回 201 和记录 |
+| `GET /api/graded-cards/groups` | 返回本账号评级卡分组 `{"items":[{id,name,created_at}, …]}`，按创建时间排序 |
+| `POST /api/graded-cards/groups` | `{"name":"…"}`（去除首尾空白，1–100 字），返回 201；同名返回 409 `graded_group_name_taken` |
+| `PUT /api/graded-cards/groups/{id}` | `{"name":"…"}` 改名，返回 200；不存在返回 404 `graded_group_not_found` |
+| `DELETE /api/graded-cards/groups/{id}` | JSON `{}`；删除分组，其中的评级卡保留并变为未分组，返回 204 |
+| `PUT /api/graded-cards/{id}/group` | `{"group_id":"…"}` 移入分组，`null` 移出分组，返回 200 和记录 |
 | `PUT /api/graded-cards/{id}/price` | 提交 `{"price":"12.34","currency":"CNY"}` 更新手动记录的价格与币种，返回 200 和这两个字段。传入 `price: null` 清除价格 |
 | `POST /api/graded-cards/{id}/refresh` | JSON `{}` 或 `{"request_id":"…"}`；重新查询，成功返回 200 和更新后的记录 |
 | `DELETE /api/graded-cards/lookups/{request_id}` | JSON `{}`；取消本账号该 `request_id` 的查询，返回 204；查询已保存则 409 `graded_lookup_finished` |
@@ -237,7 +242,7 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 
 **亮度校准（可选）。** 截取对话框的“亮度校准”按钮把当前照片发给 `calibrate-image`，用返回的同尺寸 JPEG 替换预览和待上传图片，四角坐标不变；按钮随即变为“撤销亮度校准”，原图和校准图都保留在浏览器内存中，撤销与再次应用无需重新请求。处理位于 `card_enhance.py`：① 高光区检测——同时满足较亮（HSV 明度 > 165 起计）、低饱和，并且比所在表面更亮（比文字闭运算后的局部表面亮，或比排除饱和高光后的大范围“漫反射白”参考亮），以免把白色卡面、白色衣服误判为反光；② 在高光区内用局部暗通道先验去除白色反光“薄雾”，按反光外较暗表面（墨色、画面）的暗通道估计遮罩强度，上限 0.6；③ 局部光照归一化——以局部亮包络估计光照，把较暗区域提升到光照充足水平（增益 0.9–1.25）；④ CLAHE 轻度增强对比度。大尺度模糊在缩小副本上计算，2400 像素照片约 0.5–1 秒。测试用合成的“画面上覆盖反光”场景验证反光下画面变暗、对比度提高、未受影响区域基本不变及白色卡面不被误判。
 
-上传图片沿用头像的 COS 存储桶 `TCG_AVATAR_COS_URL`，对象为 `/tcgtoolkit/graded/<随机32位十六进制>.webp`；替换、移除和删除卡片时旧对象进入头像共用的 `avatar_cleanup` 删除队列（后台任务重试）。未配置存储桶时上传返回 503 `graded_image_storage_failed`。识别与上传每账号每分钟共 30 次。错误代码：415/422 `graded_image_invalid`、413 `graded_image_too_large`、422 `graded_image_dimensions`（每边 > 6000 像素）、422 `graded_image_crop`（坐标无效或截取过小）、404 `graded_card_not_found`／`graded_image_side`、429 `rate_limited`。筛选区在没有卡片时也保留（卡牌库与收藏页同样在加载完成后始终显示筛选区）。评级卡页面的“多选”与卡牌库一致：可勾选或全选当前筛选后显示的卡片，选择栏提供批量“重新查询”（逐张交给前端查询队列，同时最多两项，已在查询中的卡片跳过）和“删除”（确认后逐张调用 `DELETE /api/graded-cards/{id}`，完成的取消选中，失败的保持选中）；卡牌库的“移动到分组”和游游亭批量查价不适用于评级卡。评级卡图片为静态图片，不使用其他页面的鼠标跟随倾斜效果，点击仍可放大预览。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
+上传图片沿用头像的 COS 存储桶 `TCG_AVATAR_COS_URL`，对象为 `/tcgtoolkit/graded/<随机32位十六进制>.webp`；替换、移除和删除卡片时旧对象进入头像共用的 `avatar_cleanup` 删除队列（后台任务重试）。未配置存储桶时上传返回 503 `graded_image_storage_failed`。识别与上传每账号每分钟共 30 次。错误代码：415/422 `graded_image_invalid`、413 `graded_image_too_large`、422 `graded_image_dimensions`（每边 > 6000 像素）、422 `graded_image_crop`（坐标无效或截取过小）、404 `graded_card_not_found`／`graded_image_side`、429 `rate_limited`。筛选区在没有卡片时也保留（卡牌库与收藏页同样在加载完成后始终显示筛选区）。评级卡页面的“多选”与卡牌库一致：可勾选或全选当前筛选后显示的卡片，选择栏提供批量“重新查询”（逐张交给前端查询队列，同时最多两项，已在查询中的卡片跳过）和“删除”（确认后逐张调用 `DELETE /api/graded-cards/{id}`，完成的取消选中，失败的保持选中）；存在分组时选择栏还提供“移动到分组”（逐张调用 `PUT /api/graded-cards/{id}/group`）；游游亭批量查价不适用于评级卡。评级卡分组与卡牌库分组相互独立（`graded_card_groups` 表，记录的 `group_id` 字段），界面复用 `group-ui.js` 的分组栏和对话框：选中分组后统计、筛选项、计数和列表只显示该组，“添加评级卡”默认放入当前分组；存在分组时列表显示“分组”列，网格卡片右下角和详情显示所在分组。评级卡图片为静态图片，不使用其他页面的鼠标跟随倾斜效果，点击仍可放大预览。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
 
 ### 评级卡验收
 

@@ -2,6 +2,7 @@
 from dataclasses import replace
 from base64 import b64encode
 from pathlib import Path
+import re
 import os
 import json
 import socket
@@ -450,6 +451,49 @@ def test_graded_webui(monkeypatch, tmp_path):
                 page.locator('#graded-select').click()
                 expect(page.locator('#graded-selection-bar')).to_be_hidden()
                 expect(page.locator('#graded-rows .select-col').first).to_be_hidden()
+
+                # Groups as in the card library: create, move, filter, add into, bulk move, delete.
+                tabs = page.locator('#graded-groups button')
+                expect(tabs).to_have_count(1)
+                expect(page.locator('#graded-table th.group-col')).to_be_hidden()  # no groups yet
+                page.locator('#graded-group-create').click()
+                page.locator('#graded-group-name').fill('Vault')
+                page.locator('#graded-group-save').click()
+                expect(tabs).to_have_count(2)
+                expect(tabs.nth(1)).to_have_attribute('aria-pressed', 'true')
+                expect(page.locator('#graded-list-title')).to_have_text('Vault')
+                expect(page.locator('#graded-empty')).to_contain_text('No cards in this group yet.')
+                page.locator('#graded-add').click()
+                expect(page.locator('#graded-add-group')).to_have_value(re.compile('.+'))  # defaults to the open tab
+                page.locator('#graded-cancel').click()
+                tabs.nth(0).click()
+                left = page.locator('#graded-rows tr[data-id]')
+                expect(left).to_have_count(1)
+                left.get_by_role('button', name='Move to group').click()
+                page.locator('#graded-move-group').select_option(label='Vault')
+                page.locator('#graded-move-save').click()
+                expect(page.locator('#graded-move-dialog')).to_be_hidden()
+                expect(left.locator('td.group-col')).to_have_text('Vault')
+                expect(tabs.nth(1)).to_contain_text('1')
+                tabs.nth(1).click()
+                expect(left).to_have_count(1)
+                page.locator('#graded-panel').screenshot(path=str(output / 'groups.png'))
+                page.reload()
+                expect(page.locator('#graded-rows tr[data-id] td.group-col')).to_have_text('Vault')  # saved
+                page.locator('#graded-groups button').nth(0).click()
+                page.locator('#graded-select').click()
+                page.locator('#graded-select-all').check()
+                page.locator('#graded-bulk-move').click()
+                page.locator('#graded-move-group').select_option('')
+                page.locator('#graded-move-save').click()
+                expect(page.locator('#graded-rows tr[data-id] td.group-col')).to_have_text('—')
+                page.locator('#graded-select').click()
+                page.locator('#graded-groups button').nth(1).click()
+                page.locator('#graded-group-delete').click()
+                expect(page.locator('#graded-group-delete-message')).to_contain_text('Vault')
+                page.locator('#graded-group-delete-confirm').click()
+                expect(page.locator('#graded-groups button')).to_have_count(1)
+                expect(page.locator('#graded-rows tr[data-id]')).to_have_count(1)
                 page.locator('#account-link').click()
                 page.locator('#logout').click()
                 expect(page.locator('#auth-panel')).to_be_visible()
