@@ -16,7 +16,7 @@ const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(resol
 const PROVIDERS = [{id: 'psa', name: 'PSA', timeout_seconds: 225, scan_patterns: []},
   {id: 'ars', name: 'ARS', timeout_seconds: 40, scan_patterns: []}];
 const card = (id, provider, cert, extra = {}) => ({id, provider, cert_number: cert, source_url: `https://example.test/${cert}`,
-  title: `Card ${id}`, grade: '10', fields: {}, population: {}, images: [], created_at: 1, refreshed_at: 1, group_id: null, ...extra});
+  title: `Card ${id}`, grade: '10', fields: {}, population: {}, images: [], created_at: 1, refreshed_at: 1, group_id: null, display_name: null, ...extra});
 
 // Lists answer at once; lookups (POST) wait in `waiting` until the test settles them, and
 // reject with AbortError when their signal aborts, like fetch.
@@ -526,4 +526,28 @@ test('a new card is saved into the group chosen when it was added', async () => 
   await settle();
   assert.equal(backend.waiting[2].body.group_id, null);
   assert.equal(graded.state.pending[0].status, 'loading');
+});
+
+test('display names are searched, sorted and saved without touching other fields', async () => {
+  const rows = [card('a', 'psa', '1', {title: 'Zeta'}), card('b', 'psa', '2', {title: 'Beta', display_name: 'Alpha slab'})];
+  assert.deepEqual(filterGraded(rows, {query: 'alpha'}).map(row => row.id), ['b']);
+  assert.deepEqual(filterGraded(rows, {query: 'beta'}).map(row => row.id), ['b'], 'the certificate name still matches');
+  assert.deepEqual(filterGraded(rows, {sort: 'title'}).map(row => row.id), ['b', 'a']);
+  const {graded, backend} = await ready({}, {records: [card('s', 'psa', '1', {price: 5})]});
+  graded.refresh('s');
+  const saving = graded.setDisplayName('s', 'Mine');
+  assert.ok(graded.state.nameBusy.has('s'));
+  assert.deepEqual(backend.calls.at(-1), {method: 'PUT', path: '/api/graded-cards/s/display-name', body: {display_name: 'Mine'}});
+  backend.waiting[1].resolve(reply({display_name: 'Mine'}));
+  assert.equal(await saving, '');
+  assert.equal(graded.state.records[0].display_name, 'Mine');
+  assert.equal(graded.state.records[0].price, 5);
+  // A refresh that answers later keeps the name saved meanwhile.
+  backend.waiting[0].resolve(reply(card('s', 'psa', '1', {grade: '9'})));
+  await settle();
+  assert.equal(graded.state.records[0].display_name, 'Mine');
+  const failing = graded.setDisplayName('s', '');
+  backend.waiting[2].resolve(reply({detail: 'boom'}, 500));
+  assert.equal(await failing, 'graded_display_name_failed');
+  assert.equal(graded.state.records[0].display_name, 'Mine');
 });

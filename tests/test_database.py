@@ -90,7 +90,7 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
         assert db.get(Favorite, 'favorite').snapshot == '{}'
         assert db.get(Favorite, 'favorite').group_id is None
         assert db.get(OwnedCard, 'card').quantity == 3
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0018'
+        assert MigrationContext.configure(db.connection()).get_current_revision() == '0019'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
@@ -153,7 +153,7 @@ def test_schema_seventeen_upgrade_adds_graded_groups_keeping_cards_ungrouped(emp
     assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
     with UserStore(empty_database) as store, store.session() as db:
         row = db.get(GradedCard, 'graded')
-        assert (row.group_id, str(row.price), row.currency) == (None, '12.50', 'CAD')
+        assert (row.group_id, str(row.price), row.currency, row.display_name) == (None, '12.50', 'CAD', None)
         db.add(GradedCardGroup(id='slabs', user_id='collector', name='Slabs', created_at=3))
         db.flush()
         row.group_id = 'slabs'
@@ -339,9 +339,9 @@ def test_schema_nine_resets_all_accounts_to_24_hours(empty_database):
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0019_failure.py').write_text(
+    (scripts / 'versions' / '0020_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0019'\ndown_revision='0018'\n"
+        "revision='0020'\ndown_revision='0019'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = schema.alembic_config

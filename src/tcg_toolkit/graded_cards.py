@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, StrictStr
+from pydantic import BaseModel, Field, StrictStr, field_validator
 from sqlalchemy import select, update as sql_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -43,6 +43,19 @@ REQUEST_ID = r'^[A-Za-z0-9-]{8,64}$'
 class LookupInput(BaseModel):
     # Chosen by the browser so it can cancel the lookup before this request answers.
     request_id: str | None = Field(default=None, pattern=REQUEST_ID)
+
+
+class DisplayNameInput(BaseModel):
+    # Trimmed; blank (or null) clears it and the certificate's card name shows again.
+    display_name: str | None = Field(default=None, max_length=100)
+
+    @field_validator('display_name', mode='before')
+    @classmethod
+    def trim(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
 
 
 class GradedCardInput(LookupInput, CardPriceInput):
@@ -96,7 +109,7 @@ def record(row: GradedCard):
             'source_url': data.get('source_url'), 'title': title,
             'grade': certificate.get('grade') or '', 'fields': fields, 'english_fields': english,
             'population': certificate.get('population') or {}, 'images': images,
-            'group_id': row.group_id, 'created_at': row.created_at, 'refreshed_at': row.refreshed_at,
+            'display_name': row.display_name, 'group_id': row.group_id, 'created_at': row.created_at, 'refreshed_at': row.refreshed_at,
             **price_record(row)}
 
 
@@ -227,6 +240,14 @@ def move(card_id: str, body: GroupTarget, request: Request, user=Depends(current
         row = owned(db, user['id'], card_id, lock=True)
         row.group_id = group_id
         return record(row)
+
+
+@router.put('/{card_id}/display-name', dependencies=[Depends(write_guard)])
+def update_display_name(card_id: str, request: Request, body: DisplayNameInput, user=Depends(current_user)):
+    with store(request).session() as db:
+        row = owned(db, user['id'], card_id, lock=True)
+        row.display_name = body.display_name
+        return {'display_name': row.display_name}
 
 
 @router.put('/{card_id}/price', dependencies=[Depends(write_guard)])

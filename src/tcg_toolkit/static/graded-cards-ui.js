@@ -1,7 +1,7 @@
 // Graded cards page: saved certificates, the queue of slow lookups shown as placeholder
 // cards with a spinner and elapsed time, the add dialog with QR scanning, and details,
 // where either side's image can be replaced by an uploaded or scanned photo.
-import {createGradedCards, filterGraded, formatElapsed, slabImages, fullCorners} from './graded-cards.js';
+import {createGradedCards, filterGraded, formatElapsed, slabImages, fullCorners, displayName} from './graded-cards.js';
 import {parseScan, getDecoder, decodePhoto, startCamera, cameraSupported} from './grading-scan.js';
 import {t, getLanguage} from './i18n.js';
 import {cardImage, openPreview} from './card-view.js';
@@ -68,6 +68,9 @@ function fillPrice(prefix, {price, currency = 'JPY'}) {
 // Unit price in the sidebar's display currency, with the entered amount underneath.
 const priceOf = row => priceDisplay(row, {currency: displayCurrency, rates: rateCache.rates, language: getLanguage()});
 const providerName = id => graded.providerName(id);
+// Shown name: the user's display name, else the certificate's card name.
+const nameOf = row => displayName(row) || t('graded_untitled');
+const labelName = row => displayName(row) || row.cert_number;
 const dateText = seconds => new Date(seconds * 1000).toLocaleString(getLanguage(), {dateStyle: 'medium', timeStyle: 'short'});
 const busyStatus = status => status === 'queued' || status === 'loading';
 const labelOf = (provider, certNumber) => `${providerName(provider)} ${certNumber}`;
@@ -78,7 +81,7 @@ function gradeBadge(grade) { return grade ? node('span', grade, 'graded-grade') 
 // One side of the slab; missing or broken images keep a labelled placeholder.
 function slabSide(row, image, side, {compact = false} = {}) {
   const label = t(side === 'front' ? 'graded_front' : 'graded_back');
-  const frame = cardImage({name: `${row.title || row.cert_number} · ${label}`, card_number: row.cert_number,
+  const frame = cardImage({name: `${labelName(row)} · ${label}`, card_number: row.cert_number,
     image_url: image ? image.thumbnail_url || image.url : ''}, {noReferrer: true, large: image?.url, tilt: false,
     fallback: compact ? label : t(side === 'front' ? 'graded_no_front' : 'graded_no_back')});
   if (compact) return frame;
@@ -232,7 +235,7 @@ function cardActions(row) {
   return actions;
 }
 function openMove(row) {
-  groups.openMove(row.title || row.cert_number, row.group_id ?? '', groupId => graded.move(row.id, groupId),
+  groups.openMove(labelName(row), row.group_id ?? '', groupId => graded.move(row.id, groupId),
     () => graded.state.moving.has(row.id), () => graded.state.records.some(card => card.id === row.id));
 }
 // Ungrouped cards get no tag.
@@ -243,8 +246,9 @@ function groupTag(row) {
   return tag;
 }
 function titleButton(row, className) {
-  const button = node('button', row.title || t('graded_untitled'), `graded-title ${className}`); button.type = 'button';
-  button.title = t('graded_details');
+  const button = node('button', nameOf(row), `graded-title ${className}`); button.type = 'button';
+  // A custom name keeps the certificate's card name one hover away.
+  button.title = row.display_name && row.title ? `${row.title} · ${t('graded_details')}` : t('graded_details');
   button.addEventListener('click', () => openDetail(row.id));
   return button;
 }
@@ -283,7 +287,7 @@ function gradedRow(row) {
 function selectBox(row) {
   const box = node('input', '', 'select-box'); box.type = 'checkbox';
   box.checked = selection.ids.has(row.id); box.disabled = selection.running;
-  box.setAttribute('aria-label', t('favorite_select_card', {name: row.title || row.cert_number}));
+  box.setAttribute('aria-label', t('favorite_select_card', {name: labelName(row)}));
   box.addEventListener('click', event => event.stopPropagation());
   box.addEventListener('change', () => {
     if (selection.running) return;
@@ -672,7 +676,7 @@ function detailSide(row, side, image) {
   button.append(placeholder);
   if (image) {
     const picture = document.createElement('img');
-    picture.alt = `${row.title || row.cert_number} · ${label}`; picture.decoding = 'async'; picture.referrerPolicy = 'no-referrer';
+    picture.alt = `${labelName(row)} · ${label}`; picture.decoding = 'async'; picture.referrerPolicy = 'no-referrer';
     picture.addEventListener('load', () => { placeholder.hidden = true; });
     picture.addEventListener('error', () => { picture.hidden = true; placeholder.hidden = false; }, {once: true});
     picture.src = image.url;
@@ -707,7 +711,7 @@ function toggleImageMenu(figure, button, row, side, image) {
   };
   if (image) {
     menu.append(item('bi-zoom-in', t('graded_image_view'), () => openPreview(
-      {name: `${row.title || row.cert_number} · ${sideLabel(side)}`, card_number: row.cert_number}, image.thumbnail_url || image.url, image.url)));
+      {name: `${labelName(row)} · ${sideLabel(side)}`, card_number: row.cert_number}, image.thumbnail_url || image.url, image.url)));
   }
   menu.append(item('bi-upload', t('graded_image_upload'), () => pickImage(row.id, side, 'upload')),
     item('bi-camera', t('graded_image_scan'), () => pickImage(row.id, side, 'scan')));
@@ -859,27 +863,31 @@ function renderDetail(opening = false) {
   if (!row) { if (dialog.open) dialog.close(); return; }
   if (opening) {
     fillPrice('graded-detail', row);
-    $('graded-price-status').textContent = '';
+    $('graded-detail-name').value = row.display_name ?? '';
+    $('graded-detail-name').placeholder = row.title || t('graded_display_name_placeholder');
+    $('graded-price-status').textContent = ''; $('graded-name-status').textContent = '';
   }
-  const priceBusy = graded.state.priceBusy.has(row.id);
+  const priceBusy = graded.state.priceBusy.has(row.id), nameBusy = graded.state.nameBusy.has(row.id);
   for (const id of ['graded-detail-price', 'graded-detail-currency', 'graded-price-save']) $(id).disabled = priceBusy;
+  for (const id of ['graded-detail-name', 'graded-name-save']) $(id).disabled = nameBusy;
   const entry = graded.state.refreshing[row.id];
   const locked = busyStatus(entry?.status) || graded.state.removing.has(row.id);
   $('graded-detail-refresh').disabled = locked;
   $('graded-detail-delete').disabled = locked;
   const busyImages = SIDES_UI.map(side => graded.state.imageBusy.has(`${row.id}:${side}`)).join(',');
   const signature = [row.id, row.refreshed_at, entry?.status ?? '', entry?.startedAt ?? '', getLanguage(),
-    ...row.images.map(image => image.url), busyImages, groupName(row.group_id) ?? ''].join('|');
+    ...row.images.map(image => image.url), busyImages, groupName(row.group_id) ?? '', row.display_name ?? ''].join('|');
   if (signature !== detailSignature) {
     detailSignature = signature;
-    $('graded-detail-title').textContent = row.title || t('graded_untitled');
+    $('graded-detail-title').textContent = nameOf(row);
     const info = node('div', '', 'graded-detail-info');
     const tags = node('div', '', 'card-tags'); tags.append(providerTag(row.provider), gradeBadge(row.grade));
     const tag = groupTag(row); if (tag) tags.append(tag);
     const cert = node('div', '', 'graded-detail-cert');
     cert.append(node('span', t('graded_cert_number'), 'graded-detail-label'), numberButton(row.cert_number));
-    // The price form is a single element moved into each rebuilt info column, so a draft survives.
-    info.append(tags, cert, $('graded-price-form'), node('p', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'));
+    // Under a custom name, the certificate's own card name stays visible.
+    if (row.display_name && row.title) info.append(node('p', t('graded_original_name', {name: row.title}), 'graded-original-name'));
+    info.append(tags, cert, node('p', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'));
     const status = refreshStatus(row); if (status) info.append(status);
     const fields = Object.entries(row.fields ?? {}), english = Object.entries(row.english_fields ?? {});
     if (fields.length || english.length) {
@@ -898,8 +906,10 @@ function renderDetail(opening = false) {
     }
     const population = populationSection(row.population); if (population) info.append(population);
     closeImageMenu();
-    const gallery = detailGallery(row);
-    $('graded-detail-body').replaceChildren(gallery, info);
+    // The editors are one element moved under each rebuilt gallery, so a draft survives.
+    const side = node('div', '', 'graded-detail-side');
+    side.append(detailGallery(row), $('graded-detail-edit'));
+    $('graded-detail-body').replaceChildren(side, info);
     const link = sourceLink(row);
     $('graded-detail-source').hidden = !link;
     if (link) $('graded-detail-source').href = link.href;
@@ -912,7 +922,7 @@ function confirmDelete(row) {
   pendingDelete = row.id;
   $('graded-delete-title').textContent = t('graded_delete_title');
   $('graded-delete-message').textContent = t('graded_confirm_delete',
-    {provider: providerName(row.provider), number: row.cert_number, name: row.title || t('graded_untitled')});
+    {provider: providerName(row.provider), number: row.cert_number, name: nameOf(row)});
   $('graded-delete-error').textContent = '';
   $('graded-delete-confirm').disabled = false;
   $('graded-delete-dialog').showModal();
@@ -966,6 +976,17 @@ $('graded-price-form').addEventListener('submit', async event => {
   const error = await graded.setPrice(id, readPrice('graded-detail'));
   if (id !== detailId || !$('graded-detail-dialog').open) return;
   $('graded-price-status').textContent = t(error || 'graded_price_saved');
+});
+$('graded-name-form').addEventListener('input', () => { $('graded-name-status').textContent = ''; });
+$('graded-name-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const id = detailId;
+  if (!id || graded.state.nameBusy.has(id)) return;
+  $('graded-name-status').textContent = '';
+  const error = await graded.setDisplayName(id, $('graded-detail-name').value.trim());
+  if (id !== detailId || !$('graded-detail-dialog').open) return;
+  if (!error) $('graded-detail-name').value = graded.state.records.find(row => row.id === id)?.display_name ?? '';
+  $('graded-name-status').textContent = t(error || 'graded_display_name_saved');
 });
 $('graded-detail-refresh').addEventListener('click', () => { if (detailId) graded.refresh(detailId); });
 $('graded-detail-delete').addEventListener('click', () => {

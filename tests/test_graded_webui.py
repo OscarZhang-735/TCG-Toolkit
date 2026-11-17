@@ -148,8 +148,12 @@ def test_graded_webui(monkeypatch, tmp_path):
                 # Unit price per row: display currency first, entered amount underneath.
                 expect(page.locator('#graded-rows tr[data-id] td.numeric .converted-price')).to_have_text('JPY 247CNY 12.34')
                 page.locator('#graded-rows .graded-title').click()
-                # The price editor sits in the info column, under the certificate number.
-                expect(page.locator('.graded-detail-info #graded-price-form')).to_be_visible()
+                # Price and display name are edited under the images, in aligned rows.
+                expect(page.locator('.graded-detail-side #graded-price-form')).to_be_visible()
+                price_box = page.locator('#graded-detail-price').bounding_box()
+                name_box = page.locator('#graded-detail-name').bounding_box()
+                assert abs(price_box['x'] - name_box['x']) < 3 and name_box['y'] > price_box['y']
+                assert price_box['y'] > page.locator('.graded-detail-images').bounding_box()['y']
                 expect(page.locator('#graded-detail-price')).to_have_value('12.34')
                 expect(page.locator('#graded-detail-currency')).to_have_value('CNY')
                 page.locator('#graded-detail-price').fill('25.5')
@@ -365,8 +369,22 @@ def test_graded_webui(monkeypatch, tmp_path):
                 expect(page.locator('#graded-detail-body .graded-source-tag.official')).to_have_count(2)
                 expect(page.locator('#graded-detail-body .graded-source-tag.official').first).to_have_text('Official')
                 expect(page.locator('#graded-detail-price')).to_have_value('25.5')
+                # Display name: optional, shown instead of the certificate name everywhere.
+                expect(page.locator('#graded-detail-name')).to_have_value('')
+                page.locator('#graded-detail-name').fill('  My Mayu  ')
+                page.locator('#graded-name-save').click()
+                expect(page.locator('#graded-name-status')).to_have_text('Name saved.')
+                expect(page.locator('#graded-detail-name')).to_have_value('My Mayu')
+                expect(page.locator('#graded-detail-title')).to_have_text('My Mayu')
+                expect(page.locator('#graded-detail-body')).to_contain_text('Certificate name: Tsuyogaru Otona no Secret Labo Mayu')
                 page.locator('#graded-detail-dialog').screenshot(path=str(shots / 'detail-price.png'))
+                page.locator('#graded-detail-close').click()
+                expect(tile.locator('.graded-title')).to_have_text('My Mayu')
                 expect(tile.locator('.card-bottom .converted-price')).to_contain_text('CAD 25.50')
+                page.locator('#graded-query').fill('my mayu')
+                expect(page.locator('#graded-grid article[data-id]')).to_have_count(1)
+                page.locator('#graded-query').fill('')
+                tile.locator('.graded-title').click()
                 # Clicking an image opens its options; the official image can still be enlarged.
                 page.locator('#graded-detail-body .graded-image-button').first.click()
                 page.locator('#graded-detail-body .graded-image-menu').get_by_role('menuitem', name='View larger').click()

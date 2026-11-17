@@ -161,6 +161,8 @@ class GradedCard(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     currency: Mapped[str] = mapped_column(server_default='JPY')
     group_id: Mapped[str | None]
+    # Optional name chosen by the user, shown instead of the certificate's card name.
+    display_name: Mapped[str | None]
     __table_args__ = (
         UniqueConstraint("user_id", "provider", "cert_number", name="graded_cards_user_cert_key"),
         ForeignKeyConstraint(["user_id", "group_id"], ["graded_card_groups.user_id", "graded_card_groups.id"],

@@ -1346,14 +1346,19 @@ tr.graded-flash > td { animation: graded-row-flash 2.2s ease-out; }
 .form-dialog.graded-detail-dialog { width: min(940px, 94vw); padding: 28px; }
 .graded-price-total { overflow-wrap: anywhere; }
 /* Price in the info column, under the certificate number: label, amount + currency, save. */
-.graded-price-form { display: flex; flex-direction: column; gap: 6px; }
-.graded-price-row { display: flex; align-items: center; gap: 8px; }
-.graded-price-row .price-input { display: flex; flex: 0 1 240px; min-width: 0; gap: 6px; }
-.graded-price-row .price-input input { flex: 1; min-width: 0; height: 34px; margin: 0; }
-.graded-price-row .price-input select { flex: none; width: auto; height: 34px; margin: 0; }
-.graded-price-row button { flex: none; height: 34px; }
-#graded-price-status { margin: 0; }
-#graded-price-status:empty { display: none; }
+/* Under the images: price, then display name, as aligned rows (label | input | save). */
+.graded-detail-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.graded-detail-edit { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 10px; padding-top: 14px; border-top: 1px solid var(--color-divider); }
+.graded-edit-row { display: contents; }
+.graded-detail-edit .price-input { display: flex; min-width: 0; gap: 6px; }
+.graded-detail-edit input, .graded-detail-edit select { height: 34px; margin: 0; }
+.graded-detail-edit .price-input input { flex: 1; min-width: 0; }
+.graded-detail-edit .price-input select { flex: none; width: auto; }
+.graded-detail-edit input#graded-detail-name { width: 100%; min-width: 0; }
+.graded-detail-edit button { height: 34px; white-space: nowrap; }
+.graded-edit-status { grid-column: 2 / -1; margin: -2px 0 2px; }
+.graded-edit-status:empty { display: none; }
+.graded-original-name { margin: 0; font-size: 12px; color: var(--color-text-muted); overflow-wrap: anywhere; }
 .graded-card .card-bottom.graded-price { padding-top: 8px; }
 .graded-detail-dialog .dialog-head h2 { overflow-wrap: anywhere; }
 .graded-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 24px; align-items: start; }

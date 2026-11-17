@@ -46,19 +46,21 @@ export function formatElapsed(ms) {
 }
 
 const fold = value => String(value ?? '').toLowerCase();
+// The user's own name for a card when set, else the certificate's card name ('' when neither).
+export const displayName = row => row.display_name || row.title || '';
 const ORDER = {
   newest: (a, b) => b.created_at - a.created_at,
   oldest: (a, b) => a.created_at - b.created_at,
   grade_desc: (a, b) => gradeValue(b.grade) - gradeValue(a.grade),
   grade_asc: (a, b) => gradeValue(a.grade) - gradeValue(b.grade),
-  title: (a, b) => fold(a.title).localeCompare(fold(b.title)),
+  title: (a, b) => fold(displayName(a)).localeCompare(fold(displayName(b))),
 };
 export const SORTS = Object.keys(ORDER);
 // Search covers the title, number, grade, provider and every certificate field, folded or not.
 export function filterGraded(records, {query = '', hiddenProviders = new Set(), sort = 'newest'} = {}) {
   const needle = fold(query).trim();
   const rows = records.filter(row => !hiddenProviders.has(row.provider) && (!needle ||
-    [row.title, row.cert_number, row.grade, row.provider, ...Object.values(row.fields ?? {}),
+    [row.display_name, row.title, row.cert_number, row.grade, row.provider, ...Object.values(row.fields ?? {}),
       ...Object.values(row.english_fields ?? {})]
       .some(value => fold(value).includes(needle))));
   return ORDER[sort] ? rows.sort(ORDER[sort]) : rows;  // stable: ties keep the server's order
@@ -114,7 +116,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   let queue = [];
   // groups as in the card library; group is the selected tab (null shows every card).
   const initial = () => ({providers: [], records: [], pending: [], refreshing: {}, removing: new Set(), imageBusy: new Set(),
-    priceBusy: new Set(), groups: [], group: null, groupBusy: false, moving: new Set(),
+    priceBusy: new Set(), nameBusy: new Set(), groups: [], group: null, groupBusy: false, moving: new Set(),
     ready: false, loading: false, error: '', highlight: '', notice: null});
   const state = initial();
   const visible = () => state.group === null ? state.records : state.records.filter(row => row.group_id === state.group);
@@ -305,7 +307,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
       if (current !== generation) return;
       // A price save or a move can finish while this lookup is in flight.
       state.records = state.records.map(saved => saved.id === id
-        ? {...card, price: saved.price, currency: saved.currency, group_id: saved.group_id} : saved);
+        ? {...card, price: saved.price, currency: saved.currency, group_id: saved.group_id, display_name: saved.display_name} : saved);
       delete state.refreshing[id];
       state.notice = {key: 'graded_refreshed_notice', provider: card.provider, cert_number: card.cert_number};
     } catch (error) {
@@ -399,6 +401,24 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
       if (current === generation) { state.moving.delete(id); onChange(); }
     }
   }
+  // name: the user's display name ('' clears it). Resolves to '' on success or an error key.
+  async function setDisplayName(id, name) {
+    const current = generation;
+    if (state.nameBusy.has(id)) return '';
+    state.nameBusy.add(id); onChange();
+    try {
+      const saved = await call(`/graded-cards/${encodeURIComponent(id)}/display-name`, 'PUT', {display_name: name}, controller.signal);
+      if (current !== generation) return '';
+      state.records = state.records.map(row => row.id === id ? {...row, display_name: saved.display_name} : row);
+      return '';
+    } catch (error) {
+      if (current !== generation || error.name === 'AbortError') return '';
+      if (error.status === 404) { state.records = state.records.filter(row => row.id !== id); return 'graded_error_missing'; }
+      return 'graded_display_name_failed';
+    } finally {
+      if (current === generation) { state.nameBusy.delete(id); onChange(); }
+    }
+  }
   // Resolves to '' on success or an error key.
   async function remove(id) {
     const current = generation;
@@ -480,7 +500,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
 
   return {state, visible, clear, load, add, retry, dismiss, refresh, dismissRefresh, remove, queuePosition, providerName,
     createGroup, renameGroup, deleteGroup, select, move,
-    setPrice, detectCard, calibrateImage, uploadImage, restoreImage,
+    setPrice, setDisplayName, detectCard, calibrateImage, uploadImage, restoreImage,
     timeoutSeconds, busy: () => state.pending.some(item => item.status !== 'failed')
       || Object.values(state.refreshing).some(entry => entry.status !== 'failed'),
     activate(api) { clear(); request = api; return load(); }};

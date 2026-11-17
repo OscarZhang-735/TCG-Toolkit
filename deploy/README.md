@@ -53,7 +53,7 @@ sudo python3 /opt/tcg-http/releases/源码指纹/deploy.py /opt/tcg-http sha256:
 4. 启动 Web，检查 HTTPS、版本、数据库健康、匿名拒绝及 CORS。
 5. 成功后更新 current.json/previous.json，随后由原工作流发布 Pages。
 
-发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 18。`tcg-db migrate` 为尚未登记的现有 schema 1 登记基线，再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段、`0004` 创建收藏分组、`0005` 使收藏默认未分组（历史收藏均为未分组），随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移、`0015` 的评级卡快照表迁移、`0016` 的评级卡上传图片字段、`0017` 的评级卡价格和 `0018` 的评级卡分组，保留用户及业务数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
+发布状态记录应用镜像、PostgreSQL 镜像、数据库引擎和 schema。Alembic 迁移随应用镜像打包，当前 PostgreSQL schema 为 19。`tcg-db migrate` 为尚未登记的现有 schema 1 登记基线，再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段、`0004` 创建收藏分组、`0005` 使收藏默认未分组（历史收藏均为未分组），随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移、`0015` 的评级卡快照表迁移、`0016` 的评级卡上传图片字段、`0017` 的评级卡价格、`0018` 的评级卡分组和 `0019` 的评级卡显示名称，保留用户及业务数据。发布脚本通过 `tcg-db status` 查询版本。Web 启动只校验版本，不自动建表。未配置数据库时启动失败，不回退 SQLite。
 
 迁移 `0011` 将 schema 升为 11，创建卡牌库分组表，并为卡牌增加可空的分组字段及账号归属约束。先停止旧 Web/Worker，使用新镜像执行 `tcg-db migrate`，再启动新版本。已有卡牌保持未分组，数量、备注、图片、时间和排序均保留。WebUI 卡牌库提供分组栏、移动到分组（含多选批量移动）、按分组添加和按分组导出；导出文件记录分组名，导入时恢复分组并自动创建缺失的分组。
 
@@ -99,7 +99,7 @@ sudo python3 /opt/tcg-http/releases/当前版本/deploy.py /opt/tcg-http --rollb
 
 ## 验收
 
-评级卡 WebUI 需要 schema **18**（`0015_graded_cards.py` 至 `0018_graded_card_groups.py`）；Web 镜像新增 `opencv-python-headless` 依赖（约 +100 MB），评级卡上传图片使用与头像相同的 `TCG_AVATAR_COS_URL` 存储桶（前缀 `/tcgtoolkit/graded/`，需允许 PUT/DELETE）；共同发布先备份并迁移，再启动匹配的 Web。确认前端发布包含 `graded-cards.js`、`graded-cards-ui.js`、`grading-scan.js` 和 `jsqr.js`。反向代理的读取超时需覆盖慢查询（建议至少 300 秒）；HTTPS 下才能在公网使用摄像头扫码。
+评级卡 WebUI 需要 schema **19**（`0015_graded_cards.py` 至 `0019_graded_card_display_names.py`）；Web 镜像新增 `opencv-python-headless` 依赖（约 +100 MB），评级卡上传图片使用与头像相同的 `TCG_AVATAR_COS_URL` 存储桶（前缀 `/tcgtoolkit/graded/`，需允许 PUT/DELETE）；共同发布先备份并迁移，再启动匹配的 Web。确认前端发布包含 `graded-cards.js`、`graded-cards-ui.js`、`grading-scan.js` 和 `jsqr.js`。反向代理的读取超时需覆盖慢查询（建议至少 300 秒）；HTTPS 下才能在公网使用摄像头扫码。
 
 登录后进入“评级卡牌”，分别验证 PSA/CGC/ARS 新增、刷新页面后的持久化、重复提示、重新查询、详情和正反面图片、照片识别、删除确认及另一个账号的数据隔离。ARS 无图片时显示占位。自动化命令与浏览器验收范围见[评级卡验收](../docs/developer.md#评级卡验收)。
 

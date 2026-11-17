@@ -409,3 +409,24 @@ def test_group_deleted_during_lookup_saves_the_card_ungrouped(client, monkeypatc
     fetch_with(monkeypatch, fetch)
     saved = client.post(PATH, json={'provider': 'psa', 'cert_number': '9', 'group_id': group['id']})
     assert saved.status_code == 201 and saved.json()['group_id'] is None
+
+
+def test_display_name_is_optional_trimmed_and_kept_across_refresh(client):
+    saved = add(client).json()
+    assert saved['display_name'] is None
+    path = f"{PATH}/{saved['id']}/display-name"
+    assert client.put(path, json={'display_name': '  My Mayu  '}).json() == {'display_name': 'My Mayu'}
+    assert client.get(PATH).json()['items'][0]['display_name'] == 'My Mayu'
+    refreshed = client.post(f"{PATH}/{saved['id']}/refresh", json={}).json()
+    assert (refreshed['display_name'], refreshed['title']) == ('My Mayu', 'Saved card')
+    assert client.put(path, json={'display_name': 'x' * 101}).status_code == 422
+    assert client.put(path, json={'display_name': 5}).status_code == 422
+    assert client.put(path, json={'display_name': '   '}).json() == {'display_name': None}
+    assert client.put(path, json={'display_name': 'Again'}).json() == {'display_name': 'Again'}
+    assert client.put(path, json={}).json() == {'display_name': None}
+    assert client.put(path, json={'display_name': 'x'}, headers={'Origin': 'https://evil.test'}).status_code == 403
+    missing = client.put(f'{PATH}/missing/display-name', json={'display_name': 'x'})
+    assert (missing.status_code, missing.json()['detail']) == (404, 'graded_card_not_found')
+    bob = register_user(client, 'bob').json()
+    client.headers['Authorization'] = 'Bearer ' + bob['token']
+    assert client.put(path, json={'display_name': 'mine'}).status_code == 404
