@@ -8,12 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from .auth.routes import current_user, write_guard
+from .auth.dependencies import current_user, write_guard
 from .db_models import Subscription, User
-from .notification_email import notification_recipient
+from .notifications import notification_recipient
 from .models import Game
-from .product_details import fetch_product_snapshot, normalize_product_url
-from .subscription_worker import scheduled_scan
+from .external.yuyutei_products import fetch_product_snapshot
+from .product_identity import normalize_product_url
+from .errors import ProductSourceError
+from .subscription_schedule import scheduled_scan
 
 router = APIRouter(prefix='/api/subscriptions')
 
@@ -85,7 +87,10 @@ def add(body: SubscribeInput, request: Request, user=Depends(current_user)):
         if row is not None:
             return record(row)
     now = int(time.time())
-    snapshot = fetch_product_snapshot(body.game, body.product_url)
+    try:
+        snapshot = fetch_product_snapshot(body.game, body.product_url)
+    except ProductSourceError as exc:
+        raise HTTPException(exc.status_code, detail=exc.code) from None
     with store.session() as db:
         # Serialize creation with account-wide interval changes after network I/O.
         account = db.get(User, user['id'], with_for_update=True)

@@ -38,7 +38,7 @@ class LoginSession(Base):
     token_hash: Mapped[str] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     expires_at: Mapped[int]
-    __table_args__ = (Index("sessions_expiry", "expires_at"), Index("sessions_user", "user_id"))
+    __table_args__ = (Index("sessions_expiry", "expires_at"), Index("sessions_user", "user_id", unique=True))
 
 
 class AvatarCleanup(Base):
@@ -124,6 +124,52 @@ class OwnedCard(Base):
         ForeignKeyConstraint(["user_id", "group_id"], ["card_groups.user_id", "card_groups.id"],
                              name="owned_cards_user_group_fkey"),
         Index("owned_cards_user_group", "user_id", "group_id"),
+    )
+
+
+class GradedCardGroup(Base):
+    __tablename__ = "graded_card_groups"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str]
+    created_at: Mapped[int]
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", name="graded_card_groups_user_id_id_key"),
+        UniqueConstraint("user_id", "name", name="graded_card_groups_user_name_key"),
+    )
+
+
+class GradedCard(Base):
+    __tablename__ = "graded_cards"
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    # A grading.PROVIDERS id. Deliberately unconstrained: adding a provider needs no migration.
+    provider: Mapped[str]
+    # Digits kept as text so leading zeros survive.
+    cert_number: Mapped[str]
+    # JSON of the latest successful lookup: source_url, certificate and images.
+    snapshot: Mapped[str]
+    created_at: Mapped[int]
+    refreshed_at: Mapped[int]
+    sort_id: Mapped[int] = mapped_column(Identity(always=True))
+    # Photos the user uploaded (public COS WebP); shown instead of the provider's images
+    # and never touched by a lookup refresh.
+    front_image_url: Mapped[str | None]
+    back_image_url: Mapped[str | None]
+    price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(server_default='JPY')
+    group_id: Mapped[str | None]
+    # Optional name chosen by the user, shown instead of the certificate's card name.
+    display_name: Mapped[str | None]
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", "cert_number", name="graded_cards_user_cert_key"),
+        ForeignKeyConstraint(["user_id", "group_id"], ["graded_card_groups.user_id", "graded_card_groups.id"],
+                             name="graded_cards_user_group_fkey"),
+        Index("graded_cards_user_group", "user_id", "group_id"),
+        CheckConstraint('price >= 0', name='graded_cards_price_nonnegative'),
+        CheckConstraint("currency IN ('JPY', 'CNY', 'CAD')", name='graded_cards_currency_known'),
     )
 
 

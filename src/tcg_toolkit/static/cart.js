@@ -1,21 +1,7 @@
 // YuYu-Tei cart state for search results: per-product quantities, +1 / −1 actions.
 // The shop is the source of truth; every change is reported back by the server.
 import {createMessages, messageTier} from './notices.js';
-const GAME_IDS = {ws: 7, chaos: 8, pm: 11, lycee: 34, sev: 47, wsr: 56};
-const GAME_PATHS = {ws: 'ws', chaos: 'chaos', pm: 'pm', lycee: 'lo', sev: 'sev', wsr: 'wsr'};
-
-// Prefer the hidden cart_* fields; older snapshots fall back to the product URL,
-// whose /card/<ver>/<cid> path is the same identity the cart page links to.
-export function cartTarget(item) {
-  if (item.cart) return item.cart;
-  try {
-    const url = new URL(item.product_url);
-    const match = url.hostname === 'yuyu-tei.jp' && url.pathname.match(/^\/sell\/([A-Za-z0-9_-]+)\/card\/([A-Za-z0-9_.-]+)\/([0-9]+)\/?$/);
-    if (match && match[1] === GAME_PATHS[item.game]) return {gid: GAME_IDS[item.game], ver: match[2], cid: match[3], kizu: 0};
-  } catch { /* not a product URL */ }
-  return null;
-}
-export const productKey = target => JSON.stringify([target.gid, target.ver, target.cid, target.kizu]);
+import {productKey, GAME_PATHS} from './product-identity.js';
 
 export function cartErrorKey(error) {
   if (error?.message === 'yuyutei_credentials_missing') return 'cart_need_credentials';
@@ -36,11 +22,6 @@ const randomKey = () => globalThis.crypto.randomUUID?.()
 // Limits of what one request can do (see yuyutei_cart.py): an add sends 1–99 cards,
 // lowering re-adds the target, so a lowered row ends at 0–98.
 export const MAX_ADD = 99, MAX_LOWERED = 98;
-// What the user typed in a quantity box: whole numbers only; IME full-width digits count.
-export function parseQuantity(text) {
-  const ascii = String(text ?? '').trim().replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0));
-  return /^[0-9]{1,9}$/.test(ascii) ? Number(ascii) : null;
-}
 // Allowed range for a product (search) or one cart row (type given). `stock` caps the product total.
 export function quantityRange(rows, {type = null, stock = null} = {}) {
   const row = type ? rows.find(item => item.type === type) : rows.find(item => item.type === 'normal') ?? rows[0];

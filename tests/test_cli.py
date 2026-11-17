@@ -17,8 +17,8 @@ def calls(monkeypatch):
             return SearchPage([], keyword, page, None)
         def iter_pages(self, keyword, *, start_page):
             yield self.search_page(keyword, page=start_page)
-    for name in ("WSRSearcher", "LyceeSearcher", "ChaosTCGSearcher", "WSSearcher", "PMSearcher"):
-        monkeypatch.setattr(cli, name, Fake)
+    for game in cli.SEARCHERS:
+        monkeypatch.setitem(cli.SEARCHERS, game, Fake)
     return calls
 
 
@@ -29,8 +29,8 @@ def test_multiple_games_json(calls, capsys):
     assert calls == [("YZ", 2), ("YZ", 2)]
 
 
-def test_clean_all_and_legacy(calls, capsys):
-    assert cli.main(["wsr", "OS01", "--clean", "--all"]) == 0
+def test_clean_all(calls, capsys):
+    assert cli.main(["OS01", "--game", "wsr", "--clean", "--all"]) == 0
     output = capsys.readouterr().out
     assert "wsr | 0 results" in output and "No results found." in output
     assert "page" not in output.lower() and "第" not in output
@@ -42,7 +42,7 @@ def test_continue_after_error(calls, capsys, monkeypatch):
         def __enter__(self):
             raise SearchRequestError("failed", game=Game.WSR, keyword="X", page=1, url="test")
         def __exit__(self, *args): pass
-    monkeypatch.setattr(cli, "WSRSearcher", Broken)
+    monkeypatch.setitem(cli.SEARCHERS, Game.WSR, Broken)
     assert cli.main(["X", "-g", "wsr", "-g", "lycee"]) == 1
     output = capsys.readouterr()
     assert "搜索失败" in output.err
@@ -63,11 +63,18 @@ def test_table_real_items(capsys):
     assert cli._width("中文AB") == 6
 
 
-@pytest.mark.parametrize("game", ["ws", "pm"])
-def test_new_games_legacy(game, calls, capsys):
-    assert cli.main([game, "01", "--clean"]) == 0
+@pytest.mark.parametrize("game", list(Game))
+def test_registered_games(game, calls, capsys):
+    assert cli.main(["01", "--game", game.value, "--clean"]) == 0
     assert f"{game} | 0 results" in capsys.readouterr().out
     assert calls == [("01", 1)]
+
+
+def test_game_option_is_required(calls):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["wsr", "01"])
+    assert exc.value.code == 2
+    assert calls == []
 
 
 def test_new_games_combined(calls, capsys):

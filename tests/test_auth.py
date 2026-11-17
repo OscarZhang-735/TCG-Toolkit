@@ -2,6 +2,7 @@ from sqlalchemy import select, func, update
 from tcg_toolkit.db_models import AvatarCleanup, FavoriteGroup, LoginSession, SchemaMigration, User
 from auth_helpers import registration_body, register_user
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from io import BytesIO
 import httpx
 from PIL import Image
@@ -11,7 +12,7 @@ from tcg_toolkit.web import app
 from tcg_toolkit.auth.service import AuthService, DuplicateUsername, token_hash
 from tcg_toolkit.auth.avatar import cleanup_avatar
 from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.db_cli import SCHEMA_VERSION
+from tcg_toolkit.schema import SCHEMA_VERSION
 
 ORIGIN = "https://testserver"
 BODY = {"username": "Alice", "password": "a long password!"}
@@ -55,6 +56,52 @@ def test_register_session_logout_login(client):
     assert client.get("/api/auth/me").status_code == 401
 
 
+@pytest.mark.parametrize("identifier", ["ALICE", "alice@example.com"])
+def test_new_login_replaces_other_device_and_stale_logout_is_harmless(client, identifier):
+    first = register_user(client, **BODY).json()["token"]
+    other = register_user(client, "bob").json()["token"]
+    # A different device does not send the first device's Authorization header.
+    response = client.post("/api/auth/login", json={**BODY, "username": identifier})
+    assert response.status_code == 200
+    latest = response.json()["token"]
+    assert latest != first
+    assert client.get("/api/auth/me", headers={"Authorization": "Bearer " + first}).status_code == 401
+    assert client.post("/api/auth/logout", json={}, headers={"Authorization": "Bearer " + first}).status_code == 204
+    assert client.get("/api/auth/me", headers={"Authorization": "Bearer " + latest}).status_code == 200
+    assert app.state.auth.current_user(other)
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(LoginSession).where(
+            LoginSession.user_id == response.json()["user"]["id"])) == 1
+
+
+def test_failed_login_keeps_active_session(client):
+    token = register_user(client, **BODY).json()["token"]
+    response = client.post("/api/auth/login", json={**BODY, "password": "wrong password!"},
+                           headers={"Authorization": "Bearer " + token})
+    assert response.status_code == 401
+    assert app.state.auth.current_user(token)
+
+
+def test_concurrent_logins_leave_one_active_session(client):
+    original = register_user(client, **BODY).json()
+    start = Barrier(2)
+
+    def login():
+        # Separate stores exercise database locking across application instances.
+        with UserStore(app.state.auth.store.conninfo) as store:
+            start.wait(timeout=5)
+            return AuthService(store).login(BODY["username"], BODY["password"])[1]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tokens = list(pool.map(lambda _: login(), range(2)))
+    assert len(set(tokens)) == 2
+    assert app.state.auth.current_user(original["token"]) is None
+    assert sum(app.state.auth.current_user(token) is not None for token in tokens) == 1
+    with app.state.auth.store.session() as db:
+        assert db.scalar(select(func.count()).select_from(LoginSession).where(
+            LoginSession.user_id == original["user"]["id"])) == 1
+
+
 def test_validation_and_errors(client):
     assert register_user(client, **BODY).status_code == 201
     assert register_user(client, "ALICE", BODY["password"], "another@example.com").status_code == 409
@@ -76,7 +123,7 @@ def test_browser_assets_revalidate_after_upgrade(client):
 
 
 def test_anonymous_cannot_call_upstream(client, monkeypatch):
-    from tcg_toolkit.web import SEARCHERS
+    from tcg_toolkit.search import SEARCHERS
     from tcg_toolkit.external import CurrencyClient
     def forbidden(*args, **kwargs):
         pytest.fail("anonymous request reached upstream")
@@ -101,9 +148,9 @@ def test_write_guard(client):
 
 @pytest.mark.parametrize("action,limit", [("login", 10), ("register", 10), ("register/email-code", 5)])
 def test_rate_limit_and_spoofed_ip(client, action, limit, monkeypatch):
-    import tcg_toolkit.auth.routes as routes
+    import tcg_toolkit.auth.runtime as runtime
     now = [100.0]
-    monkeypatch.setattr(routes.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: now[0])
     for i in range(limit):
         response = client.post(f"/api/auth/{action}", json={}, headers={"X-Forwarded-For": f"1.2.3.{i}"})
         assert response.status_code == 422

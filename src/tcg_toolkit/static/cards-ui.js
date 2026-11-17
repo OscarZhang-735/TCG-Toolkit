@@ -1,12 +1,14 @@
 import {lookupSource, lookupItems} from './card-sources.js';
-import {createCards, filterCards, summarizeCards, yenPrice, CURRENCIES, PRICE_MERCHANT, priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} from './cards.js';
-import {fetchRate} from './currency.js';
-import {parseQuantity} from './cart.js';
+import {createCards, filterCards, summarizeCards} from './cards.js';
+import {yenPrice, CURRENCIES, formatMoney, priceDisplay as showPrice} from './card-money.js';
+import {PRICE_MERCHANT, priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} from './card-prices.js';
+import {createRateCache} from './currency.js';
+import {parseQuantity} from './quantity.js';
 import {t, getLanguage} from './i18n.js';
 import {rarityBadge, cardImage, markOrientation} from './card-view.js';
 import {numberButton} from './copy-number.js';
 import {setNavCount} from './nav-count.js';
-import {EXPORT_FIELDS, fetchCardExport, downloadCardExport} from './cards-export.js';
+import {createCardTransfers} from './cards-transfer-ui.js';
 import {raritiesForGame, rarityCategories, findRarity, rarityTier, rarityDescription} from './rarities.js';
 import {bindGroups} from './group-ui.js';
 import {priceSteps, sliderIndex, sliderBound} from './logic.js';
@@ -26,133 +28,8 @@ let selection = blankSelection(), selectionGeneration = 0;
 const locked = () => inventory.state.busy || inventory.state.loading || selection.running;
 const groups = bindGroups(inventory, {prefix: 'cards', deleteMessage: 'cards_group_delete_message', locked});
 const groupName = id => inventory.state.groups.find(group => group.id === id)?.name ?? null;
-let importResult = null;
-function renderImport() {
-  const {ready, busy, loading} = inventory.state;
-  $('cards-import').disabled = !ready || busy || loading;
-  $('cards-import-file').disabled = busy;
-  $('cards-import-cancel').disabled = busy;
-  const file = $('cards-import-file').files[0], importing = busy && $('cards-import-dialog').open;
-  $('cards-import-confirm').disabled = !ready || busy || loading || !file;
-  $('cards-import-confirm').querySelector('.bi').className = `bi ${importing ? 'bi-arrow-repeat spin' : 'bi-upload'}`;
-  $('cards-import-confirm').querySelector('span').textContent = t(importing ? 'cards_importing' : 'cards_import');
-  // The drop zone doubles as the file name display.
-  $('cards-import-drop').classList.toggle('chosen', Boolean(file));
-  $('cards-import-icon').className = `bi ${file ? 'bi-file-earmark-check' : 'bi-file-earmark-arrow-up'}`;
-  $('cards-import-name').textContent = file ? file.name : t('cards_import_choose');
-  const error = importResult?.error;
-  let message = '';
-  if (error?.code === 'cards_import_row') message = t('cards_import_row', {row: error.row});
-  else if (error) {
-    const known = ['cards_import_invalid', 'cards_import_format', 'cards_import_headers', 'cards_import_too_large'];
-    message = t(known.includes(error) ? error : 'cards_import_failed');
-  }
-  $('cards-import-error').textContent = importing ? '' : message;
-  $('cards-import-cancel').textContent = t(importResult && !error ? 'close' : 'detail_cancel');
-  $('cards-import-status').textContent = !importing && importResult && !error
-    ? t('cards_import_result', {imported: number(importResult.imported), skipped: number(importResult.skipped)}) : '';
-}
-// Export settings: format, heading language and fields are remembered; the games
-// start from the page's game filter each time the dialog opens.
-let exportController = null, exportError = '', exportHiddenGames = new Set(), exportGroup = null;
-const EXPORT_KEY = 'cardsExport';
-function loadExportSettings() {
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(EXPORT_KEY)) ?? {}; } catch { /* corrupt: use defaults */ }
-  // Fields added after the settings were saved (not in saved.known) start out chosen.
-  const known = Array.isArray(saved.known) ? saved.known : EXPORT_FIELDS.filter(field => !['group', 'price', 'currency'].includes(field));
-  const chosen = Array.isArray(saved.fields)
-    ? EXPORT_FIELDS.filter(field => saved.fields.includes(field) || !known.includes(field)) : [];
-  return {
-    format: ['xlsx', 'json'].includes(saved.format) ? saved.format : 'xlsx',
-    language: ['zh-CN', 'en', 'keys'].includes(saved.language) ? saved.language : getLanguage(),
-    fields: chosen.length ? chosen : [...EXPORT_FIELDS],
-  };
-}
-let exportSettings = loadExportSettings();
-const saveExportSettings = () => localStorage.setItem(EXPORT_KEY, JSON.stringify({...exportSettings, known: EXPORT_FIELDS}));
-// Cards in the chosen export group (null: the whole library).
-const exportRecords = () => inventory.state.records.filter(row => exportGroup === null || row.group_id === exportGroup);
-// [key, label] for every game in the exported cards, sorted for display.
-const exportGames = () => [...new Map(exportRecords().map(row => [row.game.toLowerCase(), row.game]))]
-  .sort((a, b) => collator.compare(a[1], b[1]));
-function renderExport() {
-  const state = inventory.state;
-  $('cards-export').disabled = !state.ready || state.loading || state.busy;
-  const busy = Boolean(exportController), {format, fields: chosenFields} = exportSettings;
-  const games = exportGames(), chosenGames = games.filter(([key]) => !exportHiddenGames.has(key));
-  const cards = exportRecords().filter(row => !exportHiddenGames.has(row.game.toLowerCase())).length;
-  $('cards-export-group-field').hidden = !state.groups.length; $('cards-export-group-field').disabled = busy;
-  document.querySelectorAll('input[name="export-format"]').forEach(input => { input.checked = input.value === format; });
-  document.querySelectorAll('input[name="export-language"]').forEach(input => { input.checked = input.value === exportSettings.language; });
-  $('cards-export-format').closest('fieldset').disabled = busy;
-  $('cards-export-language-group').disabled = busy || format === 'json';
-  $('cards-export-language-hint').textContent = t(format === 'json' ? 'cards_export_language_json' : 'cards_export_language_hint');
-  const gamesGroup = $('cards-export-games').closest('fieldset');
-  gamesGroup.hidden = !games.length; gamesGroup.disabled = busy;
-  $('cards-export-fields').closest('fieldset').disabled = busy;
-  $('cards-export-games-all').textContent = t(chosenGames.length === games.length ? 'cards_export_clear_all' : 'cards_export_select_all');
-  $('cards-export-fields-all').textContent = t(chosenFields.length === EXPORT_FIELDS.length ? 'cards_export_clear_all' : 'cards_export_select_all');
-  $('cards-export-summary').textContent = t('cards_export_summary', {cards: number(cards), fields: number(chosenFields.length)});
-  const problem = games.length && !chosenGames.length ? 'cards_export_need_game' : !chosenFields.length ? 'cards_export_need_field'
-    : !cards ? 'cards_group_empty' : '';
-  const message = problem || exportError;
-  $('cards-export-error').textContent = !busy && message ? t(message) : '';
-  const confirm = $('cards-export-confirm');
-  confirm.disabled = busy || Boolean(problem) || !state.ready;
-  confirm.querySelector('.bi').className = `bi ${busy ? 'bi-arrow-repeat spin' : 'bi-download'}`;
-  confirm.querySelector('span').textContent = t(busy ? 'cards_exporting' : 'cards_export_download');
-}
-function exportChip(value, label, checked, onChange) {
-  const chip = node('label', '', 'chip'), input = document.createElement('input');
-  input.type = 'checkbox'; input.value = value; input.checked = checked;
-  input.addEventListener('change', () => { exportError = ''; onChange(input.checked); renderExport(); });
-  chip.append(input, icon('bi-check-lg'), node('span', label));
-  return chip;
-}
-function exportGroupOptions() {
-  const all = node('option', t('favorite_group_all')); all.value = '';
-  $('cards-export-group').replaceChildren(all, ...inventory.state.groups.map(group => {
-    const option = node('option', group.name); option.value = group.id; return option;
-  }));
-  $('cards-export-group').value = exportGroup ?? '';
-}
-function exportChips() {
-  $('cards-export-games').replaceChildren(...exportGames().map(([key, label]) => exportChip(key, label, !exportHiddenGames.has(key),
-    checked => { if (checked) exportHiddenGames.delete(key); else exportHiddenGames.add(key); })));
-  $('cards-export-fields').replaceChildren(...EXPORT_FIELDS.map(field => exportChip(field, t(`cards_export_field_${field}`),
-    exportSettings.fields.includes(field), checked => {
-      const chosen = new Set(exportSettings.fields);
-      if (checked) chosen.add(field); else chosen.delete(field);
-      exportSettings.fields = EXPORT_FIELDS.filter(key => chosen.has(key)); saveExportSettings();
-    })));
-}
-function openExport() {
-  if ($('cards-export').disabled) return;
-  exportError = ''; exportGroup = inventory.state.group;
-  exportGroupOptions();
-  const known = new Set(exportGames().map(([key]) => key));
-  exportHiddenGames = new Set([...filters.hiddenGames].filter(key => known.has(key)));
-  exportChips(); renderExport();
-  $('cards-export-dialog').showModal();
-  $('cards-export-confirm').focus();
-}
-async function runExport() {
-  if ($('cards-export-confirm').disabled) return;
-  const controller = new AbortController(), {format, language, fields: chosenFields} = exportSettings;
-  const games = exportHiddenGames.size ? exportGames().filter(([key]) => !exportHiddenGames.has(key)).map(([, label]) => label) : null;
-  exportController = controller; exportError = ''; renderExport();
-  try {
-    const blob = await fetchCardExport(officialAPI, {format, language, games, fields: chosenFields, group: exportGroup}, controller.signal);
-    if (exportController === controller) { exportController = null; downloadCardExport(blob, format); $('cards-export-dialog').close(); }
-  } catch (error) {
-    if (exportController === controller && error.name !== 'AbortError') {
-      exportError = error.message === 'cards_export_too_long' ? error.message : 'cards_export_failed';
-    }
-  } finally {
-    if (exportController === controller) { exportController = null; renderExport(); }
-  }
-}
+const transfers = createCardTransfers({inventory, request: (...args) => officialAPI(...args),
+  hiddenGames: () => filters.hiddenGames});
 function node(tag, text = '', className = '') {const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el;}
 function icon(name) {return node('i', '', `bi ${name}`);}
 const number = value => value.toLocaleString(getLanguage());
@@ -227,44 +104,19 @@ function sortCards(rows, sort) {
 // rates for the currencies cards were entered in are fetched here. rates[code] is how much of that
 // currency one yen buys. Cards whose rate cannot be fetched show only their own amount and are left
 // out of the price slider and price sort.
-let displayCurrency = 'JPY', rates = {JPY: 1}, ratesPending = new Set(), ratesFailed = new Set(), ratesGeneration = 0;
-const yen = row => yenPrice(row, rates);
+let displayCurrency = 'JPY';
+const rateCache = createRateCache(render);
+const yen = row => yenPrice(row, rateCache.rates);
 export function setCardsCurrency(currency, rate) {
-  displayCurrency = currency; rates[currency] = rate; ratesFailed.delete(currency);
+  displayCurrency = currency; rateCache.set(currency, rate);
   render();
 }
-function loadRates(rows) {
-  for (const currency of new Set(rows.filter(row => row.price != null).map(row => row.currency))) {
-    if (currency in rates || ratesPending.has(currency) || ratesFailed.has(currency)) continue;
-    const generation = ratesGeneration;
-    ratesPending.add(currency);
-    fetchRate(currency, officialAPI).then(rate => { if (generation === ratesGeneration) rates[currency] = rate; },
-      () => { if (generation === ratesGeneration) ratesFailed.add(currency); })
-      .finally(() => { if (generation === ratesGeneration) { ratesPending.delete(currency); render(); } });
-  }
-}
-// Converted amounts round like shop prices (whole yen); entered amounts keep their cents.
-function money(amount, currency, converted = false) {
-  const whole = currency === 'JPY' && (converted || Number.isInteger(amount));
-  return new Intl.NumberFormat(getLanguage(), {style: 'currency', currency, currencyDisplay: 'code',
-    minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2}).format(converted && whole ? Math.round(amount) : amount);
-}
-// The price in the display currency with the entered amount underneath (also when the currencies
-// match). Unpriced cards show a placeholder in the display currency ("JPY -"); when the rate is
-// unknown only the entered amount is shown.
-function priceDisplay(row) {
-  const box = node('span', '', 'converted-price');
-  if (row.price == null) { box.append(node('span', `${displayCurrency} -`, 'muted')); return box; }
-  const value = yen(row), original = money(row.price, row.currency);
-  if (row.currency === displayCurrency) box.append(node('span', original), node('small', original, 'original-price'));
-  else if (value == null) box.append(node('span', original));
-  else box.append(node('span', money(value * rates[displayCurrency], displayCurrency, true)), node('small', original, 'original-price'));
-  return box;
-}
+const money = (amount, currency, converted = false) => formatMoney(amount, currency, getLanguage(), converted);
+const priceDisplay = row => showPrice(row, {currency: displayCurrency, rates: rateCache.rates, language: getLanguage()});
 // Price range slider, as on the favorites page: thumbs step through the distinct yen values of the
 // current group's prices, a thumb at either end means no limit, and labels use the display currency.
 let steps = [];
-const priceLabel = value => money(value * rates[displayCurrency], displayCurrency, true);
+const priceLabel = value => money(value * rateCache.rates[displayCurrency], displayCurrency, true);
 function priceSlider(rows) {
   steps = priceSteps(rows.map(row => ({price: yen(row)})).filter(row => row.price != null));
   const lo = $('cards-price-min'), hi = $('cards-price-max'), last = Math.max(steps.length - 1, 0);
@@ -506,8 +358,7 @@ export function ownedQuantity(item) {
 }
 function render() {
   const state = inventory.state, open = editorOpen();
-  renderExport();
-  renderImport();
+  transfers.render();
   indexOwned(state.records);
   // Editor dialog
   gameOptions();
@@ -530,7 +381,7 @@ function render() {
   $('cards-status').textContent = state.loading ? t('cards_loading') : !open && state.error ? t(state.error) : '';
   $('cards-retry').hidden = state.ready || !state.error || state.loading;
   $('cards-add').disabled = !state.ready;
-  if (state.ready) loadRates(state.records);
+  if (state.ready) rateCache.load(state.records, officialAPI);
   options('cards-rarity-filter', 'rarity'); gameChips(); priceSlider(inventory.visible());
   $('cards-sort').value = filters.sort;
   groups.render();
@@ -550,7 +401,8 @@ function render() {
   $('cards-by-rarity').replaceChildren(...chips(stats.rarities));
   $('cards-count').hidden = !state.ready;
   $('cards-count').textContent = t('counts', {matching: number(rows.length), loaded: number(groupRows.length)});
-  $('cards-filters').hidden = !state.ready || !groupRows.length;
+  // Kept with no cards too, like the other pages, so the page layout does not jump.
+  $('cards-filters').hidden = !state.ready;
   $('cards-rows').replaceChildren(...(cardsView === 'list' ? rows.map(cardRow) : []));
   $('cards-table').hidden = !rows.length || cardsView !== 'list';
   $('cards-grid').hidden = !rows.length || cardsView !== 'grid';
@@ -567,7 +419,7 @@ function renderValue(rows, kinds) {
     const value = row.quantity > 0 ? yen(row) : null;
     if (value != null) { total += value * row.quantity; counted++; }
   }
-  $('cards-value-total').textContent = counted ? money(total * rates[displayCurrency], displayCurrency, true) : `${displayCurrency} -`;
+  $('cards-value-total').textContent = counted ? money(total * rateCache.rates[displayCurrency], displayCurrency, true) : `${displayCurrency} -`;
   const note = $('cards-value-counted');
   note.textContent = t('cards_value_counted', {counted: number(counted), total: number(kinds)});
   note.title = t('cards_value_counted_hint');
@@ -586,12 +438,6 @@ for (const field of fields) $('card-' + field).addEventListener('input', event =
 });
 $('card-rarity-custom').addEventListener('input', event => { inventory.state.draft.rarity = event.target.value; renderPriceLookup(); });
 $('card-group').addEventListener('change', event => { inventory.state.draftGroup = event.target.value || null; });
-$('cards-export-group').addEventListener('change', event => {
-  exportGroup = event.target.value || null; exportError = '';
-  const known = new Set(exportGames().map(([key]) => key));
-  exportHiddenGames = new Set([...exportHiddenGames].filter(key => known.has(key)));
-  exportChips(); renderExport();
-});
 $('cards-select').addEventListener('click', () => setSelecting(!selection.active));
 $('cards-select-all').addEventListener('change', event => {
   if (selection.running) return;
@@ -615,59 +461,6 @@ $('cards-form').addEventListener('submit', async event => {
   if (!inventory.state.error) $('card-dialog').close();
 });
 $('cards-add').addEventListener('click', () => openEditor());
-$('cards-export').addEventListener('click', openExport);
-$('cards-export-form').addEventListener('submit', event => { event.preventDefault(); runExport(); });
-for (const [name, key] of [['export-format', 'format'], ['export-language', 'language']]) {
-  document.querySelectorAll(`input[name="${name}"]`).forEach(input => input.addEventListener('change', () => {
-    if (!input.checked) return;
-    exportSettings[key] = input.value; exportError = ''; saveExportSettings(); renderExport();
-  }));
-}
-$('cards-export-games-all').addEventListener('click', () => {
-  exportHiddenGames = exportHiddenGames.size ? new Set() : new Set(exportGames().map(([key]) => key));
-  exportError = ''; exportChips(); renderExport();
-});
-$('cards-export-fields-all').addEventListener('click', () => {
-  exportSettings.fields = exportSettings.fields.length === EXPORT_FIELDS.length ? [] : [...EXPORT_FIELDS];
-  exportError = ''; saveExportSettings(); exportChips(); renderExport();
-});
-$('cards-export-cancel').addEventListener('click', () => $('cards-export-dialog').close());
-$('cards-export-close').addEventListener('click', () => $('cards-export-dialog').close());
-// Closing the dialog (Esc, cancel, ×) abandons an export still in flight.
-$('cards-export-dialog').addEventListener('close', () => { exportController?.abort(); exportController = null; exportError = ''; renderExport(); });
-$('cards-import').addEventListener('click', () => {
-  $('cards-import-form').reset(); importResult = null; renderImport(); $('cards-import-dialog').showModal();
-});
-$('cards-import-file').addEventListener('change', () => { importResult = null; renderImport(); });
-for (const id of ['cards-import-cancel', 'cards-import-close']) $(id).addEventListener('click', () => { if (!inventory.state.busy) $('cards-import-dialog').close(); });
-// Dropping a file onto the zone fills the hidden input, as if it was picked.
-const importDrop = $('cards-import-drop');
-for (const type of ['dragenter', 'dragover']) importDrop.addEventListener(type, event => {
-  if (!event.dataTransfer?.types.includes('Files') || $('cards-import-file').disabled) return;
-  event.preventDefault(); importDrop.classList.add('dragging');
-});
-for (const type of ['dragleave', 'drop']) importDrop.addEventListener(type, () => importDrop.classList.remove('dragging'));
-importDrop.addEventListener('drop', event => {
-  if (!event.dataTransfer?.files.length || $('cards-import-file').disabled) return;
-  event.preventDefault();
-  const files = new DataTransfer(); files.items.add(event.dataTransfer.files[0]);
-  $('cards-import-file').files = files.files; importResult = null; renderImport();
-});
-$('cards-import-dialog').addEventListener('cancel', event => { if (inventory.state.busy) event.preventDefault(); });
-$('cards-import-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  if ($('cards-import-confirm').disabled) return;
-  const file = $('cards-import-file').files[0];
-  const format = file.name.toLowerCase().split('.').pop();
-  if (['json', 'xlsx'].includes(format)) {
-    importResult = null;
-    const result = await inventory.importFile(file, format);
-    if (!result || !$('cards-import-dialog').open) return;
-    importResult = result;
-    if (!result.error) $('cards-import-form').reset();
-  } else importResult = {error: 'cards_import_format'};
-  renderImport();
-});
 $('cards-cancel').addEventListener('click', () => $('card-dialog').close());
 $('card-dialog-close').addEventListener('click', () => $('card-dialog').close());
 // Esc closes the dialog natively; block it while a save is in flight.
@@ -695,16 +488,14 @@ $('cards-reset').addEventListener('click', () => { filters = blankFilters(); $('
 document.addEventListener('viewchange', render);
 $('language').addEventListener('change', render);
 export function clearCards() {
-  exportController?.abort(); exportController = null; exportError = '';
-  $('cards-export-dialog').close();
-  $('cards-import-dialog').close(); importResult = null;
+  transfers.reset();
   clearOfficial();
   priceSupportController?.abort(); priceSupportController = null; priceSupport = {status: 'idle', merchants: []};
   clearPriceLookup();
   bulkPriceController?.abort(); bulkPriceController = null; bulkPrice = blankBulkPrice(); $('cards-price-dialog').close();
   filters = blankFilters(); $('cards-query').value = '';
-  ratesGeneration++; displayCurrency = 'JPY'; rates = {JPY: 1}; ratesPending = new Set(); ratesFailed = new Set();
-  selectionGeneration++; selection = blankSelection(); groups.close(); exportGroup = null;
+  displayCurrency = 'JPY'; rateCache.reset();
+  selectionGeneration++; selection = blankSelection(); groups.close();
   $('cards-bulk-delete-dialog').close();
   quantityDrafts.clear(); savingQuantity = '';
   $('card-dialog').close(); $('cards-delete-dialog').close(); inventory.clear();

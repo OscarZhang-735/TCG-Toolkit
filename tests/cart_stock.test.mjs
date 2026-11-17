@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const source = (await readFile(new URL('../src/tcg_toolkit/static/cart-stock.js', import.meta.url), 'utf8'))
-  .replace("import {productKey} from './cart.js';", 'const productKey = t => JSON.stringify([t.gid, t.ver, t.cid, t.kizu]);');
+  .replace("import {productKey} from './product-identity.js';", 'const productKey = t => JSON.stringify([t.gid, t.ver, t.cid, t.kizu]);');
 const {createCartStock} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const target = (cid, kizu = 0) => ({gid: 8, ver: 'yuzu5.0', cid, kizu});
 const tick = () => new Promise(r => setTimeout(r, 0));

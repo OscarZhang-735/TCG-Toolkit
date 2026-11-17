@@ -1,6 +1,19 @@
 // Columns the server can export, in file order.
 export const EXPORT_FIELDS = ['game', 'card_number', 'rarity', 'name', 'quantity', 'price', 'currency', 'notes', 'group', 'image_url', 'id', 'created_at', 'updated_at'];
 
+export const EXPORT_KEY = 'cardsExport';
+
+export function loadExportSettings(storage, language) {
+  let saved;
+  try { saved = JSON.parse(storage.getItem(EXPORT_KEY)); } catch { /* corrupt preference */ }
+  const fields = Array.isArray(saved?.fields) ? EXPORT_FIELDS.filter(field => saved.fields.includes(field)) : [];
+  return {
+    format: ['xlsx', 'json'].includes(saved?.format) ? saved.format : 'xlsx',
+    language: ['zh-CN', 'en', 'keys'].includes(saved?.language) ? saved.language : language,
+    fields: fields.length ? fields : [...EXPORT_FIELDS],
+  };
+}
+
 // Query string for /api/cards/export. Omitted games/fields/group mean "everything";
 // language only affects XLSX headings ('keys' keeps raw field names).
 export function exportQuery({format, language = 'keys', games = null, fields = null, group = null}) {

@@ -1,0 +1,40 @@
+{
+  "code": 2000,
+  "page": 1,
+  "limit": 1,
+  "total": 1,
+  "data": {
+    "id": 209781,
+    "create_datetime": "2025-04-01 02:11:34",
+    "update_datetime": "2025-04-01 02:11:34",
+    "description": null,
+    "proof_number": "10198854",
+    "name": "SHIKIBE MAYU",
+    "version": "CHAOS JPN. RIDDLE JOKER 1.0",
+    "card_number": "YZ-411",
+    "year": "2018",
+    "score": "金属银10",
+    "language": "TCG Cards",
+    "region_language": "JPN",
+    "c2j": "オトナの魅力「式部 茉優」",
+    "box": "10",
+    "corner": "10",
+    "edge": "10",
+    "face": "9",
+    "level_number": "GEM-MT",
+    "loss": "正面严重脏点（-1） \n正面划痕（-1） \n背面对光脏点（-0.5） \n背面印刷厂痕点（-0.5） \n正面对光脏点（-0.5） \n",
+    "carousel_pic": "https://cdn.pcgcard.cn/0f276de7-7b63-4257-8c4d-e6463801f332.jpg,https://cdn.pcgcard.cn/e42dd44f-205f-4518-9a19-69ee9f9f7d64.jpg",
+    "distribution": [
+      {
+        "score": "金属银10",
+        "count": 1,
+        "percentage": 100.0
+      }
+    ],
+    "total_cards": 1,
+    "level_gif": "https://cdn.pcgcard.cn/17426596986084.gif",
+    "level_name": "待激活",
+    "score_number": "10"
+  },
+  "msg": "success"
+}

@@ -3,14 +3,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tcg_toolkit import Game, SearchPage, SearchParseError, SearchRequestError
-from tcg_toolkit.web import app, SEARCHERS
+from tcg_toolkit.search import SEARCHERS
+from tcg_toolkit.web import app
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def authenticated_business_api():
-    from tcg_toolkit.auth.routes import current_user
+    from tcg_toolkit.auth.dependencies import current_user
     app.dependency_overrides[current_user] = lambda: {"id": "test-user"}
     yield
     app.dependency_overrides.pop(current_user, None)

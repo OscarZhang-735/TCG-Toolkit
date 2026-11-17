@@ -1,4 +1,4 @@
-import {productKey} from './cart.js';
+import {productKey} from './product-identity.js';
 
 // Explicit fresh product-page queries, deduplicated by product and condition.
 export function createCartStock(onChange = () => {}, concurrency = 3) {

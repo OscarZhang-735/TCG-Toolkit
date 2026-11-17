@@ -2,7 +2,12 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const source = await readFile(new URL('../src/tcg_toolkit/static/cards.js', import.meta.url), 'utf8');
-const {createCards, filterCards, summarizeCards, yenPrice, priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const asModule = value => `data:text/javascript;base64,${Buffer.from(value).toString('base64')}`;
+const money = asModule(await readFile(new URL('../src/tcg_toolkit/static/card-money.js', import.meta.url), 'utf8'));
+const prices = (await readFile(new URL('../src/tcg_toolkit/static/card-prices.js', import.meta.url), 'utf8')).replace("'./card-money.js'", JSON.stringify(money));
+const {createCards, filterCards, summarizeCards} = await import(asModule(source));
+const {yenPrice} = await import(money);
+const {priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} = await import(asModule(prices));
 const card = {id: 'one', game: 'WS', card_number: 'ABC-001', rarity: 'SR', name: 'First', quantity: 2, notes: 'Keep'};
 const reply = (data, status = 200) => ({ok: status < 400, status, json: async () => data});
 

@@ -6,9 +6,9 @@ from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 
 from tcg_toolkit import subscriptions as api
-from tcg_toolkit.db_models import Subscription, SubscriptionEmail, SubscriptionRun, User
+from tcg_toolkit.db_models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
 from tcg_toolkit.web import app
-from test_subscriptions import client, add, worker, emails, snapshot, login, NOW, URL, ORIGIN
+from test_subscriptions import client, add, favorite, worker, emails, snapshot, login, NOW, URL, ORIGIN
 
 
 def test_default_create_and_update_interval(client, monkeypatch):
@@ -150,10 +150,13 @@ def test_mixed_intervals_and_same_day_digests(client, monkeypatch):
 
 
 def test_shared_product_leaves_not_due_subscription_untouched(client, monkeypatch):
+    favorites = [favorite(client)]
     first = add(client, interval_hours=1)
     login(client, 'bob')
+    favorites.append(favorite(client))
     second = add(client, interval_hours=1)
     login(client, 'carol')
+    future_favorite = favorite(client)
     monkeypatch.setattr(api.time, 'time', lambda: NOW)
     future = add(client, interval_hours=6)
     calls = []
@@ -161,12 +164,19 @@ def test_shared_product_leaves_not_due_subscription_untouched(client, monkeypatc
     service.check_due()
     assert calls == [URL]
     assert client.get('/api/subscriptions').json()['items'] == [future]
+    assert client.get('/api/favorites').json()['items'] == [future_favorite]
+    with app.state.auth.store.session() as db:
+        for saved in favorites:
+            row = db.get(Favorite, saved['id'])
+            assert json.loads(row.snapshot) == snapshot(price=200)
+            assert row.refreshed_at == NOW
     assert {change['subscription_id'] for email in emails()
             for change in json.loads(email.changes)} == {first['id'], second['id']}
 
 
 @pytest.mark.parametrize('action', ['cancel', 'extend', 'shorten'])
 def test_subscription_change_during_fetch(client, action):
+    saved_favorite = favorite(client)
     saved = add(client)
     path = '/api/subscriptions/' + saved['id']
     def fetch(game, url):
@@ -179,13 +189,18 @@ def test_subscription_change_during_fetch(client, action):
     records = client.get('/api/subscriptions').json()['items']
     if action == 'cancel':
         assert records == [] and emails() == []
+        assert client.get('/api/favorites').json()['items'] == [saved_favorite]
     elif action == 'extend':
         assert records[0]['checked_at'] == saved['checked_at']
         assert records[0]['item'] == saved['item'] and emails() == []
         assert records[0]['next_check_at'] == saved['checked_at'] + 48 * 3600
+        assert client.get('/api/favorites').json()['items'] == [saved_favorite]
     else:
         assert records[0]['next_check_at'] == NOW + 3600
         assert records[0]['item']['price'] == 200 and len(emails()) == 1
+        assert client.get('/api/favorites').json()['items'] == [
+            {**saved_favorite, 'item': snapshot(price=200), 'refreshed_at': NOW},
+        ]
 
 
 def test_slow_fetch_keeps_next_hour_and_failure_interval(client, monkeypatch):
@@ -193,6 +208,7 @@ def test_slow_fetch_keeps_next_hour_and_failure_interval(client, monkeypatch):
     now = [start]
     monkeypatch.setattr(api.time, 'time', lambda: start - 3600)
     saved = add(client, interval_hours=1)
+    saved_favorite = favorite(client)
     def fetch(game, url):
         now[0] += 120
         return snapshot(url, price=200)
@@ -200,10 +216,12 @@ def test_slow_fetch_keeps_next_hour_and_failure_interval(client, monkeypatch):
     service.tick()
     record = client.get('/api/subscriptions').json()['items'][0]
     assert record['checked_at'] == start and record['next_check_at'] == start + 3600
+    refreshed_favorite = {**saved_favorite, 'item': snapshot(price=200), 'refreshed_at': start}
+    assert client.get('/api/favorites').json()['items'] == [refreshed_favorite]
     assert service.deadline == start + 3600
-    from fastapi import HTTPException
+    from tcg_toolkit.errors import ProductSourceError
     def failed(*args):
-        raise HTTPException(504, detail='product_timeout')
+        raise ProductSourceError('product_timeout')
     service.fetcher = failed
     client.put('/api/subscriptions/settings', json={'interval_hours': 6})
     now[0] = start + 6 * 3600
@@ -211,6 +229,7 @@ def test_slow_fetch_keeps_next_hour_and_failure_interval(client, monkeypatch):
     record = client.get('/api/subscriptions').json()['items'][0]
     assert record['checked_at'] == now[0] and record['next_check_at'] == now[0] + 6 * 3600
     assert record['item']['price'] == 200 and record['last_error'] == 'product_timeout'
+    assert client.get('/api/favorites').json()['items'] == [refreshed_favorite]
 
 
 def test_restart_catches_up_once(client):

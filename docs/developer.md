@@ -46,6 +46,8 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
 | `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
+| `PROXY_GO_API` | PSA 与 CGC 网页查询使用的 `proxy-go` 网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
+| `PROXY_GO_API_KEY` | `proxy-go` 服务端 API 密钥，仅填写密钥本身 | 空 |
 | `PGHOST` / `PGPORT` | PostgreSQL 地址；Compose 内使用服务名 | `db` / `5432`（Compose） |
 | `PGDATABASE` / `PGUSER` / `PGPASSWORD` | 应用数据库、非超级用户角色及密码 | Compose 默认库和角色为 `tcg`；密码必填 |
 | `TCG_PG_ADMIN_PASSWORD` | PostgreSQL 初始化管理员密码，仅传给 db | 必填 |
@@ -58,6 +60,55 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TZ` | 根目录 Compose 必填，设为宿主机 IANA 时区，例如 `America/Toronto`；Linux 生产部署使用挂载的宿主机 `/etc/localtime` | `.env.example` 示例为 `America/Toronto` |
 
 `.env` 已被 Git 忽略，请勿提交密钥。公网部署请参阅 [部署手册](../deploy/README.md)。
+
+### proxy-go 代理客户端
+
+`ProxyGoClient` 用于需要处理风控或验证的 GET/HEAD 请求，由业务代码显式调用。PSA 与 CGC 证书查询通过此客户端抓取网页；游游亭加密代理、直连开关和 ARS 查询保持原有行为。
+
+在 `.env` 中设置 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。配置优先级为构造参数、进程环境、当前工作目录的 `.env`；显式空值会报告配置错误，不会继续读取较低优先级的值。主机直接运行 Python 时可使用 `http://127.0.0.1:18087/v1/fetch`。Docker Desktop 中的 Web 连接宿主机时改用 `http://host.docker.internal:18087/v1/fetch`，并确保 Proxy-Go 监听容器可达的地址。迁移到服务器后更新地址和密钥即可；三份 Compose 均只向 Web 服务传入这两个变量，修改后重新创建 Web 容器。
+
+```python
+from tcg_toolkit.external import ProxyGoClient, ProxyGoGatewayError
+
+with ProxyGoClient() as client:
+    try:
+        response = client.get(
+            "https://www.psacard.com/en-CA/cert/98428602/psa",
+            country="US",
+        )
+    except ProxyGoGatewayError as exc:
+        print(exc.status_code, exc.detail, exc.request_id)
+        print(exc.proxy_total_bytes, exc.proxy_attempts)
+        raise
+
+    metadata = response.extensions["proxy_go"]
+    print(metadata["request_id"], metadata["proxy_traffic"])
+    response.raise_for_status()  # 检查目标站状态，而非网关状态。
+    html = response.content      # 已解码的正文 bytes。
+```
+
+也可使用 `client.head(url, country="US")` 或 `client.fetch(url, country="US", method="GET")`。仅支持 GET/HEAD，不接受目标站自定义请求头、Cookie 或请求体。默认国家为 `US`，默认超时 220 秒、连接超时 5 秒，忽略系统代理环境变量。客户端不自动重试；验证处理和代理重试由 Proxy-Go 执行。
+
+网关非 200 状态抛出 `ProxyGoGatewayError`，保留 `status_code`、`detail`、`request_id`、`proxy_total_bytes` 和 `proxy_attempts`；早期认证或参数错误可能没有后三项。网络错误沿用 HTTPX 异常。网关返回 200 时，客户端将 JSON 中的目标 `status_code`、响应头和 Base64 正文还原为 `httpx.Response`，请求 ID 与完整流量统计位于 `response.extensions["proxy_go"]`。目标 4xx/5xx 仍返回响应，由调用方检查；目标重定向不会自动跟随，可读取 `Location` 后自行决定是否继续请求。
+
+### 模块边界与扩展
+
+`web.py` 负责组装路由、浏览器中间件和后台任务生命周期。功能模块直接依赖公共模型、服务或数据源，不从 Web 入口获取依赖，也不通过调用其他路由复用业务逻辑。
+
+| 职责 | 模块与依赖方向 |
+| --- | --- |
+| 认证 | `auth/schemas.py` 定义请求模型；`auth/dependencies.py` 提供访问控制；`auth/runtime.py` 初始化服务和限流；`auth/routes.py` 处理端点 |
+| 搜索与商品 | `search.py` 的 `SEARCHERS` 是 Web、收藏、报价和 CLI 共用的注册表；`product_identity.py` 定义商品身份，`cart_models.py` 定义购物车目标模型 |
+| 商品详情数据源 | `external/yuyutei_products.py` 管理抓取、解析及缓存，抛出 `ProductSourceError`；`product_details.py` 等 HTTP 调用方负责转换为接口响应，后台任务直接记录数据源错误 |
+| 收藏与订阅 | `subscription_schedule.py` 提供 API 和后台共用的时间计算；`subscription_service.py` 原子提交订阅、收藏和邮件待发记录；`subscription_worker.py` 负责扫描、运行状态和投递重试 |
+| 通知 | `notifications.py` 提供 SMTP 发送、收件地址选择和订阅消息组装；认证验证码、通知设置路由及后台任务直接使用该模块 |
+| 卡牌库 | `card_schemas.py` 定义输入和序列化；`card_transfer.py` 负责 JSON/XLSX 导入导出和导入事务；`cards.py` 保留卡牌及分组路由 |
+| 数据库 | `schema.py` 负责版本检查和迁移；`db_cli.py` 只解析命令行参数，运行期模块直接依赖 `schema.py` |
+| 前端 | `cards-ui.js` 组合库存界面，`cards-transfer-ui.js` 管理导入导出交互；`card-prices.js`、`card-money.js`、`product-identity.js` 和 `quantity.js` 分别提供报价、金额、商品身份和数量处理 |
+
+新增搜索游戏时，在 `search.py` 的唯一注册表中登记搜索器，CLI 的游戏选项随之更新；新增报价商家使用 `prices.py` 的 `MERCHANTS` 注册表。新增界面功能直接引用负责该职责的模块；静态 ES 模块保持在 `static/` 一级目录，由现有 Pages 构建脚本自动收集。
+
+命令行搜索统一使用 `tcg-search "关键词" --game wsr`，多游戏可重复 `--game`，例如 `tcg-search "BP01" --game ws --game sev --all`。旧 `tcg-search 游戏 关键词` 格式已移除。内部模块调用方应使用上述新路径，不提供旧模块路径的兼容转发。数据库迁移链继续保留，以支持已有数据库升级。
 
 ### 测试
 
@@ -104,7 +155,7 @@ API 响应继续显式选择公开字段，不直接序列化 ORM 实体，避�
 ### Alembic 迁移
 
 `tcg-db migrate` 使用 Alembic，并在同一个 PostgreSQL 事务锁和事务内执行接管、升级及版本校验。
-已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段和 `0013` 的价格币种迁移，升级到 schema 13，保留用户、会话和业务数据。
+已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移、`0015` 的评级卡快照表迁移、`0016` 的评级卡上传图片字段、`0017` 的评级卡价格、`0018` 的评级卡分组和 `0019` 的评级卡显示名称，升级到 schema 19，保留用户和业务数据。`0014` 将每账号的会话收敛为一条，规则见下文。
 新空库通过基线迁移初始化。原 `001_initial.sql` 保持不可变，仅供基线使用；业务代码不再执行 SQL 字符串。
 `schema_migrations` 保留为发布版本兼容标记，现有 JSON 状态接口和回退判断继续可用。
 
@@ -144,6 +195,187 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 分组写入、新增收藏和移动收藏先锁定用户行，再操作分组及收藏。数据库通过复合外键限制收藏只能引用同用户的分组。
 
 部署前执行 `tcg-db migrate`：迁移 `0004` 创建分组表和外键；`0005` 将 `group_id` 改为可空，把原默认组中的收藏改为未分组，删除默认组及 `is_default` 列，保留自定义组及其收藏，更新到 schema 5。历史收藏升级后均为未分组。回退沿用恢复匹配备份的流程。
+
+## 评级卡证书查询
+
+### WebUI 与保存接口
+
+登录后的 `#graded` 页面使用后端 `PROVIDERS` 注册表获取机构名称、扫码 URL 规则和预期查询时限。`GET /api/grading/providers` 返回 `{"items":[{"id":"psa","name":"PSA","timeout_seconds":225,"scan_patterns":["…"]}, …]}`；PSA、CGC 为 225 秒，ARS、PCG-CN 为 40 秒。这是界面等待提示与浏览器超时的依据，底层 HTTP 超时仍按各机构客户端设置。
+
+以下接口均需本站 Bearer Token，响应含 `Cache-Control: no-store`。写接口还要求可信 `Origin` 和 `Content-Type: application/json`，包括 DELETE。
+
+| 方法与路径 | 输入与结果 |
+| --- | --- |
+| `GET /api/graded-cards` | 返回 `{"items":[记录, …]}`，按添加时间倒序，同秒按写入顺序倒序 |
+| `POST /api/graded-cards` | `{"provider":"psa","cert_number":"98428602","request_id":"可选"}`；还可传入 `price`、`currency` 和 `group_id`（分组不存在时查询前返回 404 `graded_group_not_found`；查询期间分组被删则保存为未分组），查询成功后保存并返回 201 和记录 |
+| `GET /api/graded-cards/groups` | 返回本账号评级卡分组 `{"items":[{id,name,created_at}, …]}`，按创建时间排序 |
+| `POST /api/graded-cards/groups` | `{"name":"…"}`（去除首尾空白，1–100 字），返回 201；同名返回 409 `graded_group_name_taken` |
+| `PUT /api/graded-cards/groups/{id}` | `{"name":"…"}` 改名，返回 200；不存在返回 404 `graded_group_not_found` |
+| `DELETE /api/graded-cards/groups/{id}` | JSON `{}`；删除分组，其中的评级卡保留并变为未分组，返回 204 |
+| `PUT /api/graded-cards/{id}/group` | `{"group_id":"…"}` 移入分组，`null` 移出分组，返回 200 和记录 |
+| `PUT /api/graded-cards/{id}/display-name` | 提交 `{"display_name":"…"}`（去除首尾空白，≤ 100 字）设置可选显示名称，返回 200 和 `{"display_name":…}`；空白或 `null` 清除，恢复显示证书卡名。重新查询不会覆盖 |
+| `PUT /api/graded-cards/{id}/price` | 提交 `{"price":"12.34","currency":"CNY"}` 更新手动记录的价格与币种，返回 200 和这两个字段。传入 `price: null` 清除价格 |
+| `POST /api/graded-cards/{id}/refresh` | JSON `{}` 或 `{"request_id":"…"}`；重新查询，成功返回 200 和更新后的记录 |
+| `DELETE /api/graded-cards/lookups/{request_id}` | JSON `{}`；取消本账号该 `request_id` 的查询，返回 204；查询已保存则 409 `graded_lookup_finished` |
+| `DELETE /api/graded-cards/{id}` | JSON `{}`；删除本账号记录，成功返回 204；该卡上传的图片进入 COS 删除队列 |
+| `POST /api/graded-cards/detect-card` | 请求体为图片（`image/jpeg`、`image/png`、`image/webp`，≤ 12 MB）；返回 `{"width":…,"height":…,"corners":[[x,y]×4] 或 null}`，坐标为该图片像素，顺序为左上、右上、右下、左下 |
+| `POST /api/graded-cards/calibrate-image` | 请求体为图片；返回同尺寸的亮度校准 JPEG（`image/jpeg`），不保存任何内容 |
+| `PUT /api/graded-cards/{id}/images/{front\|back}?corners=x1,y1,…,x4,y4` | 请求体为图片；按四个角透视校正截取为 WebP（长边 ≤ 1600 像素）存入 COS，替换该面图片，返回 200 和记录 |
+| `DELETE /api/graded-cards/{id}/images/{front\|back}` | JSON `{}`；移除上传的图片，恢复机构图片或占位，返回 200 和记录 |
+
+记录字段为 `id`、`provider`、`cert_number`、`source_url`、`title`、`grade`、`fields`、`english_fields`、`population`、`images`、`created_at`、`refreshed_at`、`price`、`currency`；时间为 Unix 秒。`title` 与两组字段由 `grading.present()` 在读取时按注册表生成，旧快照同样适用：`GradingProvider.title_field` 指定作为名称的字段（ARS 为原版 `カード名称`，PCG-CN 为原名 `Original Name`，缺失时回退到解析器的 `title`）；`english_field` 判定只是译文的字段（ARS 为英文标签），这些字段放入 `english_fields`，WebUI 详情中默认折叠。直接查询接口 `GET /api/grading/...` 的返回保持解析器原样。证书编号为字符串，服务端只去除首尾空白并接受 1–32 位 ASCII 数字。前端额外支持移除数字间的空格和连字符、从机构官网链接提取编号。
+
+同一账号的 `(provider, cert_number)` 唯一，重复新增返回 409 `{"detail":{"type":"graded_card_duplicate","id":"已有记录ID"}}`。已有重复在查询前直接返回；同时新增由数据库唯一约束仲裁。不同账号可分别保存同一证书。访问不存在或属于其他账号的记录均返回 404 `graded_card_not_found`，查询失败不会写入新记录或覆盖旧快照。
+
+数据库版本 **15**（Alembic `0015`）新增 `graded_cards` 表，保存每张证书最近一次成功查询的 JSON 快照；版本 **16**（`0016`）为其增加可空的 `front_image_url`、`back_image_url`，保存用户上传的图片地址，与查询快照分开，重新查询不会覆盖。版本 **17**（`0017`）新增可空的 `price` 和默认 `JPY` 的 `currency`。价格为非负金额，最多 2 位小数，币种支持 JPY、CNY 和 CAD。用户可在添加及详情页填写价格，清空金额并保存可清除价格。仪表盘按当前显示币种汇总筛选结果中价格可换算的卡片。升级前备份，使用匹配版本运行 `tcg-db migrate`；生产共同发布流程会执行迁移。此迁移保留既有账号、会话和卡牌数据，不提供自动降级。
+
+查询与数据库操作分开执行，等待机构响应时不持有数据库连接。
+
+`request_id` 为浏览器生成的 8–64 位字母、数字或连字符，归属当前账号。取消时服务端关闭该查询正在使用的上游 HTTP 客户端（进行中的读取立即失败，释放并发名额），并通过一次性令牌保证已取消的查询不会保存，原请求返回 409 `grading_lookup_cancelled`。先到达的取消会让随后到达的同 ID 查询直接结束；取消与保存的结果在进程内保留 5 分钟，取消晚于保存时返回 409 `graded_lookup_finished`，前端据此重新加载列表。取消登记和并发上限一样是进程内状态。直接查询、新增和刷新共享进程内并发上限：每账号 3 项、全进程 8 项，超限返回 429 `grading_busy`。多进程部署时各进程分别计数。
+
+前端 `graded-cards.js` 统一管理新增和刷新队列，每标签页并行 2 项；浏览器等待上限为机构 `timeout_seconds` 加 30 秒。超时、网络或服务错误由用户显式重试；机构或编号错误提示修改输入。刷新失败仍显示旧数据。查询中的占位卡与已保存卡片布局、尺寸一致（列表中同列对齐），显示不确定加载环、已等待时间和“最多可能需要几分钟”，并提供“取消查询”：前端中止请求并调用上述取消接口；重新查询同样可取消，已保存数据不变。退出或更换账号会清空本页状态并丢弃迟到响应；关闭页面不会发送取消，服务器已开始的查询仍会完成并保存。队列不持久化，成功记录从数据库重新加载。
+
+`graded-cards-ui.js` 提供列表/网格、详情、筛选、排序、图片预览和删除确认。
+
+**上传与扫描卡牌图片。** 详情页点击正面或反面图片打开选项：查看大图（有图片时）、上传图片、扫描卡牌（`capture=environment` 调用摄像头拍照）、移除上传的图片（已上传时）。浏览器先把照片缩到长边 ≤ 2400 像素并重新编码为 JPEG（同时应用 EXIF 方向），再调用 `detect-card`；截取对话框 `graded-crop.js` 在照片上叠加 SVG 四角框，预置识别结果（识别失败则为整张照片稍向内缩），可用鼠标、触摸拖动或方向键（Shift 加速）调整，“整张图片”“自动识别”可重置。保存时把同一张 JPEG 与四角坐标发给 `PUT …/images/{side}`，服务端透视校正截取。记录的 `images` 统一为正面、反面两项 `{url, alt, side, thumbnail_url, uploaded}`：上传图片优先；机构未标注正反面的图片（如 PCG-CN）按页面顺序依次作为正面、反面。
+
+边框识别位于 `card_detect.py`（依赖 `opencv-python-headless`，Pillow 先解码并应用 EXIF 方向）：在长边 900 像素的副本上，用多组 Canny 边缘及 Otsu 阈值图找轮廓，取凸包拟合四边形（圆角卡砖退化为外接旋转矩形），筛选面积占照片 8%–98.5%、短长边比 0.45–0.92、填充度 ≥ 0.8、两个以上角不贴照片边缘的候选，再按面积 × 矩形度 × 四边梯度支撑度评分取最高者。除轮廓外还用 Hough 直线组合四边形：反光和保护袋常使卡砖外框断开、无法形成闭合轮廓，但四条边仍是长直线。候选还需四角在 72°–108° 之间、对边长度比 ≥ 0.72（排除由卡砖上边与卡牌下边拼成的形状）；边缘支撑度取四边中最弱一边的平均梯度强度与强边缘覆盖率之和。选出最高分后，若有包住它、得分不低于 80% 且支撑度不低于 70% 的更大四边形则取之，因此卡砖照片优先截取整块卡砖（不被内部卡牌边框截短，也不被保护袋上较弱的折边拉长），裸卡截取卡牌。测试用 `tests/card_photos.py` 合成不同背景、旋转和透视的照片验证角点误差（≤ 4%），实物照片的效果仍需在设备上确认，失败时可手动调整。
+
+**亮度校准（可选）。** 截取对话框的“亮度校准”按钮把当前照片发给 `calibrate-image`，用返回的同尺寸 JPEG 替换预览和待上传图片，四角坐标不变；按钮随即变为“撤销亮度校准”，原图和校准图都保留在浏览器内存中，撤销与再次应用无需重新请求。处理位于 `card_enhance.py`：① 高光区检测——同时满足较亮（HSV 明度 > 165 起计）、低饱和，并且比所在表面更亮（比文字闭运算后的局部表面亮，或比排除饱和高光后的大范围“漫反射白”参考亮），以免把白色卡面、白色衣服误判为反光；② 在高光区内用局部暗通道先验去除白色反光“薄雾”，按反光外较暗表面（墨色、画面）的暗通道估计遮罩强度，上限 0.6；③ 局部光照归一化——以局部亮包络估计光照，把较暗区域提升到光照充足水平（增益 0.9–1.25）；④ CLAHE 轻度增强对比度。大尺度模糊在缩小副本上计算，2400 像素照片约 0.5–1 秒。测试用合成的“画面上覆盖反光”场景验证反光下画面变暗、对比度提高、未受影响区域基本不变及白色卡面不被误判。
+
+上传图片沿用头像的 COS 存储桶 `TCG_AVATAR_COS_URL`，对象为 `/tcgtoolkit/graded/<随机32位十六进制>.webp`；替换、移除和删除卡片时旧对象进入头像共用的 `avatar_cleanup` 删除队列（后台任务重试）。未配置存储桶时上传返回 503 `graded_image_storage_failed`。识别与上传每账号每分钟共 30 次。错误代码：415/422 `graded_image_invalid`、413 `graded_image_too_large`、422 `graded_image_dimensions`（每边 > 6000 像素）、422 `graded_image_crop`（坐标无效或截取过小）、404 `graded_card_not_found`／`graded_image_side`、429 `rate_limited`。筛选区在没有卡片时也保留（卡牌库与收藏页同样在加载完成后始终显示筛选区）。评级卡页面的“多选”与卡牌库一致：可勾选或全选当前筛选后显示的卡片，选择栏提供批量“重新查询”（逐张交给前端查询队列，同时最多两项，已在查询中的卡片跳过）和“删除”（确认后逐张调用 `DELETE /api/graded-cards/{id}`，完成的取消选中，失败的保持选中）；存在分组时选择栏还提供“移动到分组”（逐张调用 `PUT /api/graded-cards/{id}/group`）；游游亭批量查价不适用于评级卡。记录的 `display_name` 为用户设置的可选显示名称：设置后网格、列表、详情标题、删除确认和图片说明都显示该名称（鼠标悬停标题可看到证书卡名，详情页另显示“证书卡名”），搜索同时匹配显示名称和证书卡名，“卡名”排序按显示名称。详情页的价格与显示名称编辑位于正反面图片下方，两行按“标签 | 输入 | 保存”对齐，各自保存。评级卡分组与卡牌库分组相互独立（`graded_card_groups` 表，记录的 `group_id` 字段），界面复用 `group-ui.js` 的分组栏和对话框：选中分组后统计、筛选项、计数和列表只显示该组，“添加评级卡”默认放入当前分组；存在分组时列表显示“分组”列，网格卡片右下角和详情显示所在分组。评级卡图片为静态图片，不使用其他页面的鼠标跟随倾斜效果，点击仍可放大预览。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
+
+### 评级卡验收
+
+在上文专用 PostgreSQL 测试环境中运行：
+
+```powershell
+python -m pytest -q tests/test_graded_cards.py tests/test_database.py tests/test_grading.py tests/test_cgc.py tests/test_ars.py
+node --test tests/graded_cards.test.mjs tests/grading_scan.test.mjs
+```
+
+后端覆盖持久化、排序、账号隔离、写请求保护、失败保留快照、并发重复、刷新期间删除以及查询连接释放；前端覆盖队列、重试、超时、会话切换和扫码错误处理。全量回归命令见[测试](#测试)。
+
+可重复的真实 Chromium 验收使用实际 WebUI、HTTP API 和隔离 PostgreSQL，仅替换邮件投递、机构查询和远端图片：
+
+```powershell
+python -m pip install -e ".[test,web,browser-test]"
+python -m playwright install chromium
+$env:TCG_BROWSER_TEST="1"
+python -m pytest -q tests/test_graded_webui.py
+$env:TCG_BROWSER_TEST="0"
+```
+
+该测试验证无卡片时保留筛选区（评级卡、卡牌库、收藏页）、官网链接识别、保存后重载、去重、ARS 原版卡名与英文信息折叠、PCG-CN 原名、评级卡图片无倾斜效果、查询中占位卡与已保存卡片尺寸一致、取消查询后服务端上游请求被关闭且不保存、真实 PNG 照片及合成视频帧经 Canvas/jsQR 解码、摄像头权限拒绝提示与关闭后轨道释放、ARS 无图片显示、筛选、排序、详情和图片预览、失败后刷新重试、删除确认、中英文及状态提示翻译、390px 移动布局和退出清理。截图默认保存在 `data/graded-webui-acceptance/`，可用 `TCG_BROWSER_OUTPUT` 改路径。合成视频不调用电脑实体摄像头；实物标签的对焦和扫码效果需在目标设备检查。真实机构网络验收使用下文独立开关。
+
+2026-11-14 本地收尾验收结果（PostgreSQL 17 专用测试库）：
+
+| 检查 | 结果 |
+| --- | --- |
+| Python 全量回归 | 846 通过、5 项可选测试跳过；新增 schema 14→15 数据保留用例另行通过 |
+| Node 全量回归 | 207 通过；修正扫码测试预期及 Canvas 替身，清理测试遗留计时器 |
+| Chromium WebUI | 通过上述浏览器流程；修复切换语言后成功提示仍保留旧语言的问题 |
+| 真实 PSA / CGC 查询 | 两项均 HTTP 200，各返回两张证书图片，经 Proxy-Go 约 16 秒完成 |
+| 真实 ARS 查询 | HTTP 200，保留编号前导零，等级 10，图片列表为空，直连约 1 秒完成 |
+
+首次全量运行因 C 盘空间和内存分配不足中断；将本轮 `TEMP` / `TMP` 指向 D 盘后重新完成全量回归。上述通过数来自成功重跑，不含中断运行。测试未修改生产数据库。
+
+### 即时证书查询
+
+PCG-CN 使用机构 ID `pcgcn`，通过 `GET /api/grading/pcgcn/certificates/{cert_number}` 查询，也支持评级卡页面的新增、刷新和官网链接/二维码识别。后端直连 `https://card.pcgcard.cn/api/card/card/search_card_result/`，参数为 `pageNo=1&pageSize=1&proof_number=编号`，不使用 Proxy-Go、Token 或环境代理；20 秒超时，不重试、不跟随重定向。无需数据库迁移。
+
+官方返回 `code=2000` 且证书编号匹配时，映射卡名、原文名称、系列、卡号、年份、语言、等级、Centering/Corners/Edges/Surface 分项与评级说明。等级分布置于 `population.grades`，总数为 `total_grading`。图片按官网轮播顺序保留，官网未标明正反面，`side` 为 `null`；页面按现有规则将前两张依次展示。物流单号和账号关联字段不保存。明确的 `code=400, data=null, msg=卡片不存在` 返回 404，其余异常结构为 `pcgcn_unreadable`；超时、限流和网络错误分别为 `pcgcn_timeout`、`pcgcn_rate_limited`、`pcgcn_unavailable`。
+
+验收编号 `10198854`：SHIKIBE MAYU、CHAOS JPN. RIDDLE JOKER 1.0、YZ-411、2018，两张图片。离线用例见 `tests/test_pcgcn.py`，页面集成见 `tests/test_graded_webui.py`。
+
+`GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa`、`cgc`、`ars` 和 `pcgcn`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
+
+配置服务端 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。PSA 查询使用 `ProxyGoClient`，以 `country="US"` 抓取 `https://www.psacard.com/en-CA/cert/{cert_number}/psa`。Proxy-Go 负责目标网站验证和代理重试；TCG 客户端默认超时 220 秒、连接超时 5 秒，不自动重试、不跟随重定向。修改 Compose 中的配置后重新创建 Web 容器。
+
+Docker Desktop 中的 Web 访问宿主机 Proxy-Go 时，地址应为 `http://host.docker.internal:18087/v1/fetch`；`127.0.0.1` 在容器内指向容器自身。宿主机直接运行 Python 则可使用 `http://127.0.0.1:18087/v1/fetch`。两种运行方式共用 `.env` 时，可在本地 Compose 覆盖文件中为 `services.web.environment.PROXY_GO_API` 单独设置容器地址。部署后应从实际 Web 容器验证证书查询，仅宿主机测试通过不能证明容器到网关可达。
+
+请求示例（`TCG_LOGIN_TOKEN` 为本站登录 Token）：
+
+```powershell
+Invoke-RestMethod -Uri 'http://localhost:8000/api/grading/psa/certificates/98428602' -Headers @{ Authorization = "Bearer $env:TCG_LOGIN_TOKEN" }
+```
+
+返回 `provider: "psa"`、`cert_number`、`source_url`、`certificate`、`images`。`source_url` 为上述抓取地址。`certificate` 根据网页生成：
+
+- `title`：页面 `h1` 标题。
+- `grade`：评级文本，例如 `"GEM MT 10"`。
+- `fields`：Item Information 区域的原始标签和值，保留额外字段。
+- `population`：`{"at_grade": 整数或null, "higher": 整数或null}`，分别为同等级和更高等级数量；页面未提供时为 `null`。
+
+`images` 为 `[{"url": 图片src, "alt": 图片alt, "side": "front"或"back"或null, "thumbnail_url": 缩略图URL或null}, …]`。PSA 仅提取 `Cert image N` 证书图片，按 `Cert image 1/2` 标记正反面，缩略图字段为 `null`；不包含 Logo 或销售缩略图，也不下载图片。此接口返回上述网页结构，不再返回 PSA 官方 API 的 JSON。CGC 按 Obverse/Reverse 标记正反面，保留页面上与原图不同的缩略图 URL；ARS 返回空图片列表。
+
+错误响应为 `{"detail":"错误代码"}`：
+
+| HTTP | 错误代码 | 含义 |
+| --- | --- | --- |
+| 401 | `authentication_required` | 未登录本站 |
+| 422 | `unsupported_grading_provider` / `invalid_cert_number` | 机构或编号错误 |
+| 404 | `grading_certificate_not_found` | 页面明确返回无记录 |
+| 429 | `grading_busy` | 当前账号或进程的并发查询已达上限 |
+| 503 | `psa_not_configured` | Proxy-Go 地址或密钥未配置 |
+| 504 | `psa_timeout` | 网关返回 504 或网络请求超时 |
+| 502 | `psa_authentication_failed` | Proxy-Go 网关返回 401/403 |
+| 502 | `psa_rate_limited` | 网关或目标站返回 429 |
+| 502 | `psa_unreadable` | 非 HTML、页面无法解析或证书编号不匹配 |
+| 502 | `psa_unavailable` | 其他上游请求错误 |
+
+网关 HTTP 200 后仍检查目标站状态及页面内容。服务器日志记录请求 ID、目标状态、代理字节和尝试次数；客户端错误响应不包含凭据或上游错误正文。
+
+`tests/test_grading.py` 使用模拟响应验证 PSA 网页解析和错误映射。`tests/test_grading_live.py` 按 PSA、CGC、ARS 参数化，从对应 TCG 接口调用开始访问真实官网；PSA/CGC 经过 Proxy-Go，ARS 直连。每个机构默认跳过，独立开关启用。运行时使用上文的专用测试 PostgreSQL 配置及可用的 Proxy-Go 配置，PSA 示例：
+
+```powershell
+$env:TCG_LIVE_PSA_TEST="1"
+python -m pytest -q -s tests/test_grading_live.py
+```
+
+可通过 `TCG_LIVE_PSA_OUTPUT` 指定保存返回 JSON 的文件路径。验收编号 `98428602` 对应 CHITOSE TUTAMACHI、卡号 3955、2024 年、GEM MT 10，以及两张证书图片。
+
+### CGC 网页查询
+
+`GET /api/grading/cgc/certificates/{cert_number}` 沿用上述登录、编号校验和 `no-store` 规则。使用同一 Proxy-Go 配置，以 `country="US"` 抓取 `https://www.cgccards.com/certlookup/{cert_number}/`。默认超时 220 秒、连接超时 5 秒，客户端不自动重试、不跟随重定向。
+
+返回 `provider: "cgc"`、`cert_number`、`source_url`、`certificate`、`images`；`source_url` 为抓取地址。`certificate.title` 取 `Card Name`，`grade` 取 `Grade`，`fields` 保留证书信息的原始标签和值。当前页面的 Population 区域只有 JavaScript 异步模板，没有实际数量，因此 `population` 返回 `{"at_grade": null, "higher": null}`，不把缺失值当作零。
+
+`images` 仅从证书图片区读取：`url` 为图片链接 `a.href` 指向的原图，`alt` 为图片的 `title`。返回 Obverse、Reverse 图片地址，不下载图片，也不包含 Add to Registry 示例图或 Logo。
+
+配置、网络、网关和解析错误沿用 PSA 的 HTTP 状态映射，错误代码分别为 `cgc_not_configured`、`cgc_timeout`、`cgc_authentication_failed`、`cgc_rate_limited`、`cgc_unreadable`、`cgc_unavailable`。服务器日志保留请求 ID、目标状态、代理字节和尝试次数，客户端错误响应不公开凭据。
+
+成功页面也包含未激活的“无记录”和限流模板，解析器不会据此报错。若返回的只是预填编号、等待 JavaScript 查询的入口页，返回 `502 cgc_unreadable`，不将其推断为证书不存在。
+
+`tests/test_cgc.py` 使用真实页面片段进行离线测试，来源见 [fixtures 说明](../tests/fixtures/README.md)。测试证书 `6091052028` 对应 Tsuyogaru Otona no Secret Labo Mayu、Weiss Schwarz Rose、2025 年、Japanese、Yuzu Soft、卡号 R01-026SP、Special、PRISTINE 10，Grade Date 为 2025-11-19，含 Obverse 和 Reverse 两张图片。
+
+真实端到端测试使用独立开关和输出路径：
+
+```powershell
+$env:TCG_LIVE_CGC_TEST="1"
+python -m pytest -q -s tests/test_grading_live.py
+```
+
+可通过 `TCG_LIVE_CGC_OUTPUT` 指定保存返回 JSON 的文件路径。两个机构开关均为 `1` 时，该命令同时验证 PSA 与 CGC。
+
+### ARS 网页查询
+
+`GET /api/grading/ars/certificates/{cert_number}` 沿用上述登录、编号校验和 `no-store` 规则。使用普通 HTTP 请求 `https://ars-grading.com/grading/searchNumber?id={cert_number}`，不需要 Token 或浏览器。单次超时 20 秒，不重试、不跟随重定向。
+
+返回 `provider: "ars"`、`cert_number`、`source_url`、`certificate`、`images`。ARS 的 `certificate` 结构为：
+
+- `fields`：日英信息表的原始标签和值，保留额外字段。
+- `grade`：唯一高亮等级的 `data-grade` 字符串，例如 `"10"` 或 `"10+"`。
+- `population.total_grading` / `total_submission`：页面的鉴定总数和提交总数（整数）。
+- `population.grades`：等级到原始统计文本的映射，例如 `{"10": "1（0）"}`；`population.remarks` 保留页面对统计的说明，不推断括号内数量。
+
+首期 `images` 固定为 `[]`，因为实测查询页没有卡片图片，不返回网站 Logo。
+
+明确的无记录提示返回 404 `grading_certificate_not_found`；超时为 504 `ars_timeout`；429 为 502 `ars_rate_limited`；其他 HTTP/网络错误为 502 `ars_unavailable`；非 HTML、编号回显不匹配、关键结构缺失或多项高亮为 502 `ars_unreadable`。错误响应不包含上游正文。
+
+验收编号 `047088950114`：学生兼研究者 式部 茉優 / Student and Researcher, Mayu Shikibe，Lycee Overture，2019，LO-1606-S，Special Rare，高亮等级 10。采集时鉴定总数 1、提交总数 2；这些统计可能随上游更新。模拟用例在 `tests/test_ars.py`，正常及无记录页面来源见 `tests/fixtures/README.md`。
+
+真实 ARS 查询可设置 `$env:TCG_LIVE_ARS_TEST="1"` 后运行 `python -m pytest -q -s tests/test_grading_live.py`；`TCG_LIVE_ARS_OUTPUT` 可指定返回 JSON 的保存路径。三个机构开关可同时启用。
 
 ## 商户查价接口
 
@@ -192,13 +424,13 @@ WebUI 添加／编辑卡牌对话框在单价和币种右侧提供“查价”�
 
 `POST /api/cards` 可在原卡牌字段中加入可选的 `price`，表示手动记录的单张价格，例如 `"price": 12.34`。允许数值或十进制数字字符串，范围为 0–999999999999.99，最多两位小数；负数、布尔值、非有限数和超出精度的输入返回 422。省略或传 `null` 表示尚未设置价格，零表示价格为 0。可选的 `currency` 指定单价币种，取值 `JPY`、`CNY`、`CAD`（不区分大小写，省略或 `null` 为 `JPY`），其他值返回 422；后端只保存原始金额和币种，不做换算。
 
-卡牌新增、列表、编辑和移动接口返回 `price`（JSON 数值或 `null`）和 `currency`。`PUT /api/cards/{card_id}` 可修改价格，显式传 `null` 清空；省略 `price` 或 `currency` 时分别保留原值，兼容已有编辑请求。价格不参与卡牌去重，移动卡牌和删除分组保留价格。
+卡牌新增、列表、编辑和移动接口返回 `price`（JSON 数值或 `null`）和 `currency`。`PUT /api/cards/{card_id}` 提交完整卡牌内容，`price` 显式传 `null` 或省略时清空，省略 `currency` 时使用 `JPY`。调用方调整数量时也须提交要保留的价格和币种。价格不参与卡牌去重，移动卡牌和删除分组保留价格。
 
 JSON/XLSX 导入导出均支持 `price` 和 `currency`，导出时依次位于数量之后，表头支持 `price`／`Price`／“价格”及 `currency`／`Currency`／“币种”；导入缺少币种列时为 `JPY`，未知币种使整份导入失败。未设置价格时 JSON 为 `null`、XLSX 为空单元格；已设置价格以数值单元格导出。旧文件省略价格仍可导入，重复卡牌被跳过时保留原价格，任意行价格不合法则整份导入失败。`fields=price` 可单独选择价格字段。
 
 迁移 `0012` 升级到 schema 12，为卡牌新增可空的 `NUMERIC(14,2)` 字段和非负约束；历史卡牌价格为 `null`，其他数据及分组保持原样。迁移 `0013` 升级到 schema 13，新增非空 `currency` 字段（默认 `JPY`）及取值约束，已有卡牌均记为 `JPY`。
 
-WebUI 的添加／编辑卡牌对话框在“拥有量”同一行提供选填的“单价”输入（非负、最多两位小数，由浏览器校验），右侧可选币种，新卡牌默认 JPY；对话框与注册表单一致，用红色星号标出必填项（游戏、编号、名称、稀有度、拥有量），选填项不再附加“可留空”提示，以十进制字符串提交以保留精度，清空即发送 `null`；编辑对话框总是提交当前价格，单独调整数量时保留原价格。导出对话框的“字段”新增“价格”和“币种”，此前保存的导出设置会自动勾选新字段。
+WebUI 的添加／编辑卡牌对话框在“拥有量”同一行提供选填的“单价”输入（非负、最多两位小数，由浏览器校验），右侧可选币种，新卡牌默认 JPY；对话框与注册表单一致，用红色星号标出必填项（游戏、编号、名称、稀有度、拥有量），选填项不再附加“可留空”提示，以十进制字符串提交以保留精度，清空即发送 `null`；编辑对话框总是提交当前价格，单独调整数量时保留原价格。导出对话框可以选择“价格”和“币种”等字段，保存后按当前有效选择恢复；尚未配置或配置损坏时默认全选。
 
 卡牌库价格与搜索、收藏一致跟随侧栏的显示币种：单价按汇率换算后显示，下方小字附录入的原金额（录入币种与显示币种相同时也显示）；卡牌库按需通过 `/api/currency/convert` 获取录入币种的汇率。滑条与价格排序按换算成日元后的金额比较，切换显示币种时已选范围不变、标签随之换算；取不到汇率的卡牌只显示原金额，不参与价格范围筛选，价格排序时排在最后。筛选区复刻收藏页的价格滑条：滑块按当前分组内已设置价格的不同取值分档，两端表示不限，与稀有度、排序及搜索同时生效，“重置”恢复不限；标签以显示币种表示。未设置价格的卡牌在不限时照常显示，设置任一边界后被排除。少于两个不同价格时滑条禁用。排序新增“价格升序／降序”，未设置价格的卡牌在两种方向下都排在最后。卡牌库的列表和网格与收藏页对齐，原购物车位置改为“持有”数量步进器（样式同购物车步进器）：`−`／`+` 各调整一张，也可直接输入数字后按回车或离开输入框保存，Esc 恢复原值；输入内容在列表重绘时保留，保存失败的原因显示在页面状态行。原“调整数量”弹窗随之移除。列表列依次为游戏、稀有度、编号、名称、单价、持有、备注、分组和操作，未设置单价显示显示币种占位，如“JPY -”；顶部统计在“卡牌种类”“总张数”旁新增“总价值”：对当前显示（随分组和筛选）且持有数量大于 0 的卡牌按单价 × 持有数量换算成显示币种合计，下方注明“已计入 15/50 种”，即有可比较价格的种类数／卡牌种类数，未设置单价或取不到汇率的卡牌不计入，全部不计入时显示“JPY -”；网格卡片依次为编号标签、图片、名称、单价、“持有”行，底部左侧为移动／编辑／删除，右下角为分组。为让各列在较窄窗口内不出现横向滚动，卡牌库表格的备注列最小宽度降为 64px、名称列降为 190px，单元格左内边距为 14px。
 
@@ -232,6 +464,18 @@ WebUI 卡牌库沿用收藏页的分组栏样式与交互：页面顶部为“�
 导出增加 `group` 字段，位于备注之后，记录分组名称而非 ID，使文件可在不同账号间恢复分组；未分组时 JSON 为 `null`，XLSX 为空单元格。XLSX 表头为 `group`、`Group` 或“分组”，三者导入时均可识别；导出对话框的“字段”中可取消“分组”。
 
 导入时“分组”列可省略。新导入的卡牌按组名（去除首尾空白，区分大小写）加入当前账号的同名分组，不存在的分组自动创建，新分组按文件中首次出现的顺序排列；空白或缺失为未分组。跳过的重复卡牌保留原分组和内容，只被重复卡牌引用的分组不会创建。组名须为不超过 100 字符的文本，XLSX 中的整数按文本处理；不合法时整份文件以 422 `cards_import_row` 拒绝，不写入任何卡牌或分组。导入在锁定用户行后插入卡牌并在同一事务中创建分组、设置归属，响应仍为 `{"imported":…,"skipped":…}`。
+
+## 登录会话与并发
+
+每账号最多保存一条登录会话，`sessions_user` 是 `sessions.user_id` 上的唯一索引。登录在用户行锁内校验密码、撤销该账号旧会话并创建新会话，三者在同一事务中完成。并发登录按取得锁的顺序执行，最后一次成功签发的会话有效；密码错误不会影响已有会话。注册成功自动创建首个会话。
+
+会话从签发起固定 7 天有效，不自动续期。旧 Token 再次请求受保护接口返回 `401 authentication_required`；退出仅撤销请求携带的 Token，旧设备的退出请求不会注销新会话。改密和密码重置继续撤销该账号全部会话。
+
+迁移 `0014` 对已有会话按 `expires_at` 降序保留每账号一条；同秒签发的会话按 `token_hash` 降序确定保留项，再建立唯一索引。单会话账号保持登录，多会话账号其余设备在下次请求时需要重新登录。重复执行迁移不会更换保留的会话。
+
+前端用 `localStorage` 共享同源标签页的 Token，收到其他标签的存储事件后恢复对应会话。受保护请求同时校验开始时的会话代次和 Token；旧会话迟到的响应被丢弃，避免在存储事件到达前清除新会话。登录和退出响应也检查请求开始时的 Token。
+
+单会话减少多个设备同时操作的机会；同会话的多个标签页仍可并发，已经通过鉴权的在途请求会继续完成。购物车的会话锁与幂等记录、卡牌和收藏的事务锁继续负责业务并发一致性。
 
 ## 邮箱注册与验证
 
@@ -291,7 +535,7 @@ IP 限制为各发送接口每分钟 5 次、注册／绑定验证及登录接�
 改密事务同时更新 Argon2id 摘要、消费验证码、撤销全部会话，并作废该用户其余待发送或有效验证码。
 登录的密码校验和会话创建也在写事务内完成，避免并发登录在改密后留下旧密码会话。
 验证码邮件晚到时不会重新激活已作废记录。前端改密成功清除本地会话，返回登录页，并提示使用新密码登录。
-当前使用 PostgreSQL schema 13。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
+当前使用 PostgreSQL schema 16。业务接口保留现有 SMTP 配置；旧 SQLite schema v8 不再由应用读取。
 
 自动化测试注入内存发信器，仍经过真实验证码校验；没有生产环境绕过开关。
 真实投递验收：配置 SMTP 后，向自己的测试邮箱发送验证码，确认邮件语言、到达时间、验证码注册和邮箱登录，再确认重发旧码失效。
@@ -560,7 +804,9 @@ Content-Type: application/json
 
 设置 `TCG_SUBSCRIPTIONS_ENABLED=true` 后，FastAPI 启动后台线程，启动时扫描一次，此后按进程本地时间每小时整点扫描 `next_check_at <= 本轮开始时间` 的订阅。整点扫描即使因唤醒抖动或等待邮件锁而晚 10 分钟内开始，`checked_at` 和下次时间仍按该整点计算，避免 `HH:00:01` 开始的扫描让下一次错过 `HH:00:00` 而整体顺延一小时。每轮仅对到期订阅按游戏和链接去重，同卡未到期订阅不更新。与上次成功检查（首次为订阅时）的日元价格、库存数量和有货/缺货状态比较，元数据或库存文案变化不会触发邮件。未知库存、404 和解析失败保留基准，其他卡牌继续处理。
 
-按用户事务保存新快照和邮件待发记录，每轮每位用户最多生成一封中英双语汇总，同一天可有多封，列出所有成功检测到的变化及详情链接；无变化不发。投递时读取当前有效通知邮箱发送纯文本及 HTML 邮件；发送前剔除已经取消的订阅，剔除后为空则标记 `cancelled`。SMTP 在数据库事务外执行，沿用 `TCG_SMTP_*`，无须游游亭登录凭据。
+成功检查订阅时，复用本次抓取结果同步同用户、同游戏和同商品链接的普通品相收藏，匹配链接时忽略尾部 `/`。即使价格、库存没有变化，也更新收藏快照和 `refreshed_at`（与订阅 `checked_at` 相同）；保留收藏 ID、分组、创建时间、原商品链接和购物车信息。伤品收藏（`cart.kizu=1`）不使用普通品相数据更新；检查失败时保留收藏原数据和刷新时间。仅更新已有收藏，不自动创建收藏。
+
+按用户事务一并保存订阅快照、对应收藏及邮件待发记录，每轮每位用户最多生成一封中英双语汇总，同一天可有多封，列出所有成功检测到的变化及详情链接；无变化不发。投递时读取当前有效通知邮箱发送纯文本及 HTML 邮件；发送前剔除已经取消的订阅，剔除后为空则标记 `cancelled`。SMTP 在数据库事务外执行，沿用 `TCG_SMTP_*`，无须游游亭登录凭据。
 
 首次投递失败后等待 60、300、1800 秒再重试，后台最多每 30 秒扫描到期邮件，累计 4 次失败转为 `failed`。重启恢复未耗尽的待发重试，不自动重发终态失败邮件。SMTP 已接收但成功状态尚未提交时进程崩溃，可能重复发送同一 Message-ID。邮件表中的变化记录不因取消订阅而移除，保留用于排查。
 

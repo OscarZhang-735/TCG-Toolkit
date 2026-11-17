@@ -1,0 +1,180 @@
+<main id="main" role="main">
+<div class="section" id="search-number">
+<div class="container">
+<div class="search-section">
+<div class="search-mode">
+<input checked="checked" id="mode1" name="mode" type="radio" value="1"/>
+<label for="mode1">鑑定番号から検索</label>
+<input id="mode2" name="mode" type="radio" value="2"/>
+<label for="mode2">カード名から検索</label>
+</div>
+<div class="search-box">
+<input id="word" name="word" placeholder="鑑定番号またはカード名を入力" type="text" value="047088950114"/>
+<button onclick="search()"><i class="fas fa-search"></i>検索</button>
+</div>
+</div>
+<h2>カード情報 / Card Info</h2>
+<div class="card-info">
+<table>
+<tr>
+<th>カード名称</th>
+<td>
+									
+									学生兼研究者 式部 茉優
+								</td>
+</tr>
+<tr>
+<th>ブランド</th>
+<td>
+									
+									Lycee Overture
+								</td>
+</tr>
+<tr>
+<th>収録</th>
+<td>
+									
+									Ver.ゆずソフト 2.0
+								</td>
+</tr>
+<tr>
+<th>発行年</th>
+<td>
+									
+									2019
+								</td>
+</tr>
+<tr>
+<th>型番</th>
+<td>
+									
+									LO-1606-S
+								</td>
+</tr>
+<tr>
+<th>レアリティ</th>
+<td>
+									
+									Special Rare
+								</td>
+</tr>
+</table>
+<table>
+<tr>
+<th>Card Name</th>
+<td>
+									
+									Student and Researcher, Mayu Shikibe
+								</td>
+</tr>
+<tr>
+<th>Brand</th>
+<td>
+									
+									Lycee Overture
+								</td>
+</tr>
+<tr>
+<th>Expansion</th>
+<td>
+									
+									Ver.YUZU SOFT 2.0
+								</td>
+</tr>
+<tr>
+<th>Release</th>
+<td>
+									
+									2019
+								</td>
+</tr>
+<tr>
+<th>Card ID</th>
+<td>
+									
+									LO-1606-S
+								</td>
+</tr>
+<tr>
+<th>Rarity</th>
+<td>
+									
+									Special Rare
+								</td>
+</tr>
+</table>
+</div>
+<div class="grade-table">
+<div class="totals">
+<div class="main">鑑定総数 TOTAL GRADING 1</div>
+<div class="sub">（提出総数 TOTAL SUBMISSION 2）</div>
+</div>
+<h2>グレード別統計</h2>
+<div class="grade-entry" data-grade="AU">
+<span>Grade AU</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="1">
+<span>Grade 1</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="2">
+<span>Grade 2</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="3">
+<span>Grade 3</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="4">
+<span>Grade 4</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="5">
+<span>Grade 5</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="6">
+<span>Grade 6</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="7">
+<span>Grade 7</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="8">
+<span>Grade 8</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry" data-grade="9">
+<span>Grade 9</span>
+<span>0（0）</span>
+</div>
+<div class="grade-entry highlight-grade" data-grade="10">
+<span>Grade 10</span>
+<span>1（0）</span>
+</div>
+<div class="grade-entry" data-grade="10+">
+<span>Grade 10+</span>
+<span>0（0）</span>
+</div>
+<div class="remarks">
+							※（ ）内はミスプリント等の特記事項を含みます。<br/>
+							※提出総数 = 鑑定総数 + MG未達成分（2025年以降反映）
+						</div>
+</div>
+<div class="btn_area">
+<div class="btn_blank"></div>
+<input class="search-back-btn2" name="back" onclick="location.href='/search'" type="button" value="検索画面へ戻る"/>
+<div class="btn_blank"></div>
+</div>
+</div>
+</div>
+<form action="/grading/searchNumber" method="get" name="searchNumber2">
+<input id="hid" name="id" type="hidden"/>
+</form>
+<form action="/grading/searchName" method="get" name="searchName2">
+<input id="hname" name="name" type="hidden"/>
+<input name="page" type="hidden" value="1"/>
+</form>
+</main>

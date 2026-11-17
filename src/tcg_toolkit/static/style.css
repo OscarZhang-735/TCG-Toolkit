@@ -60,14 +60,15 @@ input:not([type=checkbox]), select {
 input:not([type=checkbox]):hover, select:hover { border-color: var(--color-border-hover); }
 input:focus, select:focus { outline: none; border-color: var(--color-focus); box-shadow: var(--focus-ring); }
 button:focus-visible, a:focus-visible, .chip:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-button {
+button, .button-link {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   height: 40px; padding: 0 18px; cursor: pointer; white-space: nowrap;
   border: 1px solid var(--color-primary); border-radius: var(--radius-md);
   background: var(--color-primary); color: var(--color-on-primary); font-weight: 600;
   transition: background .15s, border-color .15s, color .15s;
 }
-button:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+.button-link { text-decoration: none; }
+button:hover, .button-link:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
 button:disabled { opacity: .35; cursor: not-allowed; }
 button:disabled:hover { background: var(--color-primary); border-color: var(--color-primary); }
 .secondary { background: var(--color-surface); border-color: var(--color-border-strong); color: var(--color-text); }
@@ -444,6 +445,11 @@ button.password-toggle:hover { border: 0; background: var(--color-hover); color:
 .nickname-dialog .dialog-actions { margin-top: 24px; }
 .profile-meta h2 { font-size: 20px; line-height: 28px; overflow-wrap: anywhere; }
 .profile-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.account-footer { display: flex; justify-content: center; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--color-divider); }
+/* Plain text link, like a page footer: no button box. */
+.footer-link { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-muted); text-decoration: none; }
+.footer-link:hover { color: var(--color-text); text-decoration: underline; text-underline-offset: 3px; }
+.footer-link .bi-box-arrow-up-right { font-size: 10px; }
 .profile-meta p { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; line-height: 20px; color: var(--color-text-muted); }
 .profile-meta p[hidden] { display: none; }
 #account-login-name { gap: 0; }
@@ -514,10 +520,13 @@ button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-
 .card-foot .group-tag { margin-right: 6px; }
 td.group-col { white-space: nowrap; }
 /* Multi-select: checkboxes and the action bar only show while selecting. */
-#favorites-panel:not(.selecting) .select-col, #cards-panel:not(.selecting) .select-col { display: none; }
+#favorites-panel:not(.selecting) .select-col, #cards-panel:not(.selecting) .select-col, #graded-panel:not(.selecting) .select-col { display: none; }
 th.select-col, td.select-col { width: 1%; padding-right: 0; }
 input.select-box { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--color-primary); }
 .card-image input.select-box { position: absolute; top: 12px; left: 12px; z-index: 3; width: 20px; height: 20px; }
+/* Graded tiles carry two images; the checkbox sits over the pair. */
+.graded-images:has(> input.select-box) { position: relative; }
+.graded-images > input.select-box { position: absolute; top: 10px; left: 10px; z-index: 3; width: 20px; height: 20px; }
 tr.selected td { background: var(--color-hover); }
 .card.selected { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); }
 .selection-bar {
@@ -541,7 +550,7 @@ button.favorite-add-option {
   border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text); font-size: 13px; font-weight: 500;
 }
 button.favorite-add-option:hover, button.favorite-add-option:focus-visible { background: var(--color-hover); outline: none; }
-#favorites-list.without-groups .group-col, #cards-table.without-groups .group-col { display: none; }
+#favorites-list.without-groups .group-col, #cards-table.without-groups .group-col, #graded-table.without-groups .group-col { display: none; }
 #favorites-details[aria-pressed=true] { background: var(--color-hover); border-color: var(--color-border-hover); }
 /* Always level with the update time; a status note, if any, goes on the line below. */
 .fav-time { display: inline-flex; align-items: center; gap: 5px; }
@@ -669,8 +678,8 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 /* Unit price input with its currency picker on the same line. */
 .field > .price-input { display: flex; gap: 8px; margin-top: 6px; color: inherit; font-size: inherit; font-weight: inherit; }
 /* Outrank the generic field input/select margins below; the wrapper already carries it. */
-.cards-form-grid .field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
-.card-dialog .field .price-input select { width: auto; flex: none; margin-top: 0; }
+.cards-form-grid .field .price-input input, .field.graded-price-field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
+.card-dialog .field .price-input select, .field.graded-price-field .price-input select { width: auto; flex: none; margin-top: 0; }
 .card-dialog .price-input .price-lookup-button { flex: none; padding: 0 12px; gap: 6px; }
 /* Price lookup results, below the quantity / price row. */
 .price-lookup { padding: 12px 14px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
@@ -950,9 +959,9 @@ button.cart-settings-toggle:hover, button.panel-toggle:hover { background: var(-
   .section-heading { flex-wrap: wrap; row-gap: 10px; }
   .section-heading .heading-actions { flex-wrap: wrap; margin-left: auto; }
 }
-/* Four nav links fit as equal columns: icon above a short label. */
+/* Five nav links fit as equal columns: icon above a short label. */
 @media (max-width: 480px) {
-  #app-nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  #app-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
   #app-nav a { flex-direction: column; justify-content: center; gap: 3px; padding: 7px 4px; font-size: 12px; text-align: center; white-space: normal; }
   /* Starts just right of the icon, so wider counts (999+) grow away from it. */
   #app-nav a .nav-count { position: absolute; top: 3px; left: calc(50% + 3px); margin: 0; min-width: 16px; padding: 0 4px; font-size: 10px; line-height: 15px; letter-spacing: -.2px; }
@@ -1224,3 +1233,187 @@ button.switch:hover .switch-track { filter: brightness(.95); }
 .page-notice .icon-button { flex: none; width: 28px; height: 28px; color: inherit; }
 .page-notice .icon-button:hover { background: #fde68a; color: inherit; }
 @media (max-width: 700px) { .page-notice { top: auto; bottom: 16px; left: 16px; right: 16px; max-width: none; } }
+
+/* Graded cards: the card library's list and grid, with both sides of the slab. */
+.graded-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 240px); gap: 16px; align-items: end; }
+.graded-filter-row .field select { margin-top: 6px; }
+#graded-filters .chips:empty { display: none; }
+.chip .chip-count { font-variant-numeric: tabular-nums; opacity: .7; }
+.chip:has(img.chip-logo) > span.chip-count { font-weight: 500; font-variant-numeric: tabular-nums; opacity: .6; }
+#graded-retry { margin-bottom: 14px; }
+#graded-table, #graded-grid { margin-top: 14px; }
+.graded-grid { grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); }
+.graded-grade { display: inline-block; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; vertical-align: middle; color: var(--color-on-primary); background: var(--color-primary); }
+.graded-grade.empty { color: var(--color-text-subtle); background: var(--color-surface-sunken); }
+.graded-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.graded-side { display: flex; flex-direction: column; gap: 4px; min-width: 0; margin: 0; }
+.graded-side .card-image { width: 100%; height: 190px; border-radius: var(--radius-md); }
+.graded-side figcaption { font-size: 11px; color: var(--color-text-subtle); text-align: center; }
+.graded-thumbs { display: flex; gap: 6px; }
+.graded-thumbs .card-image { width: 42px; height: 70px; }
+.graded-thumbs .image-fallback { font-size: 9px; }
+/* Titles open the details; they read as text, not as buttons. */
+button.graded-title { display: inline; height: auto; padding: 0; border: 0; background: none; color: var(--color-text); font-weight: 600; text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+button.graded-title:hover { background: none; border: 0; text-decoration: underline; }
+.graded-card button.graded-title { display: -webkit-box; font-size: 14px; line-height: 1.45; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.graded-meta { margin: 0; font-size: 12px; color: var(--color-text-muted); }
+/* A taller neighbour stretches the card: the footer moves down, the 3-line title stays clamped. */
+.graded-card button.graded-title { flex: none; }
+.graded-card > .graded-meta { margin-top: auto; }
+.graded-date { white-space: nowrap; font-size: 12px; color: var(--color-text-muted); }
+/* The list also carries a price column: the update time may wrap so the actions stay in view. */
+#graded-rows .graded-date { display: inline-block; min-width: 88px; white-space: normal; }
+td.graded-title-cell { min-width: 180px; }
+/* Eight columns: tighter cell padding keeps the row actions in view on a laptop screen. */
+#graded-table th, #graded-table td { padding-left: 10px; padding-right: 10px; }
+.graded-title-cell .graded-waiting, .graded-title-cell .graded-error { margin-top: 8px; }
+a.row-action { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; color: var(--color-text-muted); text-decoration: none; }
+a.row-action:hover { background: var(--color-hover); color: var(--color-text); }
+.card .row-actions a.row-action { width: 28px; height: 28px; font-size: 14px; }
+
+/* Lookups in progress: an indeterminate ring, the time waited and the longest expected wait. */
+.loading-ring { flex: none; width: 28px; height: 28px; border: 3px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin .9s linear infinite; }
+/* Still turning (it reports progress), only slower. */
+@media (prefers-reduced-motion: reduce) { .loading-ring { animation-duration: 2.6s; } }
+.graded-pending { border-style: dashed; background: var(--color-surface-muted); }
+.graded-pending:hover { box-shadow: none; }
+.graded-pending.failed { border-style: solid; border-color: #fca5a5; }
+.graded-waiting, .graded-error { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border-radius: var(--radius-md); }
+.graded-waiting { background: var(--color-surface); border: 1px solid var(--color-border); }
+.graded-waiting.queued > .bi { font-size: 20px; color: var(--color-text-subtle); }
+.graded-waiting-text, .graded-error-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--color-text-muted); }
+.graded-waiting-text strong, .graded-error-text strong { font-size: 13px; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
+.graded-elapsed { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
+.overdue > .graded-wait-hint { color: #b45309; }
+.graded-error { color: #991b1b; background: #fef2f2; border: 1px solid #fca5a5; }
+.graded-error > .bi { flex: none; margin-top: 1px; font-size: 18px; }
+.graded-error-text { color: #991b1b; }
+.graded-error-text strong { color: #7f1d1d; }
+.graded-error-code { white-space: normal; overflow-wrap: anywhere; color: #b91c1c; }
+.graded-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.graded-actions button { height: 30px; padding: 0 10px; font-size: 12px; gap: 5px; }
+.graded-pending-row .graded-error { max-width: 640px; }
+/* Placeholders keep the saved card's image area; the spinner sits over it. */
+.graded-pending-images { position: relative; }
+.graded-pending-marker { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.graded-images.graded-pending-images .graded-pending-marker { bottom: 19px; }
+.graded-pending-marker .loading-ring { width: 40px; height: 40px; border-width: 4px; }
+.graded-thumbs .graded-pending-marker .loading-ring { width: 22px; height: 22px; border-width: 3px; }
+.graded-pending-marker > .bi { font-size: 26px; color: var(--color-text-subtle); }
+.graded-thumbs .graded-pending-marker > .bi { font-size: 16px; }
+.graded-pending.failed .graded-pending-marker > .bi, .graded-pending-row.failed .graded-pending-marker > .bi { color: #b91c1c; }
+.graded-pending .card-foot { margin-top: auto; }
+.graded-english { margin-top: 10px; }
+.graded-english summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
+.graded-english summary:hover { color: var(--color-text); }
+.graded-english[open] summary { margin-bottom: 8px; }
+/* A card pointed at (duplicate add) is outlined for a moment. */
+.graded-card.graded-flash { animation: graded-flash 2.2s ease-out; }
+tr.graded-flash > td { animation: graded-row-flash 2.2s ease-out; }
+@keyframes graded-flash { 0%, 35% { box-shadow: 0 0 0 3px var(--color-focus); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes graded-row-flash { 0%, 35% { background: var(--color-hover); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  .graded-card.graded-flash { animation: none; outline: 3px solid var(--color-focus); }
+  tr.graded-flash > td { animation: none; background: var(--color-hover); }
+}
+
+/* Add dialog with the camera viewfinder. */
+.form-dialog.graded-dialog { width: min(560px, 94vw); }
+.graded-form-grid { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 14px; }
+.graded-form-grid .field select, .graded-form-grid .field input { margin-top: 6px; }
+.graded-dialog .graded-price-field { display: block; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-divider); }
+.graded-dialog .graded-group-field { display: block; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-divider); }
+.graded-dialog .graded-group-field[hidden] { display: none; }
+.graded-dialog .graded-group-field:not([hidden]) + .graded-price-field { margin-top: 14px; padding-top: 0; border-top: 0; }
+.graded-dialog .graded-group-field select { margin-top: 6px; }
+.graded-scan-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.graded-scan-actions button { flex: 1; min-width: 150px; }
+.graded-scanner { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 14px; }
+.graded-scanner[hidden] { display: none; }
+.graded-viewfinder { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; background: var(--gray-900); border-radius: var(--radius-lg); }
+.graded-viewfinder video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.graded-viewfinder-frame { position: absolute; left: 50%; top: 50%; width: 55%; aspect-ratio: 1; transform: translate(-50%, -50%); border: 3px solid rgb(255 255 255 / .9); border-radius: 14px; box-shadow: 0 0 0 9999px rgb(0 0 0 / .35); pointer-events: none; }
+.graded-scan-status { margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.graded-scan-status:empty { display: none; }
+.graded-scan-status.success { color: var(--color-success); }
+.graded-scan-status.error { color: #b91c1c; }
+.graded-scan-added { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--color-text-muted); }
+.graded-scan-added[hidden] { display: none; }
+.graded-scan-added li { display: flex; align-items: center; gap: 6px; }
+.graded-scan-added li.queued .bi { color: var(--color-success); }
+
+/* Details: large images beside every certificate field and population figure. */
+.form-dialog.graded-detail-dialog { width: min(940px, 94vw); padding: 28px; }
+.graded-price-total { overflow-wrap: anywhere; }
+/* Price in the info column, under the certificate number: label, amount + currency, save. */
+/* Under the images: price, then display name, as aligned rows (label | input | save). */
+.graded-detail-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.graded-detail-edit { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 10px; padding-top: 14px; border-top: 1px solid var(--color-divider); }
+.graded-edit-row { display: contents; }
+.graded-detail-edit .price-input { display: flex; min-width: 0; gap: 6px; }
+.graded-detail-edit input, .graded-detail-edit select { height: 34px; margin: 0; }
+.graded-detail-edit .price-input input { flex: 1; min-width: 0; }
+.graded-detail-edit .price-input select { flex: none; width: auto; }
+.graded-detail-edit input#graded-detail-name { width: 100%; min-width: 0; }
+.graded-detail-edit button { height: 34px; white-space: nowrap; }
+.graded-edit-status { grid-column: 2 / -1; margin: -2px 0 2px; }
+.graded-edit-status:empty { display: none; }
+.graded-original-name { margin: 0; font-size: 12px; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.graded-card .card-bottom.graded-price { padding-top: 8px; }
+.graded-detail-dialog .dialog-head h2 { overflow-wrap: anywhere; }
+.graded-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 24px; align-items: start; }
+.graded-detail-images .card-image { height: 340px; }
+/* Detail images are buttons: they open the side's image options. */
+.graded-detail-images .graded-side { position: relative; }
+button.graded-image-button { width: 100%; padding: 0; border: 0; background: var(--color-placeholder); cursor: pointer; }
+button.graded-image-button:hover { background: var(--color-hover); border: 0; }
+button.graded-image-button:hover img { opacity: .92; }
+button.graded-image-button:disabled { opacity: 1; cursor: progress; }
+button.graded-image-button:disabled:hover { background: var(--color-placeholder); }
+.graded-image-edit { position: absolute; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; font-size: 14px; color: var(--color-text); background: var(--color-surface); border-radius: 50%; box-shadow: var(--shadow-sm); }
+.graded-source-tag { margin-left: 6px; padding: 0 6px; font-size: 10px; font-weight: 600; border-radius: var(--radius-pill); }
+.graded-source-tag.uploaded { color: var(--color-success); background: var(--color-success-bg); }
+.graded-source-tag.official { color: var(--color-text-secondary); background: var(--color-surface-sunken); }
+.graded-detail-images .image-fallback { padding: 0 12px; font-size: 12px; color: var(--color-text-muted); }
+.graded-image-menu { position: absolute; top: 12px; left: 50%; z-index: 5; display: flex; flex-direction: column; min-width: 180px; padding: 6px; transform: translateX(-50%); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+button.graded-image-menu-item { justify-content: flex-start; height: 36px; padding: 0 10px; gap: 10px; font-weight: 500; color: var(--color-text); background: transparent; border: 0; }
+button.graded-image-menu-item:hover, button.graded-image-menu-item:focus-visible { background: var(--color-hover); border: 0; }
+#graded-detail-image-error { margin-top: 12px; }
+
+/* Crop dialog: the photo with four draggable corners; outside the crop is shaded. */
+.form-dialog.graded-crop-dialog { width: min(760px, 94vw); }
+.graded-crop-hint { margin: -6px 0 12px; font-size: 13px; line-height: 1.5; color: var(--color-text-secondary); }
+.graded-crop-stage { position: relative; display: flex; justify-content: center; margin: 0 auto; width: fit-content; max-width: 100%; touch-action: none; user-select: none; }
+.graded-crop-stage[hidden] { display: none; }
+.graded-crop-stage img { display: block; max-width: 100%; max-height: min(62vh, 640px); border-radius: var(--radius-sm); }
+.graded-crop-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.graded-crop-shade { fill: rgb(0 0 0 / .45); }
+.graded-crop-outline { fill: none; stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 1px rgb(0 0 0 / .8)); }
+.graded-crop-handle { fill: #fff; stroke: var(--color-primary); stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; }
+.graded-crop-handle.dragging { cursor: grabbing; fill: var(--color-primary); }
+.graded-crop-handle:focus-visible { outline: none; stroke: var(--color-focus); stroke-width: 4; }
+.graded-crop-busy { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgb(255 255 255 / .35); }
+.graded-crop-busy[hidden] { display: none; }
+.graded-crop-busy .loading-ring { width: 40px; height: 40px; border-width: 4px; }
+.graded-crop-dialog .dialog-actions .graded-crop-secondary:first-child { margin-right: 0; }
+.graded-crop-dialog .dialog-actions { flex-wrap: wrap; }
+.graded-crop-dialog #graded-crop-cancel { margin-left: auto; }
+.graded-detail-info { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.graded-detail-cert { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.graded-detail-label { font-size: 12px; color: var(--color-text-muted); }
+.graded-section h3 { margin-bottom: 8px; }
+.graded-section h4 { margin: 12px 0 6px; font-size: 12px; color: var(--color-text-muted); }
+.graded-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
+.graded-fields > div { min-width: 0; }
+.graded-fields dt { font-size: 11px; color: var(--color-text-muted); }
+.graded-fields dd { margin: 2px 0 0; font-size: 13px; color: var(--color-text); overflow-wrap: anywhere; }
+.graded-pop-table { width: auto; min-width: 220px; border: 1px solid var(--color-border); }
+.graded-pop-table th, .graded-pop-table td { padding: 6px 12px; }
+.graded-link-button { display: inline-flex; align-items: center; gap: 8px; height: 40px; margin-right: auto; padding: 0 18px; font-weight: 600; color: var(--color-text); text-decoration: none; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); }
+.graded-link-button:hover { background: var(--color-hover); }
+.graded-link-button[hidden] { display: none; }
+@media (max-width: 700px) {
+  .graded-filter-row, .graded-form-grid, .graded-detail { grid-template-columns: 1fr; }
+  .graded-side .card-image { height: 160px; }
+  .graded-detail-images .card-image { height: 260px; }
+}

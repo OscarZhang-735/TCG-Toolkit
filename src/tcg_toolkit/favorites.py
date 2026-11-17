@@ -2,7 +2,6 @@
 import json
 import time
 import uuid
-from urllib.parse import urlsplit
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -13,10 +12,12 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .auth.routes import current_user, write_guard
+from .auth.dependencies import current_user, write_guard
 from .models import Game, StockStatus
 from .errors import SearchRequestError, SearchParseError
-from .yuyutei_cart import CartTarget
+from .cart_models import CartTarget
+from .product_identity import normalize_product_url
+from .search import SEARCHERS
 
 
 router = APIRouter(prefix='/api/favorites')
@@ -39,13 +40,7 @@ class CardSnapshot(BaseModel):
     def product_location(self):
         if not self.name.strip() or not self.card_number.strip():
             raise ValueError('Name and card number must not be blank')
-        url = urlsplit(self.product_url)
-        code = {Game.WSR: 'wsr', Game.LYCEE: 'lo', Game.CHAOS: 'chaos', Game.WS: 'ws', Game.PM: 'pm', Game.SEV: 'sev'}[self.game]
-        prefix = f'/sell/{code}/card/'
-        if (url.scheme != 'https' or url.netloc != 'yuyu-tei.jp'
-                or not url.path.startswith(prefix) or not url.path[len(prefix):]
-                or url.query or url.fragment or any(p in ('.', '..') for p in url.path.split('/'))):
-            raise ValueError('Invalid product URL for this game')
+        normalize_product_url(self.game, self.product_url)
         return self
 
 
@@ -200,7 +195,6 @@ def remove(favorite_id: str, request: Request, user=Depends(current_user)):
 
 @router.post('/{favorite_id}/refresh', dependencies=[Depends(write_guard)])
 def refresh(favorite_id: str, request: Request, user=Depends(current_user)):
-    from .web import SEARCHERS
     with store(request).session() as db:
         saved = record(owned(db, user['id'], favorite_id))['item']
     condition = (saved.get('cart') or {}).get('kizu')

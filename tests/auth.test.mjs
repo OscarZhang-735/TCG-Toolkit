@@ -19,6 +19,19 @@ test('responses from previous sessions are rejected', async () => {
   const pending = api.fetch('/api/search'); api.invalidate(); resolve({status: 200});
   await assert.rejects(pending, {name: 'AbortError'});
 });
+for (const status of [200, 401]) {
+  test(`late ${status} from a replaced token cannot affect the new session before the storage event`, async () => {
+    let token = 'old-session', resolve, expired = 0;
+    const api = createAuthenticatedRequest(() => {expired++; token = null;},
+      () => new Promise(r => {resolve = r;}), () => token);
+    const pending = api.fetch('/api/search');
+    token = 'new-session';
+    resolve({status});
+    await assert.rejects(pending, {name: 'AbortError'});
+    assert.equal(token, 'new-session');
+    assert.equal(expired, 0);
+  });
+}
 test('history is isolated and anonymous history remains unassigned', () => {
   const data = new Map(); const storage = {getItem: k => data.get(k), setItem: (k,v) => data.set(k,v)};
   saveHistory(storage, ['legacy']); saveHistory(storage, ['alice'], 'a'); saveHistory(storage, ['bob'], 'b');

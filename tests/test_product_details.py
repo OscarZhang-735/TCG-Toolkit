@@ -5,7 +5,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-import tcg_toolkit.product_details as module
+import tcg_toolkit.external.yuyutei_products as module
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'

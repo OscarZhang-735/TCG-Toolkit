@@ -1,6 +1,6 @@
 """ORM session factory with startup validation for account persistence."""
 from ..database import Database
-from ..db_cli import require_schema
+from ..schema import require_schema
 
 
 class UserStore(Database):

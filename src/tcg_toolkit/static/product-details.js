@@ -1,6 +1,6 @@
 // Card number and rarity for cart rows. The cart page omits them, so they come
 // from search results already seen or, failing that, one product-page lookup each.
-import {productKey} from './cart.js';
+import {productKey} from './product-identity.js';
 
 export function createProductDetails(onChange = () => {}, concurrency = 3) {
   let request = null, generation = 0, active = 0;

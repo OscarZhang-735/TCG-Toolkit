@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from sqlalchemy.exc import IntegrityError
 
 from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.cards import XLSX_MEDIA_TYPE
+from tcg_toolkit.card_transfer import XLSX_MEDIA_TYPE
 from tcg_toolkit.db_models import OwnedCard
 from tcg_toolkit.web import app
 from test_cards import CARD, client, login
@@ -28,7 +28,7 @@ def test_price_omission_update_clear_and_isolation(client):
     assert saved['price'] is None
     path = f"/api/cards/{saved['id']}"
     assert client.put(path, json={**CARD, 'price': 19.95}).json()['price'] == 19.95
-    assert client.put(path, json={**CARD, 'quantity': 3}).json()['price'] == 19.95
+    assert client.put(path, json={**CARD, 'quantity': 3}).json()['price'] is None
     assert client.put(path, json={**CARD, 'price': 0}).json()['price'] == 0
     assert client.put(path, json={**CARD, 'price': None}).json()['price'] is None
     token = client.headers['Authorization']

@@ -14,7 +14,7 @@ from tcg_toolkit.external import currency as currency_module
 
 @pytest.fixture(autouse=True)
 def authenticated_business_api():
-    from tcg_toolkit.auth.routes import current_user
+    from tcg_toolkit.auth.dependencies import current_user
     app.dependency_overrides[current_user] = lambda: {"id": "test-user"}
     yield
     app.dependency_overrides.pop(current_user, None)

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.cards import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
+from tcg_toolkit.card_transfer import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'

@@ -17,30 +17,38 @@ export function rarityBadge(item) {
   badge.title = rarityDescription(item.game, item.rarity, getLanguage()) ?? t('rarity_value', {rarity: item.rarity});
   return badge;
 }
-export function cardImage(item, {noReferrer = false} = {}) {
+const webUrl = value => {
+  try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : null; } catch { return null; }
+};
+// `large` names the full-size image when it is not derivable from the thumbnail (graded
+// card originals); `fallback` replaces the "No image" placeholder text.
+// `tilt: false` keeps the picture still under the pointer (graded slabs).
+export function cardImage(item, {noReferrer = false, large = null, fallback = null, tilt: tilting = true} = {}) {
   const frame = el('span', 'card-image');
-  const fallback = el('span', 'image-fallback', t('no_image'));
-  frame.append(fallback);
+  const placeholder = el('span', 'image-fallback', fallback ?? t('no_image'));
+  frame.append(placeholder);
   if (!item.image_url) return frame;
-  let url;
-  try { url = new URL(item.image_url); } catch { return frame; }
-  if (!['http:', 'https:'].includes(url.protocol)) return frame;
+  const src = webUrl(item.image_url);
+  if (!src) return frame;
+  const full = (large && webUrl(large)) || largeImageUrl(src);
   const image = document.createElement('img');
   image.alt = item.name; image.loading = 'lazy'; image.decoding = 'async';
   if (noReferrer) image.referrerPolicy = 'no-referrer';
-  image.addEventListener('load', () => { fallback.hidden = true; markOrientation(image); });
-  image.addEventListener('error', () => { image.hidden = true; fallback.hidden = false; frame.classList.remove('zoomable'); frame.removeAttribute('role'); frame.removeAttribute('tabindex'); }, {once: true});
-  image.src = url.href;
-  const tilt = el('span', 'tilt'); tilt.append(image, el('span', 'glare'));
-  frame.append(tilt);
-  if (canTilt.matches) attachTilt(frame, tilt, image, largeImageUrl(url.href));
-  if (largeImageUrl(url.href)) {
+  image.addEventListener('load', () => { placeholder.hidden = true; markOrientation(image); });
+  image.addEventListener('error', () => { image.hidden = true; placeholder.hidden = false; frame.classList.remove('zoomable'); frame.removeAttribute('role'); frame.removeAttribute('tabindex'); }, {once: true});
+  image.src = src;
+  if (tilting) {
+    const tilt = el('span', 'tilt'); tilt.append(image, el('span', 'glare'));
+    frame.append(tilt);
+    if (canTilt.matches) attachTilt(frame, tilt, image, full);
+  } else frame.append(image);
+  if (full) {
     frame.classList.add('zoomable'); frame.tabIndex = 0; frame.setAttribute('role', 'button');
     frame.setAttribute('aria-label', t('image_preview', {name: item.name})); frame.title = t('image_preview', {name: item.name});
     // Buttons inside the frame (the grid favorite star) keep their own action.
-    frame.addEventListener('click', event => { if (!event.target.closest('button')) openPreview(item, url.href); });
+    frame.addEventListener('click', event => { if (!event.target.closest('button')) openPreview(item, src, full); });
     frame.addEventListener('keydown', event => {
-      if (event.target === frame && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openPreview(item, url.href); }
+      if (event.target === frame && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openPreview(item, src, full); }
     });
   }
   return frame;
@@ -81,7 +89,7 @@ function attachTilt(frame, tilt, image, large) {
   });
 }
 let previewRequest = 0;
-export function openPreview(item, thumbnail) {
+export function openPreview(item, thumbnail, large = largeImageUrl(thumbnail)) {
   const image = $('preview-image'), current = ++previewRequest;
   // Show the thumbnail at once, then swap in the full image when it has loaded.
   image.src = thumbnail; image.alt = item.name;
@@ -90,7 +98,7 @@ export function openPreview(item, thumbnail) {
   const full = new Image();
   full.onload = () => { if (current === previewRequest) { image.src = full.src; $('image-dialog').classList.remove('loading'); } };
   full.onerror = () => { if (current === previewRequest) $('image-dialog').classList.remove('loading'); };
-  full.src = largeImageUrl(thumbnail);
+  full.src = large;
   $('image-dialog').showModal();
 }
 $('preview-close').addEventListener('click', () => $('image-dialog').close());

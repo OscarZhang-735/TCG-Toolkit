@@ -17,7 +17,7 @@
 <body class="signed-out">
 <aside>
 <a class="brand" href="./"><i class="bi bi-stack"></i><span data-i18n="tcg"></span><span data-i18n="toolkit"></span></a>
-<nav id="app-nav" hidden><div class="nav-group" role="group" aria-labelledby="nav-group-shop"><button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="nav-group-shop-items"><span class="nav-group-name" data-i18n="nav_group_shop"></span><span class="nav-group-current"></span><i class="bi bi-chevron-down" aria-hidden="true"></i></button><span class="nav-group-label" id="nav-group-shop" data-i18n="nav_group_shop"></span><div class="nav-group-items" id="nav-group-shop-items"><a aria-current="page" href="#search"><i class="bi bi-search"></i><span data-i18n="search"></span></a><a href="#favorites"><i class="bi bi-star"></i><span data-i18n="favorites"></span><span id="favorites-nav-count" class="nav-count" hidden></span></a><a href="#cart"><i class="bi bi-cart3"></i><span data-i18n="cart_title"></span><span id="cart-nav-count" class="nav-count" hidden></span></a></div></div><div class="nav-group" role="group" aria-labelledby="nav-group-local"><button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="nav-group-local-items"><span class="nav-group-name" data-i18n="nav_group_local"></span><span class="nav-group-current"></span><i class="bi bi-chevron-down" aria-hidden="true"></i></button><span class="nav-group-label" id="nav-group-local" data-i18n="nav_group_local"></span><div class="nav-group-items" id="nav-group-local-items"><a href="#cards"><i class="bi bi-collection"></i><span data-i18n="cards_title"></span><span id="cards-nav-count" class="nav-count" hidden></span></a></div></div></nav>
+<nav id="app-nav" hidden><div class="nav-group" role="group" aria-labelledby="nav-group-shop"><button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="nav-group-shop-items"><span class="nav-group-name" data-i18n="nav_group_shop"></span><span class="nav-group-current"></span><i class="bi bi-chevron-down" aria-hidden="true"></i></button><span class="nav-group-label" id="nav-group-shop" data-i18n="nav_group_shop"></span><div class="nav-group-items" id="nav-group-shop-items"><a aria-current="page" href="#search"><i class="bi bi-search"></i><span data-i18n="search"></span></a><a href="#favorites"><i class="bi bi-star"></i><span data-i18n="favorites"></span><span id="favorites-nav-count" class="nav-count" hidden></span></a><a href="#cart"><i class="bi bi-cart3"></i><span data-i18n="cart_title"></span><span id="cart-nav-count" class="nav-count" hidden></span></a></div></div><div class="nav-group" role="group" aria-labelledby="nav-group-local"><button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="nav-group-local-items"><span class="nav-group-name" data-i18n="nav_group_local"></span><span class="nav-group-current"></span><i class="bi bi-chevron-down" aria-hidden="true"></i></button><span class="nav-group-label" id="nav-group-local" data-i18n="nav_group_local"></span><div class="nav-group-items" id="nav-group-local-items"><a href="#cards"><i class="bi bi-collection"></i><span data-i18n="cards_title"></span><span id="cards-nav-count" class="nav-count" hidden></span></a><a href="#graded"><i class="bi bi-award"></i><span data-i18n="graded_title"></span><span id="graded-nav-count" class="nav-count" hidden></span></a></div></div></nav>
 <div id="app-settings" class="sidebar-settings" hidden>
 <label class="setting" data-i18n-title="language"><i class="bi bi-globe2"></i><select data-i18n-aria-label="language" id="language"><option data-i18n="english" value="en"></option><option data-i18n="chinese" value="zh-CN"></option></select></label>
 <label class="setting" data-i18n-title="display_currency"><i class="bi bi-currency-exchange"></i><select id="currency" data-i18n-aria-label="display_currency"><option value="JPY" data-i18n="currency_jpy"></option><option value="CNY" data-i18n="currency_cny"></option><option value="CAD" data-i18n="currency_cad"></option></select></label>
@@ -200,6 +200,9 @@
 </div>
 </section>
 
+<footer class="account-footer">
+<a id="github-repository" class="footer-link" href="https://github.com/OscarZhang-735/TCG-Toolkit" target="_blank" rel="noopener noreferrer"><i class="bi bi-github" aria-hidden="true"></i><span data-i18n="github_repository"></span><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></a>
+</footer>
 </main>
 <main id="cards-panel" hidden>
 <header><h1 data-i18n="cards_title"></h1></header>
@@ -248,6 +251,45 @@
 <div class="panel table-panel" id="cards-table" hidden><div class="table-scroll"><table><thead><tr><th class="select-col"><span class="sr-only" data-i18n="favorite_select"></span></th><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="cards_price_column"></th><th class="cart-col" data-i18n="cards_owned_column"></th><th data-i18n="cards_notes"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="cards-rows"></tbody></table></div></div>
 <div id="cards-grid" class="card-grid" hidden></div>
 <div id="cards-empty" class="empty" hidden><i class="bi bi-collection"></i><h3></h3></div>
+</section>
+</main>
+<main id="graded-panel" hidden>
+<header><h1 data-i18n="graded_title"></h1></header>
+<div id="graded-groups-bar" class="group-bar" hidden>
+<div id="graded-groups" class="group-tabs" role="group" data-i18n-aria-label="graded_groups"></div>
+<div class="group-actions"><button id="graded-group-rename" type="button" class="icon-button" data-i18n-aria-label="favorite_group_rename" data-i18n-title="favorite_group_rename" hidden><i class="bi bi-pencil"></i></button><button id="graded-group-delete" type="button" class="icon-button" data-i18n-aria-label="favorite_group_delete" data-i18n-title="favorite_group_delete" hidden><i class="bi bi-trash3"></i></button><button id="graded-group-create" type="button" class="secondary compact"><i class="bi bi-folder-plus"></i><span data-i18n="favorite_group_create"></span></button></div>
+</div>
+<section id="graded-stats" class="panel cards-summary" hidden>
+<div class="stat-tiles">
+<div class="stat-tile"><span class="stat-label" data-i18n="cards_quantity_total"></span><span class="stat-value" id="graded-quantity-total"></span></div>
+<div class="stat-tile"><span class="stat-label" data-i18n="graded_price_total"></span><span class="stat-value graded-price-total" id="graded-price-total"></span><span class="stat-note" id="graded-price-counted"></span></div>
+</div>
+<div class="stat-groups">
+<div><h3 data-i18n="graded_by_grade"></h3><ul class="stat-chips" id="graded-by-grade"></ul></div>
+<div><h3 data-i18n="graded_by_provider"></h3><ul class="stat-chips" id="graded-by-provider"></ul></div>
+</div>
+</section>
+<section class="results">
+<div class="section-heading">
+<div class="heading-left"><h2 id="graded-list-title" data-i18n="graded_list"></h2><span class="count" id="graded-count" hidden></span><span id="graded-status" role="status" aria-live="polite"></span></div>
+<div class="heading-actions"><button id="graded-select" type="button" class="secondary compact" aria-pressed="false" disabled><i class="bi bi-check2-square"></i><span data-i18n="favorite_select"></span></button><button id="graded-add" type="button" class="compact" aria-haspopup="dialog" disabled><i class="bi bi-plus-lg" aria-hidden="true"></i><span data-i18n="graded_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
+</div>
+<div id="graded-selection-bar" class="selection-bar" hidden><label class="select-all"><input id="graded-select-all" type="checkbox"/><span data-i18n="favorite_select_all"></span></label><span id="graded-selection-count" class="selection-count" role="status" aria-live="polite"></span><div class="selection-actions"><button id="graded-bulk-move" type="button" class="secondary compact"><i class="bi bi-folder-symlink"></i><span data-i18n="favorite_move"></span></button><button id="graded-bulk-refresh" type="button" class="secondary compact"><i class="bi bi-arrow-clockwise"></i><span data-i18n="graded_refresh"></span></button><button id="graded-bulk-delete" type="button" class="secondary compact"><i class="bi bi-trash3"></i><span data-i18n="cards_delete"></span></button></div></div>
+<button id="graded-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
+<div class="panel filters" id="graded-filters" hidden>
+<div class="filter-top">
+<h3><i class="bi bi-funnel"></i><span data-i18n="filters"></span></h3>
+<button class="text-button" id="graded-reset" type="button"><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="reset"></span></button>
+</div>
+<div class="graded-filter-row">
+<div class="filter-search input-icon"><i class="bi bi-search"></i><input id="graded-query" type="search" data-i18n-aria-label="graded_search" data-i18n-placeholder="graded_search"/></div>
+<label class="field"><span data-i18n="sort"></span><select id="graded-sort"><option data-i18n="graded_sort_newest" value="newest"></option><option data-i18n="graded_sort_oldest" value="oldest"></option><option data-i18n="graded_sort_grade_desc" value="grade_desc"></option><option data-i18n="graded_sort_grade_asc" value="grade_asc"></option><option data-i18n="graded_sort_title" value="title"></option></select></label>
+</div>
+<div class="chips" id="graded-provider-chips" role="group" data-i18n-aria-label="graded_providers_to_show"></div>
+</div>
+<div class="panel table-panel" id="graded-table" hidden><div class="table-scroll"><table><thead><tr><th class="select-col"></th><th data-i18n="graded_images_column"></th><th data-i18n="graded_provider"></th><th data-i18n="graded_grade"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="graded_cert_number"></th><th data-i18n="graded_refreshed_column"></th><th class="group-col" data-i18n="favorite_group_column"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="graded-rows"></tbody></table></div></div>
+<div id="graded-grid" class="card-grid graded-grid" hidden></div>
+<div id="graded-empty" class="empty" hidden><i class="bi bi-award"></i><h3></h3></div>
 </section>
 </main>
 <main id="cart-panel" hidden>
@@ -587,6 +629,115 @@
 <button id="avatar-crop-confirm" type="submit"><i class="bi bi-check-lg" aria-hidden="true"></i><span id="avatar-crop-confirm-label" data-i18n="avatar_crop_confirm"></span></button>
 </div>
 </form>
+</dialog>
+<dialog id="graded-dialog" class="form-dialog graded-dialog" aria-labelledby="graded-dialog-title">
+<form id="graded-form">
+<div class="dialog-head"><h2 id="graded-dialog-title" data-i18n="graded_add"></h2><button type="button" id="graded-dialog-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<div class="graded-form-grid">
+<label class="field"><span data-i18n="graded_provider"></span><select id="graded-provider" required></select></label>
+<label class="field"><span data-i18n="graded_cert_number"></span><input id="graded-cert" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" required maxlength="2048" data-i18n-placeholder="graded_cert_placeholder" aria-describedby="graded-cert-hint"/></label>
+</div>
+<p id="graded-cert-hint" class="field-hint" data-i18n="graded_cert_hint"></p>
+<div class="graded-scan-actions">
+<button id="graded-scan" type="button" class="secondary"><i class="bi bi-qr-code-scan" aria-hidden="true"></i><span data-i18n="graded_scan"></span></button>
+<button id="graded-photo-button" type="button" class="secondary"><i class="bi bi-image" aria-hidden="true"></i><span data-i18n="graded_photo"></span></button>
+<input id="graded-photo" type="file" accept="image/*" hidden/>
+</div>
+<p id="graded-scan-unavailable" class="field-hint" data-i18n="graded_scan_insecure" hidden></p>
+<div id="graded-scanner" class="graded-scanner" hidden>
+<div class="graded-viewfinder"><video id="graded-video" playsinline muted data-i18n-aria-label="graded_scan_video"></video><span class="graded-viewfinder-frame" aria-hidden="true"></span></div>
+<button id="graded-scan-stop" type="button" class="secondary compact"><i class="bi bi-stop-circle" aria-hidden="true"></i><span data-i18n="graded_scan_stop"></span></button>
+</div>
+<p id="graded-scan-status" class="graded-scan-status" role="status" aria-live="polite"></p>
+<ul id="graded-scan-added" class="graded-scan-added" hidden></ul>
+<label class="field graded-group-field" id="graded-add-group-field" hidden><span data-i18n="favorite_group_column"></span><select id="graded-add-group"></select></label>
+<label class="field graded-price-field"><span data-i18n="graded_price"></span><span class="price-input"><input id="graded-add-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/><select id="graded-add-currency" data-i18n-aria-label="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select></span></label>
+<p id="graded-dialog-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="graded-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="graded-submit" type="submit"><i class="bi bi-search" aria-hidden="true"></i><span data-i18n="graded_submit"></span></button>
+</div>
+</form>
+</dialog>
+<dialog id="graded-detail-dialog" class="form-dialog graded-detail-dialog" aria-labelledby="graded-detail-title">
+<div class="dialog-head"><h2 id="graded-detail-title"></h2><button type="button" id="graded-detail-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<div id="graded-detail-body" class="graded-detail"></div>
+<div id="graded-detail-edit" class="graded-detail-edit">
+<form id="graded-price-form" class="graded-edit-row">
+<label class="graded-detail-label" for="graded-detail-price" data-i18n="graded_price"></label>
+<span class="price-input"><input id="graded-detail-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/><select id="graded-detail-currency" data-i18n-aria-label="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select></span>
+<button id="graded-price-save" type="submit" class="secondary compact" data-i18n="graded_price_save"></button>
+<p id="graded-price-status" class="field-hint graded-edit-status" role="status"></p>
+</form>
+<form id="graded-name-form" class="graded-edit-row">
+<label class="graded-detail-label" for="graded-detail-name" data-i18n="graded_display_name"></label>
+<input id="graded-detail-name" type="text" maxlength="100" autocomplete="off" data-i18n-placeholder="graded_display_name_placeholder"/>
+<button id="graded-name-save" type="submit" class="secondary compact" data-i18n="graded_display_name_save"></button>
+<p id="graded-name-status" class="field-hint graded-edit-status" role="status"></p>
+</form>
+</div>
+<p id="graded-detail-image-error" class="dialog-error" role="alert"></p>
+<input id="graded-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/*" hidden/>
+<input id="graded-image-camera" type="file" accept="image/*" capture="environment" hidden/>
+<div class="dialog-actions">
+<a id="graded-detail-source" class="graded-link-button" target="_blank" rel="noopener noreferrer" hidden><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i><span></span></a>
+<button id="graded-detail-refresh" type="button" class="secondary"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i><span data-i18n="graded_refresh"></span></button>
+<button id="graded-detail-delete" type="button" class="secondary"><i class="bi bi-trash3" aria-hidden="true"></i><span data-i18n="cards_delete"></span></button>
+</div>
+</dialog>
+<dialog id="graded-crop-dialog" class="form-dialog graded-crop-dialog" aria-labelledby="graded-crop-title" aria-describedby="graded-crop-hint">
+<div class="dialog-head"><h2 id="graded-crop-title"></h2><button type="button" id="graded-crop-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<p id="graded-crop-hint" class="graded-crop-hint" role="status" aria-live="polite"></p>
+<div id="graded-crop-stage" class="graded-crop-stage"><img id="graded-crop-image" alt=""/><svg id="graded-crop-overlay" class="graded-crop-overlay" preserveAspectRatio="none" aria-hidden="false"></svg><span id="graded-crop-busy" class="graded-crop-busy" hidden><span class="loading-ring" aria-hidden="true"></span></span></div>
+<p id="graded-crop-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="graded-crop-detect" type="button" class="secondary graded-crop-secondary"><i class="bi bi-magic" aria-hidden="true"></i><span data-i18n="graded_crop_detect"></span></button>
+<button id="graded-crop-calibrate" type="button" class="secondary graded-crop-secondary" aria-pressed="false"><i class="bi bi-brightness-high" aria-hidden="true"></i><span data-i18n="graded_crop_calibrate"></span></button>
+<button id="graded-crop-full" type="button" class="secondary graded-crop-secondary"><i class="bi bi-arrows-fullscreen" aria-hidden="true"></i><span data-i18n="graded_crop_full"></span></button>
+<button id="graded-crop-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="graded-crop-save" type="button"><i class="bi bi-check-lg" aria-hidden="true"></i><span data-i18n="graded_crop_save"></span></button>
+</div>
+</dialog>
+<dialog id="graded-group-dialog" class="form-dialog confirm-dialog" aria-labelledby="graded-group-dialog-title">
+<form id="graded-group-form" novalidate>
+<div class="dialog-head"><h2 id="graded-group-dialog-title"></h2></div>
+<label class="field"><span data-i18n="favorite_group_name"></span><input id="graded-group-name" class="group-name-input" type="text" maxlength="100" required autocomplete="off"/></label>
+<p id="graded-group-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="graded-group-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="graded-group-save" type="submit"><i class="bi bi-check-lg"></i><span data-i18n="cards_save"></span></button>
+</div>
+</form>
+</dialog>
+<dialog id="graded-group-delete-dialog" class="form-dialog confirm-dialog" aria-labelledby="graded-group-delete-title" aria-describedby="graded-group-delete-message">
+<div class="dialog-head"><h2 id="graded-group-delete-title" data-i18n="favorite_group_delete"></h2></div>
+<p id="graded-group-delete-message"></p>
+<p id="graded-group-delete-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="graded-group-delete-cancel" type="button" class="secondary" autofocus data-i18n="detail_cancel"></button>
+<button id="graded-group-delete-confirm" type="button"><i class="bi bi-trash3"></i><span data-i18n="favorite_group_delete"></span></button>
+</div>
+</dialog>
+<dialog id="graded-move-dialog" class="form-dialog confirm-dialog" aria-labelledby="graded-move-title" aria-describedby="graded-move-name">
+<form id="graded-move-form">
+<div class="dialog-head"><h2 id="graded-move-title" data-i18n="favorite_move"></h2></div>
+<p id="graded-move-name" class="move-name"></p>
+<label class="field"><span data-i18n="favorite_move_target"></span><select id="graded-move-group"></select></label>
+<p id="graded-move-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="graded-move-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="graded-move-save" type="submit"><i class="bi bi-folder-symlink"></i><span data-i18n="favorite_move_confirm"></span></button>
+</div>
+</form>
+</dialog>
+<dialog id="graded-delete-dialog" class="form-dialog confirm-dialog" aria-labelledby="graded-delete-title" aria-describedby="graded-delete-message">
+<div class="dialog-head"><h2 id="graded-delete-title" data-i18n="graded_delete_title"></h2></div>
+<p id="graded-delete-message"></p>
+<p id="graded-delete-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="graded-delete-cancel" type="button" class="secondary" autofocus data-i18n="detail_cancel"></button>
+<button id="graded-delete-confirm" type="button"><i class="bi bi-trash3"></i><span data-i18n="cards_delete"></span></button>
+</div>
 </dialog>
 <dialog id="image-dialog" class="image-dialog" aria-labelledby="preview-name">
 <button type="button" id="preview-close" class="icon-button preview-close" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button>

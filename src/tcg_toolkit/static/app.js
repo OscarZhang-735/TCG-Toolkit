@@ -1,5 +1,6 @@
 import {createProxySettings} from './proxy-settings.js';
 import {clearCards, activateCards, ownedQuantity, setCardsCurrency} from './cards-ui.js';
+import {clearGraded, activateGraded, setGradedCurrency} from './graded-cards-ui.js';
 import {createFavorites, cardKey} from './favorites.js';
 import {bindFavoriteGroups} from './favorite-groups-ui.js';
 import {createSelection} from './favorite-selection.js';
@@ -13,7 +14,8 @@ import {createFilterPanel} from './filters.js';
 import {readHistory, appendHistory, saveHistory} from './history.js';
 import {fetchRate, formatPrice} from './currency.js';
 import {yuyuteiClient} from './yuyutei-client.js';
-import {createCart, cartTarget} from './cart.js';
+import {createCart} from './cart.js';
+import {cartTarget} from './product-identity.js';
 import {bindCartSettings} from './cart-settings.js';
 import {cartStepper, createCartPage} from './cart-page.js';
 import {createProductDetails} from './product-details.js';
@@ -44,11 +46,16 @@ const searchFilters = createFilterPanel($('search-filters'), {onChange: () => {l
 const favoriteFilters = createFilterPanel($('favorites-filters'), {onChange: () => renderFavorites(), formatPrice: money,
   isSubscribed: item => Boolean(subscriptions.find(item))});
 function renderCurrencyStatus() { $('currency-status').hidden = !currencyStatus; $('currency-status').textContent = t('currency_fetched_at', {time: currencyStatus ? new Date(currencyStatus * 1000).toLocaleString(getLanguage()) : '—'}); }
+function renderCurrency() {
+  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render();
+  setCardsCurrency(displayCurrency, exchangeRate);
+  setGradedCurrency(displayCurrency, exchangeRate);
+}
 $('currency').addEventListener('change', async () => {
   const target = $('currency').value, request = ++currencyRequest;
   displayCurrency = 'JPY'; exchangeRate = 1;
   currencyStatus = null;
-  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render(); setCardsCurrency(displayCurrency, exchangeRate);
+  renderCurrency();
   try {
     let fetchedAt = null;
     const rate = await fetchRate(target, requestAPI, value => { fetchedAt = value; });
@@ -59,7 +66,7 @@ $('currency').addEventListener('change', async () => {
     if (request !== currencyRequest) return;
     $('currency').value = 'JPY'; currencyStatus = null;
   }
-  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render(); setCardsCurrency(displayCurrency, exchangeRate);
+  renderCurrency();
 });
 const proxySettings = createProxySettings();
 // Effective subscription recipient (custom notification email or verified account email).
@@ -339,7 +346,7 @@ function renderFavorites() {
   $('favorites-title').textContent = group ? group.name : t('favorite_cards');
   // Without any groups the group column would only hold dashes.
   $('favorites-list').classList.toggle('without-groups', !state.groups.length);
-  favoriteFilters.element.hidden = !rows.length;
+  favoriteFilters.element.hidden = !state.ready;
   $('favorites-rows').replaceChildren(...(view === 'list' ? matches.map(item => tableRow(item, true)) : []));
   $('favorites-grid').replaceChildren(...(view === 'grid' ? matches.map(item => gridCard(item, true)) : []));
   $('favorites-list').hidden = view !== 'list' || !matches.length;
@@ -502,7 +509,7 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
   userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;
@@ -515,7 +522,7 @@ export function clearUser() {
 export function activateUser(id, request, email = null) {
   clearUser(); userId = id; requestAPI = request; notificationEmail = email;
   history = readHistory(localStorage, userId); $('search').inert = false;
-  proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
+  proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); activateGraded(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
   refreshLanguage();
 }
 // The account page reports the effective address after loading or changing it.

@@ -2,7 +2,8 @@
 // what YuYu-Tei last reported; app.js owns the view toggle, prices and links.
 import {t, getLanguage} from './i18n.js';
 import {cardImage, rarityBadge} from './card-view.js';
-import {productKey, parseQuantity} from './cart.js';
+import {productKey} from './product-identity.js';
+import {parseQuantity} from './quantity.js';
 import {numberButton} from './copy-number.js';
 import {showFeedback} from './feedback.js';
 const $ = id => document.getElementById(id);

@@ -1,0 +1,25 @@
+<div class="certlookup-landing">
+<div cert-lookup-search="" cert-number="0000000000" class="ccg-form" is-prefilling="is-prefilling">
+<form class="certlookup-form" name="form" ng-submit="$ctrl.lookupNoGrade($ctrl.certNumber)">
+<div class="certlookup-fields">
+<div class="certlookup-field">
+<label>Cert #</label>
+<input autocomplete="off" ccg-filter-input="\d+" ccg-ignore-model-override="" class="certlookup-number-field" maxlength="13" name="CertNum" ng-model="$ctrl.certNumber" pattern="\d{10,13}" placeholder="1234567999" required="" type="tel"/>
+<span class="error required" for-required="This is required." mx-validation-message="form.CertNum"></span>
+</div>
+<div class="certlookup-field">
+<label> </label>
+<button mx-submit-status="" name="lookup" type="submit">Go</button>
+</div>
+</div>
+<div class="error" ng-show="!$ctrl.isHomepage &amp;&amp; $ctrl.errorMessage">
+<span ng-if="$ctrl.errorMessage === $ctrl.lookupStatus.erpDown || $ctrl.errorMessage === $ctrl.lookupStatus.serverError">This feature is currently unavailable. Please try again later.</span>
+<span ng-if="$ctrl.errorMessage === $ctrl.lookupStatus.rateLimited">Your search activity has exceeded our limits. These limits help to protect the security of our database. Please try again later.</span>
+<span ng-if="$ctrl.errorMessage === $ctrl.lookupStatus.notFound">This item cannot be found. Please check that the CGC certification number was entered correctly. <span ccg-tooltip="Note: items are only searchable after they have been shipped. Please try again or contact &lt;a href='../../contact/'&gt;CGC Customer Service." persist-tooltip="" require-click=""><u><a>More help &gt;</a></u></span></span>
+</div>
+</form>
+</div>
+<div class="certlookup-landing-image">
+<img alt="Cards in CGC Cards Holders" src="/resources/images/certlookup/cert-lookup-trading-card.png"/>
+</div>
+</div>
