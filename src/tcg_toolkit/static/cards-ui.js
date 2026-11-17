@@ -1,8 +1,8 @@
 import {lookupSource, lookupItems} from './card-sources.js';
 import {createCards, filterCards, summarizeCards} from './cards.js';
-import {yenPrice, CURRENCIES} from './card-money.js';
+import {yenPrice, CURRENCIES, formatMoney, priceDisplay as showPrice} from './card-money.js';
 import {PRICE_MERCHANT, priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} from './card-prices.js';
-import {fetchRate} from './currency.js';
+import {createRateCache} from './currency.js';
 import {parseQuantity} from './quantity.js';
 import {t, getLanguage} from './i18n.js';
 import {rarityBadge, cardImage, markOrientation} from './card-view.js';
@@ -104,44 +104,19 @@ function sortCards(rows, sort) {
 // rates for the currencies cards were entered in are fetched here. rates[code] is how much of that
 // currency one yen buys. Cards whose rate cannot be fetched show only their own amount and are left
 // out of the price slider and price sort.
-let displayCurrency = 'JPY', rates = {JPY: 1}, ratesPending = new Set(), ratesFailed = new Set(), ratesGeneration = 0;
-const yen = row => yenPrice(row, rates);
+let displayCurrency = 'JPY';
+const rateCache = createRateCache(render);
+const yen = row => yenPrice(row, rateCache.rates);
 export function setCardsCurrency(currency, rate) {
-  displayCurrency = currency; rates[currency] = rate; ratesFailed.delete(currency);
+  displayCurrency = currency; rateCache.set(currency, rate);
   render();
 }
-function loadRates(rows) {
-  for (const currency of new Set(rows.filter(row => row.price != null).map(row => row.currency))) {
-    if (currency in rates || ratesPending.has(currency) || ratesFailed.has(currency)) continue;
-    const generation = ratesGeneration;
-    ratesPending.add(currency);
-    fetchRate(currency, officialAPI).then(rate => { if (generation === ratesGeneration) rates[currency] = rate; },
-      () => { if (generation === ratesGeneration) ratesFailed.add(currency); })
-      .finally(() => { if (generation === ratesGeneration) { ratesPending.delete(currency); render(); } });
-  }
-}
-// Converted amounts round like shop prices (whole yen); entered amounts keep their cents.
-function money(amount, currency, converted = false) {
-  const whole = currency === 'JPY' && (converted || Number.isInteger(amount));
-  return new Intl.NumberFormat(getLanguage(), {style: 'currency', currency, currencyDisplay: 'code',
-    minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2}).format(converted && whole ? Math.round(amount) : amount);
-}
-// The price in the display currency with the entered amount underneath (also when the currencies
-// match). Unpriced cards show a placeholder in the display currency ("JPY -"); when the rate is
-// unknown only the entered amount is shown.
-function priceDisplay(row) {
-  const box = node('span', '', 'converted-price');
-  if (row.price == null) { box.append(node('span', `${displayCurrency} -`, 'muted')); return box; }
-  const value = yen(row), original = money(row.price, row.currency);
-  if (row.currency === displayCurrency) box.append(node('span', original), node('small', original, 'original-price'));
-  else if (value == null) box.append(node('span', original));
-  else box.append(node('span', money(value * rates[displayCurrency], displayCurrency, true)), node('small', original, 'original-price'));
-  return box;
-}
+const money = (amount, currency, converted = false) => formatMoney(amount, currency, getLanguage(), converted);
+const priceDisplay = row => showPrice(row, {currency: displayCurrency, rates: rateCache.rates, language: getLanguage()});
 // Price range slider, as on the favorites page: thumbs step through the distinct yen values of the
 // current group's prices, a thumb at either end means no limit, and labels use the display currency.
 let steps = [];
-const priceLabel = value => money(value * rates[displayCurrency], displayCurrency, true);
+const priceLabel = value => money(value * rateCache.rates[displayCurrency], displayCurrency, true);
 function priceSlider(rows) {
   steps = priceSteps(rows.map(row => ({price: yen(row)})).filter(row => row.price != null));
   const lo = $('cards-price-min'), hi = $('cards-price-max'), last = Math.max(steps.length - 1, 0);
@@ -406,7 +381,7 @@ function render() {
   $('cards-status').textContent = state.loading ? t('cards_loading') : !open && state.error ? t(state.error) : '';
   $('cards-retry').hidden = state.ready || !state.error || state.loading;
   $('cards-add').disabled = !state.ready;
-  if (state.ready) loadRates(state.records);
+  if (state.ready) rateCache.load(state.records, officialAPI);
   options('cards-rarity-filter', 'rarity'); gameChips(); priceSlider(inventory.visible());
   $('cards-sort').value = filters.sort;
   groups.render();
@@ -444,7 +419,7 @@ function renderValue(rows, kinds) {
     const value = row.quantity > 0 ? yen(row) : null;
     if (value != null) { total += value * row.quantity; counted++; }
   }
-  $('cards-value-total').textContent = counted ? money(total * rates[displayCurrency], displayCurrency, true) : `${displayCurrency} -`;
+  $('cards-value-total').textContent = counted ? money(total * rateCache.rates[displayCurrency], displayCurrency, true) : `${displayCurrency} -`;
   const note = $('cards-value-counted');
   note.textContent = t('cards_value_counted', {counted: number(counted), total: number(kinds)});
   note.title = t('cards_value_counted_hint');
@@ -519,7 +494,7 @@ export function clearCards() {
   clearPriceLookup();
   bulkPriceController?.abort(); bulkPriceController = null; bulkPrice = blankBulkPrice(); $('cards-price-dialog').close();
   filters = blankFilters(); $('cards-query').value = '';
-  ratesGeneration++; displayCurrency = 'JPY'; rates = {JPY: 1}; ratesPending = new Set(); ratesFailed = new Set();
+  displayCurrency = 'JPY'; rateCache.reset();
   selectionGeneration++; selection = blankSelection(); groups.close();
   $('cards-bulk-delete-dialog').close();
   quantityDrafts.clear(); savingQuantity = '';

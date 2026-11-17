@@ -66,6 +66,7 @@ def test_registry_and_saved_snapshots_persist_for_all_providers(client):
         assert row['population'] == {'at_grade': 2, 'higher': None}
         assert row['images'][0]['side'] == 'front'
         assert row['created_at'] == row['refreshed_at']
+        assert (row['price'], row['currency']) == (None, 'JPY')
         saved.insert(0, row)
     response = client.get(PATH)
     assert response.headers['cache-control'] == 'no-store'
@@ -87,6 +88,9 @@ def test_duplicate_is_detected_before_lookup(client, monkeypatch):
     {'provider': 'psa', 'cert_number': '１２３'}, {'provider': 'psa', 'cert_number': '1' * 33},
     {'provider': 'psa', 'cert_number': '1-2'}, {'provider': 'psa', 'cert_number': 123},
     {'provider': 'psa', 'cert_number': None}, {},
+    {'provider': 'psa', 'cert_number': '123', 'price': '-1'},
+    {'provider': 'psa', 'cert_number': '123', 'price': '1.001'},
+    {'provider': 'psa', 'cert_number': '123', 'currency': 'USD'},
 ])
 def test_invalid_input_does_not_lookup_or_write(client, monkeypatch, body):
     fetch_with(monkeypatch, lambda number: pytest.fail('invalid input must not fetch'))
@@ -96,7 +100,8 @@ def test_invalid_input_does_not_lookup_or_write(client, monkeypatch, body):
 
 def test_authentication_write_guards_and_account_isolation(client, monkeypatch):
     saved = add(client).json()
-    operations = [('POST', PATH), ('POST', f"{PATH}/{saved['id']}/refresh"), ('DELETE', f"{PATH}/{saved['id']}")]
+    operations = [('POST', PATH), ('POST', f"{PATH}/{saved['id']}/refresh"),
+                  ('PUT', f"{PATH}/{saved['id']}/price"), ('DELETE', f"{PATH}/{saved['id']}")]
     for method, path in operations:
         assert client.request(method, path, json={}, headers={'Origin': 'https://evil.test'}).status_code == 403
         assert client.request(method, path, content='{}', headers={'Content-Type': 'text/plain'}).status_code == 415
@@ -117,7 +122,14 @@ def test_authentication_write_guards_and_account_isolation(client, monkeypatch):
 
 
 def test_refresh_replaces_snapshot_and_failure_keeps_previous_data(client, monkeypatch):
-    saved = add(client).json()
+    response = client.post(PATH, json={'provider': 'psa', 'cert_number': '00123', 'price': '12.34', 'currency': 'cny'})
+    assert response.status_code == 201
+    saved = response.json()
+    assert (saved['price'], saved['currency']) == (12.34, 'CNY')
+    price_path = f"{PATH}/{saved['id']}/price"
+    assert client.put(price_path, json={'price': '1000000000000', 'currency': 'CAD'}).status_code == 422
+    price = client.put(price_path, json={'price': '0', 'currency': 'CAD'})
+    assert price.json() == {'price': 0, 'currency': 'CAD'}
     path = f"{PATH}/{saved['id']}/refresh"
     fetch_with(monkeypatch, lambda number: certificate(number, grade='9'))
     response = client.post(path, json={})
@@ -125,6 +137,7 @@ def test_refresh_replaces_snapshot_and_failure_keeps_previous_data(client, monke
     updated = response.json()
     assert updated['id'] == saved['id'] and updated['created_at'] == saved['created_at']
     assert updated['grade'] == '9'
+    assert (updated['price'], updated['currency']) == (0, 'CAD')
     assert updated['refreshed_at'] >= saved['refreshed_at']
 
     def fail(number):
@@ -134,6 +147,8 @@ def test_refresh_replaces_snapshot_and_failure_keeps_previous_data(client, monke
     assert client.post(path, json={}).status_code == 504
     assert add(client, '456').status_code == 504
     assert client.get(PATH).json()['items'] == [updated]
+    assert client.put(price_path, json={'price': None, 'currency': 'JPY'}).json() == {'price': None, 'currency': 'JPY'}
+    assert client.get(PATH).json()['items'] == [{**updated, 'price': None, 'currency': 'JPY'}]
     response = client.request('DELETE', f"{PATH}/{saved['id']}", json={})
     assert response.status_code == 204 and not response.content
     assert response.headers['cache-control'] == 'no-store'

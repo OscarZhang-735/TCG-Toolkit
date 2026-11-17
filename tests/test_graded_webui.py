@@ -94,6 +94,13 @@ def test_graded_webui(monkeypatch, tmp_path):
                 image = (Path(__file__).parents[1] / 'src/tcg_toolkit/static/game-wsr.webp').read_bytes()
                 page.route('https://**/*', lambda route: route.fulfill(status=200, body=image, content_type='image/webp')
                            if route.request.resource_type == 'image' else route.continue_())
+
+                def exchange_rate(route):
+                    currency = httpx.URL(route.request.url).params['to']
+                    route.fulfill(json={'from': 'JPY', 'to': currency, 'amount': 1,
+                                        'result': {'CNY': 0.05, 'CAD': 0.01}[currency]})
+
+                page.route('**/api/currency/convert?*', exchange_rate)
                 page.goto(origin)
                 page.evaluate('(token) => localStorage.setItem("tcg.session", token)', token)
                 page.goto(origin + '/#graded')
@@ -101,6 +108,8 @@ def test_graded_webui(monkeypatch, tmp_path):
                 expect(page.locator('#graded-panel')).to_be_visible()
                 expect(page.locator('#graded-add')).to_be_enabled()
                 expect(page.locator('#graded-empty')).to_be_visible()
+                expect(page.locator('#graded-stats')).to_be_visible()
+                expect(page.locator('#graded-stats .stat-value')).to_have_text(['0', 'JPY -'])
                 # Filters stay on screen with no cards, here and on the other card pages.
                 expect(page.locator('#graded-filters')).to_be_visible()
                 expect(page.locator('#graded-provider-chips label')).to_have_count(len(grading.PROVIDERS))
@@ -118,19 +127,36 @@ def test_graded_webui(monkeypatch, tmp_path):
                 expect(page.locator('#graded-filters')).to_be_visible()
                 expect(page.locator('a[href="#graded"]')).to_have_attribute('aria-current', 'page')
 
-                def add(value, provider=None):
+                def add(value, provider=None, price=None, currency='JPY'):
                     page.locator('#graded-add').click()
                     if provider:
                         page.locator('#graded-provider').select_option(provider)
                     page.locator('#graded-cert').fill(value)
+                    if price is not None:
+                        page.locator('#graded-add-price').fill(price)
+                        page.locator('#graded-add-currency').select_option(currency)
                     page.locator('#graded-submit').click()
 
                 # Official links pick the provider; the saved row survives a reload.
-                add('https://www.cgccards.com/certlookup/6091052028/10_0/')
+                add('https://www.cgccards.com/certlookup/6091052028/10_0/', price='12.34', currency='CNY')
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(1)
                 expect(page.locator('#graded-rows')).to_contain_text('PRISTINE 10')
                 page.reload()
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(1)
+                expect(page.locator('#graded-price-total')).to_have_text('JPY 247')
+                # Unit price per row: display currency first, entered amount underneath.
+                expect(page.locator('#graded-rows tr[data-id] td.numeric .converted-price')).to_have_text('JPY 247CNY 12.34')
+                page.locator('#graded-rows .graded-title').click()
+                # The price editor sits in the info column, under the certificate number.
+                expect(page.locator('.graded-detail-info #graded-price-form')).to_be_visible()
+                expect(page.locator('#graded-detail-price')).to_have_value('12.34')
+                expect(page.locator('#graded-detail-currency')).to_have_value('CNY')
+                page.locator('#graded-detail-price').fill('25.5')
+                page.locator('#graded-detail-currency').select_option('CAD')
+                page.locator('#graded-price-save').click()
+                expect(page.locator('#graded-price-status')).to_have_text('Price saved.')
+                page.locator('#graded-detail-close').click()
+                expect(page.locator('#graded-price-total')).to_have_text('JPY 2,550')
                 before = len(calls)
                 add('6091052028', 'cgc')
                 expect(page.locator('#graded-dialog')).not_to_be_visible()
@@ -139,9 +165,19 @@ def test_graded_webui(monkeypatch, tmp_path):
 
                 # Real file input, canvas decoding and bundled jsQR; no decoder stub.
                 page.locator('#graded-add').click()
+                page.locator('#graded-add-price').fill('1500')
                 page.locator('#graded-photo').set_input_files(str(FIXTURES / 'grading_psa_qr.png'))
                 expect(page.locator('#graded-dialog')).not_to_be_visible()
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(2)
+                expect(page.locator('#graded-price-total')).to_have_text('JPY 4,050')
+                expect(page.locator('#graded-price-counted')).to_have_text('2/2 cards counted')
+                page.locator('#currency').select_option('CNY')
+                expect(page.locator('#graded-price-total')).to_have_text('CNY 202.50')
+                page.locator('#currency').select_option('CAD')
+                expect(page.locator('#graded-price-total')).to_have_text('CAD 40.50')
+                expect(page.locator('#graded-rows tr[data-id] td.numeric .converted-price').first).to_contain_text('CAD')
+                page.locator('#currency').select_option('JPY')
+                expect(page.locator('#graded-price-total')).to_have_text('JPY 4,050')
                 assert page.evaluate('typeof window.jsQR') == 'function'
                 # Decode actual video frames without using the workstation's physical camera.
                 qr = 'data:image/png;base64,' + b64encode((FIXTURES / 'grading_psa_qr.png').read_bytes()).decode()
@@ -181,9 +217,15 @@ def test_graded_webui(monkeypatch, tmp_path):
 
                 page.locator('#graded-query').fill('6091052028')
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(1)
+                expect(page.locator('#graded-quantity-total')).to_have_text('1')
+                expect(page.locator('#graded-by-grade .stat-chip-label')).to_have_text(['PRISTINE 10'])
+                expect(page.locator('#graded-by-provider .stat-chip-label')).to_have_text(['CGC'])
                 page.locator('#graded-reset').click()
                 page.locator('#graded-provider-chips label').filter(has_text='CGC').click()
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(2)
+                expect(page.locator('#graded-quantity-total')).to_have_text('2')
+                expect(page.locator('#graded-price-total')).to_have_text('JPY 1,500')
+                expect(page.locator('#graded-by-provider')).not_to_contain_text('CGC')
                 page.locator('#graded-reset').click()
                 page.locator('#graded-sort').select_option('grade_desc')
                 page.locator('#graded-panel [data-view="grid"]').click()
@@ -289,6 +331,7 @@ def test_graded_webui(monkeypatch, tmp_path):
                 add(blocking, 'psa')
                 pending = page.locator('#graded-grid article.graded-pending')
                 expect(pending).to_have_count(1)
+                expect(page.locator('#graded-quantity-total')).to_have_text('3')
                 expect(pending.locator('.loading-ring')).to_be_visible()
                 expect(pending).to_contain_text('This may take up to a few minutes')
                 expect(pending.locator('.graded-elapsed')).to_contain_text('Waiting 0:0')
@@ -320,6 +363,9 @@ def test_graded_webui(monkeypatch, tmp_path):
                 # Provider images are marked as official.
                 expect(page.locator('#graded-detail-body .graded-source-tag.official')).to_have_count(2)
                 expect(page.locator('#graded-detail-body .graded-source-tag.official').first).to_have_text('Official')
+                expect(page.locator('#graded-detail-price')).to_have_value('25.5')
+                page.locator('#graded-detail-dialog').screenshot(path=str(shots / 'detail-price.png'))
+                expect(tile.locator('.card-bottom .converted-price')).to_contain_text('CAD 25.50')
                 # Clicking an image opens its options; the official image can still be enlarged.
                 page.locator('#graded-detail-body .graded-image-button').first.click()
                 page.locator('#graded-detail-body .graded-image-menu').get_by_role('menuitem', name='View larger').click()
@@ -340,6 +386,7 @@ def test_graded_webui(monkeypatch, tmp_path):
                 page.screenshot(path=str(output / 'desktop.png'), full_page=True)
                 page.locator('#language').select_option('zh-CN')
                 expect(page.locator('#graded-panel h1')).to_have_text('评级卡牌')
+                expect(page.locator('#graded-stats h3')).to_have_text(['按等级统计', '按评级机构统计'])
                 expect(page.locator('#graded-status')).to_contain_text('CGC 6091052028')
                 expect(page.locator('#graded-status')).not_to_contain_text('Updated')
                 page.set_viewport_size({'width': 390, 'height': 844})

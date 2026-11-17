@@ -155,7 +155,7 @@ API 响应继续显式选择公开字段，不直接序列化 ORM 实体，避�
 ### Alembic 迁移
 
 `tcg-db migrate` 使用 Alembic，并在同一个 PostgreSQL 事务锁和事务内执行接管、升级及版本校验。
-已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移、`0015` 的评级卡快照表迁移和 `0016` 的评级卡上传图片字段，升级到 schema 16，保留用户和业务数据。`0014` 将每账号的会话收敛为一条，规则见下文。
+已有 PostgreSQL schema 1 首次运行时先登记 Alembic 基线 `0001`（如尚未登记），再执行 `0002` 新增订阅、每日任务和待发邮件表，再执行 `0003` 增加独立通知邮箱字段，再执行 `0004` 创建收藏分组表、`0005` 取消默认组并使收藏默认未分组，随后执行 `0006` 至 `0008` 的头像、清理队列和昵称迁移，以及 `0009` 的独立订阅间隔、`0010` 的用户统一间隔、`0011` 的卡牌库分组、`0012` 的价格字段、`0013` 的价格币种、`0014` 的单会话迁移、`0015` 的评级卡快照表迁移、`0016` 的评级卡上传图片字段和 `0017` 的评级卡价格，升级到 schema 17，保留用户和业务数据。`0014` 将每账号的会话收敛为一条，规则见下文。
 新空库通过基线迁移初始化。原 `001_initial.sql` 保持不可变，仅供基线使用；业务代码不再执行 SQL 字符串。
 `schema_migrations` 保留为发布版本兼容标记，现有 JSON 状态接口和回退判断继续可用。
 
@@ -207,7 +207,8 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 | 方法与路径 | 输入与结果 |
 | --- | --- |
 | `GET /api/graded-cards` | 返回 `{"items":[记录, …]}`，按添加时间倒序，同秒按写入顺序倒序 |
-| `POST /api/graded-cards` | `{"provider":"psa","cert_number":"98428602","request_id":"可选"}`；查询成功后保存并返回 201 和记录 |
+| `POST /api/graded-cards` | `{"provider":"psa","cert_number":"98428602","request_id":"可选"}`；还可传入 `price` 和 `currency`，查询成功后保存并返回 201 和记录 |
+| `PUT /api/graded-cards/{id}/price` | 提交 `{"price":"12.34","currency":"CNY"}` 更新手动记录的价格与币种，返回 200 和这两个字段。传入 `price: null` 清除价格 |
 | `POST /api/graded-cards/{id}/refresh` | JSON `{}` 或 `{"request_id":"…"}`；重新查询，成功返回 200 和更新后的记录 |
 | `DELETE /api/graded-cards/lookups/{request_id}` | JSON `{}`；取消本账号该 `request_id` 的查询，返回 204；查询已保存则 409 `graded_lookup_finished` |
 | `DELETE /api/graded-cards/{id}` | JSON `{}`；删除本账号记录，成功返回 204；该卡上传的图片进入 COS 删除队列 |
@@ -216,11 +217,11 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 | `PUT /api/graded-cards/{id}/images/{front\|back}?corners=x1,y1,…,x4,y4` | 请求体为图片；按四个角透视校正截取为 WebP（长边 ≤ 1600 像素）存入 COS，替换该面图片，返回 200 和记录 |
 | `DELETE /api/graded-cards/{id}/images/{front\|back}` | JSON `{}`；移除上传的图片，恢复机构图片或占位，返回 200 和记录 |
 
-记录字段为 `id`、`provider`、`cert_number`、`source_url`、`title`、`grade`、`fields`、`english_fields`、`population`、`images`、`created_at`、`refreshed_at`；时间为 Unix 秒。`title` 与两组字段由 `grading.present()` 在读取时按注册表生成，旧快照同样适用：`GradingProvider.title_field` 指定作为名称的字段（ARS 为原版 `カード名称`，PCG-CN 为原名 `Original Name`，缺失时回退到解析器的 `title`）；`english_field` 判定只是译文的字段（ARS 为英文标签），这些字段放入 `english_fields`，WebUI 详情中默认折叠。直接查询接口 `GET /api/grading/...` 的返回保持解析器原样。证书编号为字符串，服务端只去除首尾空白并接受 1–32 位 ASCII 数字。前端额外支持移除数字间的空格和连字符、从机构官网链接提取编号。
+记录字段为 `id`、`provider`、`cert_number`、`source_url`、`title`、`grade`、`fields`、`english_fields`、`population`、`images`、`created_at`、`refreshed_at`、`price`、`currency`；时间为 Unix 秒。`title` 与两组字段由 `grading.present()` 在读取时按注册表生成，旧快照同样适用：`GradingProvider.title_field` 指定作为名称的字段（ARS 为原版 `カード名称`，PCG-CN 为原名 `Original Name`，缺失时回退到解析器的 `title`）；`english_field` 判定只是译文的字段（ARS 为英文标签），这些字段放入 `english_fields`，WebUI 详情中默认折叠。直接查询接口 `GET /api/grading/...` 的返回保持解析器原样。证书编号为字符串，服务端只去除首尾空白并接受 1–32 位 ASCII 数字。前端额外支持移除数字间的空格和连字符、从机构官网链接提取编号。
 
 同一账号的 `(provider, cert_number)` 唯一，重复新增返回 409 `{"detail":{"type":"graded_card_duplicate","id":"已有记录ID"}}`。已有重复在查询前直接返回；同时新增由数据库唯一约束仲裁。不同账号可分别保存同一证书。访问不存在或属于其他账号的记录均返回 404 `graded_card_not_found`，查询失败不会写入新记录或覆盖旧快照。
 
-数据库版本 **15**（Alembic `0015`）新增 `graded_cards` 表，保存每张证书最近一次成功查询的 JSON 快照；版本 **16**（`0016`）为其增加可空的 `front_image_url`、`back_image_url`，保存用户上传的图片地址，与查询快照分开，重新查询不会覆盖。升级前备份，使用匹配版本运行 `tcg-db migrate`；生产共同发布流程会执行迁移。此迁移保留既有账号、会话和卡牌数据，不提供自动降级。
+数据库版本 **15**（Alembic `0015`）新增 `graded_cards` 表，保存每张证书最近一次成功查询的 JSON 快照；版本 **16**（`0016`）为其增加可空的 `front_image_url`、`back_image_url`，保存用户上传的图片地址，与查询快照分开，重新查询不会覆盖。版本 **17**（`0017`）新增可空的 `price` 和默认 `JPY` 的 `currency`。价格为非负金额，最多 2 位小数，币种支持 JPY、CNY 和 CAD。用户可在添加及详情页填写价格，清空金额并保存可清除价格。仪表盘按当前显示币种汇总筛选结果中价格可换算的卡片。升级前备份，使用匹配版本运行 `tcg-db migrate`；生产共同发布流程会执行迁移。此迁移保留既有账号、会话和卡牌数据，不提供自动降级。
 
 查询与数据库操作分开执行，等待机构响应时不持有数据库连接。
 

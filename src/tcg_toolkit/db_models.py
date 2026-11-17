@@ -145,7 +145,13 @@ class GradedCard(Base):
     # and never touched by a lookup refresh.
     front_image_url: Mapped[str | None]
     back_image_url: Mapped[str | None]
-    __table_args__ = (UniqueConstraint("user_id", "provider", "cert_number", name="graded_cards_user_cert_key"),)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(server_default='JPY')
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", "cert_number", name="graded_cards_user_cert_key"),
+        CheckConstraint('price >= 0', name='graded_cards_price_nonnegative'),
+        CheckConstraint("currency IN ('JPY', 'CNY', 'CAD')", name='graded_cards_currency_known'),
+    )
 
 
 class CartOperation(Base):

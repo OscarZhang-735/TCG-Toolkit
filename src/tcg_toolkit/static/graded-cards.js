@@ -109,7 +109,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   // lookups at once (the server allows three per account).
   let queue = [];
   const initial = () => ({providers: [], records: [], pending: [], refreshing: {}, removing: new Set(), imageBusy: new Set(),
-    ready: false, loading: false, error: '', highlight: '', notice: null});
+    priceBusy: new Set(), ready: false, loading: false, error: '', highlight: '', notice: null});
   const state = initial();
 
   function clear() {
@@ -165,15 +165,18 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   function enqueue(job) { queue.push(job); pump(); onChange(); }
 
   // Returns {status: 'queued' | 'pending' | 'exists', key?, id?} so the dialog can explain.
-  function add({provider, cert_number}) {
+  function add({provider, cert_number, price, currency}) {
     const existing = state.records.find(row => row.provider === provider && row.cert_number === cert_number);
     if (existing) { state.highlight = existing.id; onChange(); return {status: 'exists', id: existing.id}; }
     const key = pendingKey(provider, cert_number), waiting = state.pending.find(item => item.key === key);
     if (waiting) {
-      if (waiting.status === 'failed') retry(key);
+      if (waiting.status === 'failed') {
+        Object.assign(waiting, {price, currency});
+        retry(key);
+      }
       return {status: 'pending', key};
     }
-    state.pending.unshift({key, provider, cert_number, status: 'queued', startedAt: null, error: null});
+    state.pending.unshift({key, provider, cert_number, price, currency, status: 'queued', startedAt: null, error: null});
     enqueue({kind: 'add', key});
     return {status: 'queued', key};
   }
@@ -243,7 +246,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     inflight.set(job, lookup);
     try {
       const card = await call('/graded-cards', 'POST', {provider: item.provider, cert_number: item.cert_number,
-        request_id: lookup.requestId}, limit.signal);
+        request_id: lookup.requestId, price: item.price, currency: item.currency}, limit.signal);
       if (current !== generation) return;
       state.pending = state.pending.filter(entry => entry !== item);
       state.records = [card, ...state.records.filter(row => row.id !== card.id)];
@@ -283,7 +286,8 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     try {
       const card = await call(`/graded-cards/${encodeURIComponent(id)}/refresh`, 'POST', {request_id: lookup.requestId}, limit.signal);
       if (current !== generation) return;
-      state.records = state.records.map(saved => saved.id === id ? card : saved);
+      // A price save can finish while this lookup is in flight.
+      state.records = state.records.map(saved => saved.id === id ? {...card, price: saved.price, currency: saved.currency} : saved);
       delete state.refreshing[id];
       state.notice = {key: 'graded_refreshed_notice', provider: card.provider, cert_number: card.cert_number};
     } catch (error) {
@@ -301,6 +305,23 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
       limit.dispose();
       if (inflight.get(job) === lookup) inflight.delete(job);
       if (current === generation) onChange();
+    }
+  }
+  async function setPrice(id, price) {
+    const current = generation;
+    if (state.priceBusy.has(id)) return '';
+    state.priceBusy.add(id); onChange();
+    try {
+      const savedPrice = await call(`/graded-cards/${encodeURIComponent(id)}/price`, 'PUT', price, controller.signal);
+      if (current !== generation) return '';
+      state.records = state.records.map(row => row.id === id ? {...row, ...savedPrice} : row);
+      return '';
+    } catch (error) {
+      if (current !== generation || error.name === 'AbortError') return '';
+      if (error.status === 404) state.records = state.records.filter(row => row.id !== id);
+      return 'graded_price_failed';
+    } finally {
+      if (current === generation) { state.priceBusy.delete(id); onChange(); }
     }
   }
   // Resolves to '' on success or an error key.
@@ -348,7 +369,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
     try {
       const card = await run();
       if (current !== generation) return '';
-      state.records = state.records.map(row => row.id === id ? card : row);
+      state.records = state.records.map(row => row.id === id ? {...row, images: card.images} : row);
       return '';
     } catch (error) {
       if (current !== generation || error.name === 'AbortError') return '';
@@ -383,7 +404,7 @@ export function createGradedCards(onChange, {now = () => Date.now(), maxConcurre
   const timeoutSeconds = id => state.providers.find(item => item.id === id)?.timeout_seconds ?? DEFAULT_TIMEOUT_S;
 
   return {state, clear, load, add, retry, dismiss, refresh, dismissRefresh, remove, queuePosition, providerName,
-    detectCard, calibrateImage, uploadImage, restoreImage,
+    setPrice, detectCard, calibrateImage, uploadImage, restoreImage,
     timeoutSeconds, busy: () => state.pending.some(item => item.status !== 'failed')
       || Object.values(state.refreshing).some(entry => entry.status !== 'failed'),
     activate(api) { clear(); request = api; return load(); }};

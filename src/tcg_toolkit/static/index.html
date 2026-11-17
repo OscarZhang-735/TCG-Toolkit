@@ -255,6 +255,16 @@
 </main>
 <main id="graded-panel" hidden>
 <header><h1 data-i18n="graded_title"></h1></header>
+<section id="graded-stats" class="panel cards-summary" hidden>
+<div class="stat-tiles">
+<div class="stat-tile"><span class="stat-label" data-i18n="cards_quantity_total"></span><span class="stat-value" id="graded-quantity-total"></span></div>
+<div class="stat-tile"><span class="stat-label" data-i18n="graded_price_total"></span><span class="stat-value graded-price-total" id="graded-price-total"></span><span class="stat-note" id="graded-price-counted"></span></div>
+</div>
+<div class="stat-groups">
+<div><h3 data-i18n="graded_by_grade"></h3><ul class="stat-chips" id="graded-by-grade"></ul></div>
+<div><h3 data-i18n="graded_by_provider"></h3><ul class="stat-chips" id="graded-by-provider"></ul></div>
+</div>
+</section>
 <section class="results">
 <div class="section-heading">
 <div class="heading-left"><h2 data-i18n="graded_list"></h2><span class="count" id="graded-count" hidden></span><span id="graded-status" role="status" aria-live="polite"></span></div>
@@ -272,7 +282,7 @@
 </div>
 <div class="chips" id="graded-provider-chips" role="group" data-i18n-aria-label="graded_providers_to_show"></div>
 </div>
-<div class="panel table-panel" id="graded-table" hidden><div class="table-scroll"><table><thead><tr><th data-i18n="graded_images_column"></th><th data-i18n="graded_provider"></th><th data-i18n="graded_grade"></th><th data-i18n="name"></th><th data-i18n="graded_cert_number"></th><th data-i18n="graded_refreshed_column"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="graded-rows"></tbody></table></div></div>
+<div class="panel table-panel" id="graded-table" hidden><div class="table-scroll"><table><thead><tr><th data-i18n="graded_images_column"></th><th data-i18n="graded_provider"></th><th data-i18n="graded_grade"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="graded_cert_number"></th><th data-i18n="graded_refreshed_column"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="graded-rows"></tbody></table></div></div>
 <div id="graded-grid" class="card-grid graded-grid" hidden></div>
 <div id="graded-empty" class="empty" hidden><i class="bi bi-award"></i><h3></h3></div>
 </section>
@@ -635,6 +645,7 @@
 </div>
 <p id="graded-scan-status" class="graded-scan-status" role="status" aria-live="polite"></p>
 <ul id="graded-scan-added" class="graded-scan-added" hidden></ul>
+<label class="field graded-price-field"><span data-i18n="graded_price"></span><span class="price-input"><input id="graded-add-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/><select id="graded-add-currency" data-i18n-aria-label="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select></span></label>
 <p id="graded-dialog-error" class="dialog-error" role="alert"></p>
 <div class="dialog-actions">
 <button id="graded-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
@@ -645,6 +656,12 @@
 <dialog id="graded-detail-dialog" class="form-dialog graded-detail-dialog" aria-labelledby="graded-detail-title">
 <div class="dialog-head"><h2 id="graded-detail-title"></h2><button type="button" id="graded-detail-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
 <div id="graded-detail-body" class="graded-detail"></div>
+<form id="graded-price-form" class="graded-price-form">
+<label class="graded-detail-label" for="graded-detail-price" data-i18n="graded_price"></label>
+<div class="graded-price-row"><span class="price-input"><input id="graded-detail-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/><select id="graded-detail-currency" data-i18n-aria-label="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select></span>
+<button id="graded-price-save" type="submit" class="secondary compact" data-i18n="graded_price_save"></button></div>
+<p id="graded-price-status" class="field-hint" role="status"></p>
+</form>
 <p id="graded-detail-image-error" class="dialog-error" role="alert"></p>
 <input id="graded-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/*" hidden/>
 <input id="graded-image-camera" type="file" accept="image/*" capture="environment" hidden/>

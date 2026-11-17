@@ -9,6 +9,8 @@ import {loadImage} from './avatar-crop-ui.js';
 import {createCropEditor} from './graded-crop.js';
 import {numberButton} from './copy-number.js';
 import {setNavCount} from './nav-count.js';
+import {yenPrice, priceDisplay} from './card-money.js';
+import {createRateCache, formatPrice} from './currency.js';
 const $ = id => document.getElementById(id);
 // List/grid choice is shared with the other pages (app.js owns the toggle).
 const currentView = () => localStorage.getItem('view') === 'grid' ? 'grid' : 'list';
@@ -24,6 +26,14 @@ let ticker = 0, statusNotice = null, statusTimer = 0, dialogError = '', linkNoti
 let scanner = null, scanStarting = false, scanGeneration = 0, photoBusy = false, photoGeneration = 0;
 let scanMessage = null, scanAdded = [], recentScans = new Map();
 const graded = createGradedCards(render);
+let displayCurrency = 'JPY', requestAPI;
+const rateCache = createRateCache(() => render());
+
+export function setGradedCurrency(currency, rate) {
+  displayCurrency = currency;
+  rateCache.set(currency, rate);
+  render();
+}
 
 function node(tag, text = '', className = '') { const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el; }
 function icon(name) { const el = node('i', '', `bi ${name}`); el.setAttribute('aria-hidden', 'true'); return el; }
@@ -39,6 +49,13 @@ function textButton(name, label, handler, className = 'secondary compact') {
   return button;
 }
 const number = value => value.toLocaleString(getLanguage());
+const readPrice = prefix => ({price: $(`${prefix}-price`).value || null, currency: $(`${prefix}-currency`).value});
+function fillPrice(prefix, {price, currency = 'JPY'}) {
+  $(`${prefix}-price`).value = price ?? '';
+  $(`${prefix}-currency`).value = currency;
+}
+// Unit price in the sidebar's display currency, with the entered amount underneath.
+const priceOf = row => priceDisplay(row, {currency: displayCurrency, rates: rateCache.rates, language: getLanguage()});
 const providerName = id => graded.providerName(id);
 const dateText = seconds => new Date(seconds * 1000).toLocaleString(getLanguage(), {dateStyle: 'medium', timeStyle: 'short'});
 const busyStatus = status => status === 'queued' || status === 'loading';
@@ -159,7 +176,8 @@ function pendingRow(item) {
   if (busyStatus(item.status)) tr.setAttribute('aria-busy', 'true');
   const cell = (child, className = '') => { const td = node('td', '', className); if (child) td.append(child); tr.append(td); return td; };
   cell(pendingImages(item, true)); cell(providerTag(item.provider)); cell(gradeBadge(''));
-  cell(pendingText(item), 'graded-title-cell'); cell(node('span', item.cert_number, 'mono'));
+  cell(pendingText(item), 'graded-title-cell'); cell(node('span', '—', 'muted'), 'numeric');
+  cell(node('span', item.cert_number, 'mono'));
   cell(node('span', '—', 'graded-date'));
   const actions = node('div', '', 'row-actions');
   if (busyStatus(item.status)) actions.append(iconButton('bi-x-lg', cancelLabel(item), () => graded.dismiss(item.key)));
@@ -211,8 +229,9 @@ function gradedTile(row) {
   if (busyStatus(graded.state.refreshing[row.id]?.status)) card.setAttribute('aria-busy', 'true');
   const tags = node('div', '', 'card-tags'); tags.append(providerTag(row.provider), gradeBadge(row.grade));
   const top = node('div', '', 'card-top'); top.append(tags, numberButton(row.cert_number));
+  const bottom = node('div', '', 'card-bottom graded-price'); bottom.append(priceOf(row));
   card.append(top, slabPair(row), titleButton(row, 'card-name'),
-    node('span', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'));
+    node('span', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'), bottom);
   const status = refreshStatus(row); if (status) card.append(status);
   const foot = node('div', '', 'card-foot'); foot.append(cardActions(row));
   card.append(foot);
@@ -225,7 +244,7 @@ function gradedRow(row) {
   cell(slabPair(row, true)); cell(providerTag(row.provider)); cell(gradeBadge(row.grade));
   const title = cell(titleButton(row, 'cards-name'), 'graded-title-cell');
   const status = refreshStatus(row); if (status) title.append(status);
-  cell(numberButton(row.cert_number)); cell(node('span', dateText(row.refreshed_at), 'graded-date'));
+  cell(priceOf(row), 'numeric'); cell(numberButton(row.cert_number)); cell(node('span', dateText(row.refreshed_at), 'graded-date'));
   cell(cardActions(row), 'action-col');
   return tr;
 }
@@ -254,6 +273,32 @@ function providerChips() {
   }));
 }
 
+function statChips(rows, labelFor) {
+  const counts = new Map();
+  for (const row of rows) {
+    const label = labelFor(row);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return Array.from(counts, ([label, count]) => {
+    const chip = node('li', '', 'stat-chip');
+    chip.append(node('span', label, 'stat-chip-label'), node('span', number(count), 'stat-chip-value'));
+    return chip;
+  });
+}
+
+function renderPriceTotal(rows = filterGraded(graded.state.records, filters)) {
+  let total = 0, counted = 0;
+  for (const row of rows) {
+    const value = yenPrice(row, rateCache.rates);
+    if (value != null) { total += value; counted++; }
+  }
+  $('graded-price-total').textContent = counted
+    ? formatPrice(total, displayCurrency, rateCache.rates[displayCurrency], getLanguage()) : `${displayCurrency} -`;
+  const note = $('graded-price-counted');
+  note.textContent = t('graded_price_counted', {counted: number(counted), total: number(rows.length)});
+  note.title = t('graded_price_counted_hint');
+}
+
 function render() {
   const state = graded.state, view = currentView();
   setNavCount($('graded-nav-count'), state.ready ? state.records.length : 0);
@@ -263,6 +308,12 @@ function render() {
   $('graded-status').textContent = state.loading ? t('graded_loading') : state.error ? t(state.error)
     : statusNotice ? t(statusNotice.key, {provider: providerName(statusNotice.provider), number: statusNotice.cert_number}) : '';
   const rows = filterGraded(state.records, filters), pending = state.pending;
+  if (state.ready) rateCache.load(state.records, requestAPI);
+  $('graded-stats').hidden = !state.ready;
+  $('graded-quantity-total').textContent = number(rows.length);
+  renderPriceTotal(rows);
+  $('graded-by-grade').replaceChildren(...statChips(rows, row => row.grade || t('unknown')));
+  $('graded-by-provider').replaceChildren(...statChips(rows, row => providerName(row.provider)));
   $('graded-count').hidden = !state.ready;
   $('graded-count').textContent = t('counts', {matching: number(rows.length), loaded: number(state.records.length)});
   $('graded-filters').hidden = !state.ready;
@@ -359,24 +410,25 @@ function renderDialog() {
   $('graded-dialog-error').textContent = dialogError ? t(dialogError) : '';
   $('graded-cancel').textContent = t(scanAdded.length ? 'graded_done' : 'detail_cancel');
 }
-function openAdd({provider = '', cert_number = ''} = {}) {
+function openAdd({provider = '', cert_number = '', price = null, currency = 'JPY'} = {}) {
   if (!graded.state.ready) return;
   dialogError = ''; scanMessage = null; linkNotice = null; scanAdded = []; recentScans = new Map();
   providerOptions();
   if (provider && graded.state.providers.some(item => item.id === provider)) $('graded-provider').value = provider;
   $('graded-cert').value = cert_number;
+  fillPrice('graded-add', {price, currency});
   renderDialog();
   if (!$('graded-dialog').open) $('graded-dialog').showModal();
   $('graded-cert').focus();
 }
 function editPending(item) {
   graded.dismiss(item.key);
-  openAdd({provider: item.provider, cert_number: item.cert_number});
+  openAdd(item);
 }
 // Queues a lookup; returns the add() result so callers can explain duplicates.
 function queueLookup(provider, certNumber) {
   localStorage.setItem(PROVIDER_KEY, provider);
-  return graded.add({provider, cert_number: certNumber});
+  return graded.add({provider, cert_number: certNumber, ...readPrice('graded-add')});
 }
 function stopScan() {
   scanGeneration++; scanStarting = false;
@@ -407,6 +459,7 @@ function handleScan(text, fromCamera) {
   const parsed = parseScan(value, graded.state.providers);
   linkNotice = null;
   if (parsed?.provider) {
+    if (!$('graded-add-price').reportValidity()) return;
     const result = queueLookup(parsed.provider, parsed.cert_number), label = labelOf(parsed.provider, parsed.cert_number);
     if (result.status === 'queued') {
       stopScan();
@@ -680,6 +733,12 @@ function renderDetail(opening = false) {
   if (!opening && !dialog.open) return;
   const row = graded.state.records.find(card => card.id === detailId);
   if (!row) { if (dialog.open) dialog.close(); return; }
+  if (opening) {
+    fillPrice('graded-detail', row);
+    $('graded-price-status').textContent = '';
+  }
+  const priceBusy = graded.state.priceBusy.has(row.id);
+  for (const id of ['graded-detail-price', 'graded-detail-currency', 'graded-price-save']) $(id).disabled = priceBusy;
   const entry = graded.state.refreshing[row.id];
   const locked = busyStatus(entry?.status) || graded.state.removing.has(row.id);
   $('graded-detail-refresh').disabled = locked;
@@ -694,7 +753,8 @@ function renderDetail(opening = false) {
     const tags = node('div', '', 'card-tags'); tags.append(providerTag(row.provider), gradeBadge(row.grade));
     const cert = node('div', '', 'graded-detail-cert');
     cert.append(node('span', t('graded_cert_number'), 'graded-detail-label'), numberButton(row.cert_number));
-    info.append(tags, cert, node('p', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'));
+    // The price form is a single element moved into each rebuilt info column, so a draft survives.
+    info.append(tags, cert, $('graded-price-form'), node('p', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'));
     const status = refreshStatus(row); if (status) info.append(status);
     const fields = Object.entries(row.fields ?? {}), english = Object.entries(row.english_fields ?? {});
     if (fields.length || english.length) {
@@ -771,6 +831,16 @@ $('graded-dialog').addEventListener('close', () => {
   scanMessage = null; linkNotice = null; scanAdded = []; dialogError = '';
 });
 $('graded-detail-close').addEventListener('click', () => $('graded-detail-dialog').close());
+$('graded-price-form').addEventListener('input', () => { $('graded-price-status').textContent = ''; });
+$('graded-price-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const id = detailId;
+  if (!id || graded.state.priceBusy.has(id)) return;
+  $('graded-price-status').textContent = '';
+  const error = await graded.setPrice(id, readPrice('graded-detail'));
+  if (id !== detailId || !$('graded-detail-dialog').open) return;
+  $('graded-price-status').textContent = t(error || 'graded_price_saved');
+});
 $('graded-detail-refresh').addEventListener('click', () => { if (detailId) graded.refresh(detailId); });
 $('graded-detail-delete').addEventListener('click', () => {
   const row = graded.state.records.find(card => card.id === detailId);
@@ -825,10 +895,11 @@ document.addEventListener('viewchange', render);
 $('language').addEventListener('change', () => { chipsSignature = ''; detailSignature = ''; render(); });
 
 export function clearGraded() {
+  requestAPI = undefined; displayCurrency = 'JPY'; rateCache.reset();
   stopScan(); photoGeneration++; photoBusy = false;
   for (const id of ['graded-dialog', 'graded-detail-dialog', 'graded-delete-dialog', 'graded-crop-dialog']) $(id).close();
   filters = blankFilters(); $('graded-query').value = ''; chipsSignature = ''; pendingDelete = null; detailId = null;
   clearTimeout(statusTimer); statusNotice = null;
   graded.clear();
 }
-export function activateGraded(api) { clearGraded(); graded.activate(api); }
+export function activateGraded(api) { clearGraded(); requestAPI = api; graded.activate(api); }

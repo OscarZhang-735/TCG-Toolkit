@@ -28,6 +28,7 @@ from .auth.avatar import GRADED_PREFIX, cleanup_avatar, is_avatar_object, avatar
 from .auth.dependencies import current_user, require_trusted_origin, write_guard
 from .card_detect import ImageError, crop_card, detect_card, load_image
 from .card_enhance import calibrate
+from .card_schemas import CardPriceInput, price_record
 from .database import is_unique_violation
 from .db_models import AvatarCleanup, GradedCard
 from .grading import LOOKUPS, lookup_certificate, normalize_request, present
@@ -43,7 +44,7 @@ class LookupInput(BaseModel):
     request_id: str | None = Field(default=None, pattern=REQUEST_ID)
 
 
-class GradedCardInput(LookupInput):
+class GradedCardInput(LookupInput, CardPriceInput):
     provider: StrictStr
     cert_number: StrictStr
 
@@ -93,7 +94,7 @@ def record(row: GradedCard):
             'source_url': data.get('source_url'), 'title': title,
             'grade': certificate.get('grade') or '', 'fields': fields, 'english_fields': english,
             'population': certificate.get('population') or {}, 'images': images,
-            'created_at': row.created_at, 'refreshed_at': row.refreshed_at}
+            'created_at': row.created_at, 'refreshed_at': row.refreshed_at, **price_record(row)}
 
 
 def owned(db: Session, user_id, card_id, *, lock=False):
@@ -131,7 +132,8 @@ def add(body: GradedCardInput, request: Request, user=Depends(current_user)):
         now = int(time.time())
         with store(request).session() as db:
             row = GradedCard(id=str(uuid.uuid4()), user_id=user['id'], provider=provider.id,
-                             cert_number=cert_number, snapshot=snapshot(result), created_at=now, refreshed_at=now)
+                             cert_number=cert_number, snapshot=snapshot(result), created_at=now, refreshed_at=now,
+                             price=body.price, currency=body.currency)
             try:
                 with db.begin_nested():
                     db.add(row)
@@ -142,6 +144,14 @@ def add(body: GradedCardInput, request: Request, user=Depends(current_user)):
                     reject_duplicate(db, user['id'], provider.id, cert_number)
                 raise
             return record(row)
+
+
+@router.put('/{card_id}/price', dependencies=[Depends(write_guard)])
+def update_price(card_id: str, request: Request, body: CardPriceInput, user=Depends(current_user)):
+    with store(request).session() as db:
+        row = owned(db, user['id'], card_id, lock=True)
+        row.price, row.currency = body.price, body.currency
+        return price_record(row)
 
 
 @router.post('/{card_id}/refresh', dependencies=[Depends(write_guard)])

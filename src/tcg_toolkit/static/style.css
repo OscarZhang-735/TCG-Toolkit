@@ -675,8 +675,8 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 /* Unit price input with its currency picker on the same line. */
 .field > .price-input { display: flex; gap: 8px; margin-top: 6px; color: inherit; font-size: inherit; font-weight: inherit; }
 /* Outrank the generic field input/select margins below; the wrapper already carries it. */
-.cards-form-grid .field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
-.card-dialog .field .price-input select { width: auto; flex: none; margin-top: 0; }
+.cards-form-grid .field .price-input input, .field.graded-price-field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
+.card-dialog .field .price-input select, .field.graded-price-field .price-input select { width: auto; flex: none; margin-top: 0; }
 .card-dialog .price-input .price-lookup-button { flex: none; padding: 0 12px; gap: 6px; }
 /* Price lookup results, below the quantity / price row. */
 .price-lookup { padding: 12px 14px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
@@ -1258,7 +1258,11 @@ button.graded-title:hover { background: none; border: 0; text-decoration: underl
 .graded-card button.graded-title { flex: none; }
 .graded-card > .graded-meta { margin-top: auto; }
 .graded-date { white-space: nowrap; font-size: 12px; color: var(--color-text-muted); }
-td.graded-title-cell { min-width: 220px; }
+/* The list also carries a price column: the update time may wrap so the actions stay in view. */
+#graded-rows .graded-date { display: inline-block; min-width: 88px; white-space: normal; }
+td.graded-title-cell { min-width: 200px; }
+/* Eight columns: tighter cell padding keeps the row actions in view on a laptop screen. */
+#graded-table th, #graded-table td { padding-left: 12px; padding-right: 12px; }
 .graded-title-cell .graded-waiting, .graded-title-cell .graded-error { margin-top: 8px; }
 a.row-action { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; color: var(--color-text-muted); text-decoration: none; }
 a.row-action:hover { background: var(--color-hover); color: var(--color-text); }
@@ -1314,6 +1318,7 @@ tr.graded-flash > td { animation: graded-row-flash 2.2s ease-out; }
 .form-dialog.graded-dialog { width: min(560px, 94vw); }
 .graded-form-grid { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 14px; }
 .graded-form-grid .field select, .graded-form-grid .field input { margin-top: 6px; }
+.graded-dialog .graded-price-field { display: block; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-divider); }
 .graded-scan-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .graded-scan-actions button { flex: 1; min-width: 150px; }
 .graded-scanner { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 14px; }
@@ -1332,6 +1337,17 @@ tr.graded-flash > td { animation: graded-row-flash 2.2s ease-out; }
 
 /* Details: large images beside every certificate field and population figure. */
 .form-dialog.graded-detail-dialog { width: min(940px, 94vw); padding: 28px; }
+.graded-price-total { overflow-wrap: anywhere; }
+/* Price in the info column, under the certificate number: label, amount + currency, save. */
+.graded-price-form { display: flex; flex-direction: column; gap: 6px; }
+.graded-price-row { display: flex; align-items: center; gap: 8px; }
+.graded-price-row .price-input { display: flex; flex: 0 1 240px; min-width: 0; gap: 6px; }
+.graded-price-row .price-input input { flex: 1; min-width: 0; height: 34px; margin: 0; }
+.graded-price-row .price-input select { flex: none; width: auto; height: 34px; margin: 0; }
+.graded-price-row button { flex: none; height: 34px; }
+#graded-price-status { margin: 0; }
+#graded-price-status:empty { display: none; }
+.graded-card .card-bottom.graded-price { padding-top: 8px; }
 .graded-detail-dialog .dialog-head h2 { overflow-wrap: anywhere; }
 .graded-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 24px; align-items: start; }
 .graded-detail-images .card-image { height: 340px; }

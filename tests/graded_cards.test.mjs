@@ -348,6 +348,20 @@ test('refresh shares the queue, replaces the card on success and keeps it on fai
   assert.equal(graded.state.refreshing.t, undefined);
 });
 
+test('a late certificate refresh keeps the edited price', async () => {
+  const saved = card('s', 'psa', '1', {price: 120, currency: 'JPY'});
+  const {graded, backend} = await ready({}, {records: [saved]});
+  graded.refresh('s');
+  const saving = graded.setPrice('s', {price: '12.34', currency: 'CNY'});
+  assert.deepEqual(backend.calls.at(-1), {method: 'PUT', path: '/api/graded-cards/s/price',
+    body: {price: '12.34', currency: 'CNY'}});
+  backend.waiting[1].resolve(reply({price: 12.34, currency: 'CNY'}));
+  assert.equal(await saving, '');
+  backend.waiting[0].resolve(reply({...saved, grade: '9'}));
+  await settle();
+  assert.deepEqual(graded.state.records[0], {...saved, grade: '9', price: 12.34, currency: 'CNY'});
+});
+
 test('a queued refresh can be cancelled; a card deleted elsewhere disappears on refresh', async () => {
   const {graded, backend} = await ready({maxConcurrent: 1}, {records: [card('a', 'psa', '1'), card('b', 'psa', '2')]});
   graded.refresh('a');

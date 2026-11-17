@@ -14,14 +14,29 @@ GAMES = {'ws': 'WS', 'ws_en': 'WS EN', 'ws en': 'WS EN', 'wsr': 'WSR', 'pm': 'PM
 CURRENCIES = ('JPY', 'CNY', 'CAD')
 
 
-class CardInput(BaseModel):
+class CardPriceInput(BaseModel):
+    price: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    currency: Literal[CURRENCIES] = 'JPY'
+
+    @field_validator('currency', mode='before')
+    @classmethod
+    def currency_code(cls, value):
+        # Missing (null) means the default; codes are case-insensitive, e.g. "cny".
+        if value is None:
+            return 'JPY'
+        return value.strip().upper() if isinstance(value, str) else value
+
+
+def price_record(row):
+    return {'price': float(row.price) if row.price is not None else None, 'currency': row.currency}
+
+
+class CardInput(CardPriceInput):
     game: str = Field(min_length=1)
     card_number: str = Field(min_length=1)
     rarity: str = Field(min_length=1)
     name: str = Field(min_length=1)
     quantity: int = Field(default=1, strict=True, ge=0, le=9007199254740991)
-    price: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
-    currency: Literal[CURRENCIES] = 'JPY'
     notes: str = ''
     image_url: str = ''
 
@@ -38,15 +53,6 @@ class CardInput(BaseModel):
             if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password:
                 raise ValueError('Image URL must be HTTP or HTTPS')
         return value
-
-
-    @field_validator('currency', mode='before')
-    @classmethod
-    def currency_code(cls, value):
-        # Missing (null) means the default; codes are case-insensitive, e.g. "cny".
-        if value is None:
-            return 'JPY'
-        return value.strip().upper() if isinstance(value, str) else value
 
     @field_validator('game', 'card_number', 'rarity', 'name', 'notes')
     @classmethod
@@ -77,7 +83,7 @@ class GroupTarget(BaseModel):
 def card_record(row):
     return {**{key: getattr(row, key) for key in ('id', 'group_id', 'game', 'card_number', 'rarity', 'name',
                                                 'quantity', 'notes', 'image_url', 'created_at', 'updated_at')},
-            'price': float(row.price) if row.price is not None else None, 'currency': row.currency}
+            **price_record(row)}
 
 
 def card_values(body):

@@ -1,6 +1,6 @@
 import {createProxySettings} from './proxy-settings.js';
 import {clearCards, activateCards, ownedQuantity, setCardsCurrency} from './cards-ui.js';
-import {clearGraded, activateGraded} from './graded-cards-ui.js';
+import {clearGraded, activateGraded, setGradedCurrency} from './graded-cards-ui.js';
 import {createFavorites, cardKey} from './favorites.js';
 import {bindFavoriteGroups} from './favorite-groups-ui.js';
 import {createSelection} from './favorite-selection.js';
@@ -46,11 +46,16 @@ const searchFilters = createFilterPanel($('search-filters'), {onChange: () => {l
 const favoriteFilters = createFilterPanel($('favorites-filters'), {onChange: () => renderFavorites(), formatPrice: money,
   isSubscribed: item => Boolean(subscriptions.find(item))});
 function renderCurrencyStatus() { $('currency-status').hidden = !currencyStatus; $('currency-status').textContent = t('currency_fetched_at', {time: currencyStatus ? new Date(currencyStatus * 1000).toLocaleString(getLanguage()) : '—'}); }
+function renderCurrency() {
+  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render();
+  setCardsCurrency(displayCurrency, exchangeRate);
+  setGradedCurrency(displayCurrency, exchangeRate);
+}
 $('currency').addEventListener('change', async () => {
   const target = $('currency').value, request = ++currencyRequest;
   displayCurrency = 'JPY'; exchangeRate = 1;
   currencyStatus = null;
-  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render(); setCardsCurrency(displayCurrency, exchangeRate);
+  renderCurrency();
   try {
     let fetchedAt = null;
     const rate = await fetchRate(target, requestAPI, value => { fetchedAt = value; });
@@ -61,7 +66,7 @@ $('currency').addEventListener('change', async () => {
     if (request !== currencyRequest) return;
     $('currency').value = 'JPY'; currencyStatus = null;
   }
-  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render(); setCardsCurrency(displayCurrency, exchangeRate);
+  renderCurrency();
 });
 const proxySettings = createProxySettings();
 // Effective subscription recipient (custom notification email or verified account email).
