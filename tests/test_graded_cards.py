@@ -241,6 +241,7 @@ def slow_fetch(started, closed):
     """Stands in for an upstream request: blocks until its client is closed."""
     def fetch(number):
         class Client:
+            event_hooks = {'request': []}
             def close(self):
                 closed.set()
         grading._cancellable(Client())
@@ -314,15 +315,21 @@ def test_registry_forgets_outcomes_after_a_while():
     assert registry._outcomes.keys() == {('alice', 'early-0001')}
 
 
-def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch):
+@pytest.mark.parametrize('provider', ['ars', 'psa'])
+def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch, provider):
     """The production fetchers register their httpx client; closing it ends a slow read."""
     import http.server
     import threading
     import time
 
+    received, release = Event(), Event()
+
     class Slow(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            time.sleep(5)
+            received.set()
+            release.wait(timeout=10)
+
+        do_POST = do_GET
 
         def log_message(self, *args):
             pass
@@ -330,17 +337,19 @@ def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch):
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Slow)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setattr(grading, 'ARS_URL', f'http://127.0.0.1:{server.server_port}/')
+    monkeypatch.setenv('PROXY_GO_API', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('PROXY_GO_API_KEY', 'test-cancel-gateway-key')
     monkeypatch.setattr(grading, 'LOOKUP_SLOTS', grading.LookupSlots())
     registry = grading.LookupRegistry()
 
     def lookup():
         with registry.track('alice', 'real-00001'):
-            return grading.lookup_certificate('ars', '047088950114', 'alice')
+            return grading.lookup_certificate(provider, '047088950114', 'alice')
 
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(lookup)
-            time.sleep(0.5)
+            assert received.wait(timeout=5), 'the upstream request did not start'
             started = time.monotonic()
             assert registry.cancel('alice', 'real-00001') == 'cancelled'
             with pytest.raises(HTTPException) as error:
@@ -348,7 +357,9 @@ def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch):
             assert error.value.detail == 'grading_lookup_cancelled'
             assert time.monotonic() - started < 2
     finally:
+        release.set()
         server.shutdown()
+        server.server_close()
 
 
 def test_groups_create_rename_move_and_delete_keep_cards(client, monkeypatch):
@@ -362,7 +373,10 @@ def test_groups_create_rename_move_and_delete_keep_cards(client, monkeypatch):
     vault = client.post(groups, json={'name': 'Vault'}).json()
     assert client.put(f"{groups}/{vault['id']}", json={'name': 'Slabs'}).status_code == 409
     assert client.put(f"{groups}/{vault['id']}", json={'name': 'Safe'}).json()['name'] == 'Safe'
-    assert [row['name'] for row in client.get(groups).json()['items']] == ['Slabs', 'Safe']
+    saved_groups = client.get(groups).json()['items']
+    assert {row['name'] for row in saved_groups} == {'Slabs', 'Safe'}
+    assert [row['id'] for row in saved_groups] == [row['id'] for row in
+        sorted((slabs, vault), key=lambda row: (row['created_at'], row['id']))]
 
     # New cards may go straight into a group; an unknown group is rejected before the lookup.
     saved = client.post(PATH, json={'provider': 'psa', 'cert_number': '1', 'group_id': slabs['id']})

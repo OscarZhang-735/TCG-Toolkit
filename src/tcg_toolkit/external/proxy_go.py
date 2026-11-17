@@ -94,6 +94,11 @@ class ProxyGoClient:
     def is_closed(self):
         return self._client.is_closed
 
+    @property
+    def event_hooks(self):
+        """HTTPX hooks for the outgoing gateway request."""
+        return self._client.event_hooks
+
     def get(self, url: str, *, country: str = "US") -> httpx.Response:
         return self.fetch(url, country=country)
 

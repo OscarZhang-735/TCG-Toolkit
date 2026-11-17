@@ -6,6 +6,7 @@ Every adapter returns the same shape: ``certificate`` with ``title``, ``grade``,
 """
 import logging
 import re
+import socket
 import threading
 import time
 from contextvars import ContextVar
@@ -441,7 +442,7 @@ class LookupToken:
                 return False
             self.cancelled = True
             closers, self._closers = self._closers, []
-        for close in closers:
+        for close in reversed(closers):
             try:
                 close()
             except Exception:  # closing is best effort; the token already blocks the save
@@ -461,6 +462,19 @@ def _cancellable(client):
     token = _current_lookup.get()
     if token is not None:
         token.attach(client.close)
+
+        def trace(event, info):
+            if event in ('connection.connect_tcp.complete', 'connection.start_tls.complete'):
+                stream = info['return_value']
+                connection = stream.get_extra_info('socket')
+                if connection is not None:
+                    # close() alone does not interrupt another thread's recv() on Linux.
+                    token.attach(lambda: connection.shutdown(socket.SHUT_RDWR))
+
+        def before_request(request):
+            request.extensions['trace'] = trace
+
+        client.event_hooks['request'].append(before_request)
     return client
 
 

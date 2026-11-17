@@ -55,6 +55,7 @@ def test_graded_webui(monkeypatch, tmp_path):
             if requested == blocking:
                 # Like a slow upstream page: only the cancel (closing the client) ends it.
                 class Upstream:
+                    event_hooks = {'request': []}
                     def close(self):
                         released.set()
                 grading._cancellable(Upstream())
