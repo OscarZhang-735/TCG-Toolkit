@@ -20,7 +20,13 @@ const PROVIDER_LOGOS = {psa: './grading-psa.png', cgc: './grading-cgc.png', ars:
 const SCAN_REPEAT_MS = 4000;
 const STATUS_MS = 6000;
 const blankFilters = () => ({query: '', sort: 'newest', hiddenProviders: new Set()});
+// pendingDelete: a card id, or BULK for the selected cards.
+const BULK = Symbol('bulk');
 let filters = blankFilters(), pendingDelete = null, detailId = null, detailSignature = '', chipsSignature = '', englishOpen = false;
+// Multi-select as in the card library: bulk delete runs one card at a time (done cards are
+// deselected, failed ones stay selected); bulk re-query hands every card to the lookup queue.
+const blankSelection = () => ({active: false, ids: new Set(), running: false, done: 0, total: 0, failed: 0});
+let selection = blankSelection(), selectionGeneration = 0;
 let ticker = 0, statusNotice = null, statusTimer = 0, dialogError = '', linkNotice = null;
 // Add dialog scanning: one camera session at a time; generations drop late results.
 let scanner = null, scanStarting = false, scanGeneration = 0, photoBusy = false, photoGeneration = 0;
@@ -175,7 +181,7 @@ function pendingRow(item) {
   tr.dataset.key = item.key;
   if (busyStatus(item.status)) tr.setAttribute('aria-busy', 'true');
   const cell = (child, className = '') => { const td = node('td', '', className); if (child) td.append(child); tr.append(td); return td; };
-  cell(pendingImages(item, true)); cell(providerTag(item.provider)); cell(gradeBadge(''));
+  cell(null, 'select-col'); cell(pendingImages(item, true)); cell(providerTag(item.provider)); cell(gradeBadge(''));
   cell(pendingText(item), 'graded-title-cell'); cell(node('span', '—', 'muted'), 'numeric');
   cell(node('span', item.cert_number, 'mono'));
   cell(node('span', '—', 'graded-date'));
@@ -230,7 +236,9 @@ function gradedTile(row) {
   const tags = node('div', '', 'card-tags'); tags.append(providerTag(row.provider), gradeBadge(row.grade));
   const top = node('div', '', 'card-top'); top.append(tags, numberButton(row.cert_number));
   const bottom = node('div', '', 'card-bottom graded-price'); bottom.append(priceOf(row));
-  card.append(top, slabPair(row), titleButton(row, 'card-name'),
+  const images = slabPair(row);
+  if (selection.active) { images.append(selectBox(row)); card.classList.toggle('selected', selection.ids.has(row.id)); }
+  card.append(top, images, titleButton(row, 'card-name'),
     node('span', t('graded_refreshed_at', {time: dateText(row.refreshed_at)}), 'graded-meta'), bottom);
   const status = refreshStatus(row); if (status) card.append(status);
   const foot = node('div', '', 'card-foot'); foot.append(cardActions(row));
@@ -241,12 +249,77 @@ function gradedRow(row) {
   const tr = node('tr'); tr.dataset.id = row.id;
   if (busyStatus(graded.state.refreshing[row.id]?.status)) tr.setAttribute('aria-busy', 'true');
   const cell = (child, className = '') => { const td = node('td', '', className); td.append(child); tr.append(td); return td; };
+  cell(selectBox(row), 'select-col'); tr.classList.toggle('selected', selection.ids.has(row.id));
   cell(slabPair(row, true)); cell(providerTag(row.provider)); cell(gradeBadge(row.grade));
   const title = cell(titleButton(row, 'cards-name'), 'graded-title-cell');
   const status = refreshStatus(row); if (status) title.append(status);
   cell(priceOf(row), 'numeric'); cell(numberButton(row.cert_number)); cell(node('span', dateText(row.refreshed_at), 'graded-date'));
   cell(cardActions(row), 'action-col');
   return tr;
+}
+
+// Checkbox for multi-select; only shown while selecting.
+function selectBox(row) {
+  const box = node('input', '', 'select-box'); box.type = 'checkbox';
+  box.checked = selection.ids.has(row.id); box.disabled = selection.running;
+  box.setAttribute('aria-label', t('favorite_select_card', {name: row.title || row.cert_number}));
+  box.addEventListener('click', event => event.stopPropagation());
+  box.addEventListener('change', () => {
+    if (selection.running) return;
+    if (!selection.ids.delete(row.id)) selection.ids.add(row.id);
+    render();
+  });
+  return box;
+}
+function setSelecting(active) {
+  if (selection.running) return;
+  selection = {...blankSelection(), active}; render();
+}
+async function bulkDelete() {
+  const ids = [...selection.ids], current = selectionGeneration;
+  if (selection.running || !ids.length) return;
+  Object.assign(selection, {running: true, done: 0, total: ids.length, failed: 0}); render();
+  for (const id of ids) {
+    const error = await graded.remove(id);
+    if (current !== selectionGeneration) return;
+    if (!error) selection.ids.delete(id); else selection.failed++;
+    selection.done++; render();
+  }
+  selection.running = false; render();
+}
+// Cards already being looked up again are left as they are; the queue runs two at a time.
+function bulkRefresh() {
+  if (selection.running) return;
+  let count = 0;
+  for (const id of [...selection.ids]) {
+    if (busyStatus(graded.state.refreshing[id]?.status) || graded.state.removing.has(id)) continue;
+    graded.refresh(id); selection.ids.delete(id); count++;
+  }
+  if (count) {
+    statusNotice = {key: 'graded_bulk_refresh_queued', count}; clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { statusNotice = null; render(); }, STATUS_MS);
+  }
+  render();
+}
+function renderSelection(rows) {
+  const state = graded.state;
+  // Only cards still shown stay selected, so a bulk action never touches a filtered-out card.
+  const shown = new Set(rows.map(row => row.id));
+  for (const id of selection.ids) if (!shown.has(id)) selection.ids.delete(id);
+  const count = selection.ids.size;
+  $('graded-panel').classList.toggle('selecting', selection.active);
+  $('graded-selection-bar').hidden = !selection.active;
+  $('graded-select').setAttribute('aria-pressed', String(selection.active));
+  $('graded-select').querySelector('span').textContent = t(selection.active ? 'favorite_select_done' : 'favorite_select');
+  $('graded-select').disabled = selection.running || !state.ready;
+  $('graded-select-all').checked = count > 0 && count === rows.length;
+  $('graded-select-all').indeterminate = count > 0 && count < rows.length;
+  $('graded-select-all').disabled = selection.running || !rows.length;
+  $('graded-selection-count').textContent = selection.running ? t('favorite_bulk_progress', {done: number(selection.done), total: number(selection.total)})
+    : t('favorite_selected_count', {count: number(count)}) + (selection.failed ? ' · ' + t('cards_bulk_failed', {count: number(selection.failed)}) : '');
+  const idle = !selection.running && count > 0 && state.ready;
+  $('graded-bulk-refresh').disabled = !idle;
+  $('graded-bulk-delete').disabled = !idle;
 }
 
 function providerChips() {
@@ -306,8 +379,10 @@ function render() {
   $('graded-add').disabled = !state.ready;
   $('graded-retry').hidden = state.ready || !state.error || state.loading;
   $('graded-status').textContent = state.loading ? t('graded_loading') : state.error ? t(state.error)
-    : statusNotice ? t(statusNotice.key, {provider: providerName(statusNotice.provider), number: statusNotice.cert_number}) : '';
+    : statusNotice ? t(statusNotice.key, {provider: providerName(statusNotice.provider), number: statusNotice.cert_number,
+      count: number(statusNotice.count ?? 0)}) : '';
   const rows = filterGraded(state.records, filters), pending = state.pending;
+  renderSelection(rows);
   if (state.ready) rateCache.load(state.records, requestAPI);
   $('graded-stats').hidden = !state.ready;
   $('graded-quantity-total').textContent = number(rows.length);
@@ -785,6 +860,7 @@ function renderDetail(opening = false) {
 
 function confirmDelete(row) {
   pendingDelete = row.id;
+  $('graded-delete-title').textContent = t('graded_delete_title');
   $('graded-delete-message').textContent = t('graded_confirm_delete',
     {provider: providerName(row.provider), number: row.cert_number, name: row.title || t('graded_untitled')});
   $('graded-delete-error').textContent = '';
@@ -875,9 +951,27 @@ $('graded-crop-dialog').addEventListener('close', closeCrop);
 $('graded-crop-image').addEventListener('load', () => cropEditor.redraw());
 addEventListener('resize', () => { if ($('graded-crop-dialog').open) cropEditor.redraw(); });
 $('graded-delete-cancel').addEventListener('click', () => $('graded-delete-dialog').close());
+$('graded-select').addEventListener('click', () => setSelecting(!selection.active));
+$('graded-select-all').addEventListener('change', event => {
+  if (selection.running) return;
+  for (const row of filterGraded(graded.state.records, filters)) event.target.checked ? selection.ids.add(row.id) : selection.ids.delete(row.id);
+  render();
+});
+$('graded-bulk-refresh').addEventListener('click', bulkRefresh);
+$('graded-bulk-delete').addEventListener('click', () => {
+  const count = selection.ids.size;
+  if (!count || selection.running) return;
+  pendingDelete = BULK;
+  $('graded-delete-title').textContent = t('graded_bulk_delete_title');
+  $('graded-delete-message').textContent = t('graded_bulk_delete_message', {count: number(count)});
+  $('graded-delete-error').textContent = '';
+  $('graded-delete-confirm').disabled = false;
+  $('graded-delete-dialog').showModal();
+});
 $('graded-delete-confirm').addEventListener('click', async () => {
   const id = pendingDelete;
   if (!id) return;
+  if (id === BULK) { $('graded-delete-dialog').close(); bulkDelete(); return; }
   $('graded-delete-confirm').disabled = true;
   const error = await graded.remove(id);
   if (pendingDelete !== id) return;
@@ -900,6 +994,7 @@ export function clearGraded() {
   for (const id of ['graded-dialog', 'graded-detail-dialog', 'graded-delete-dialog', 'graded-crop-dialog']) $(id).close();
   filters = blankFilters(); $('graded-query').value = ''; chipsSignature = ''; pendingDelete = null; detailId = null;
   clearTimeout(statusTimer); statusNotice = null;
+  selectionGeneration++; selection = blankSelection();
   graded.clear();
 }
 export function activateGraded(api) { clearGraded(); requestAPI = api; graded.activate(api); }

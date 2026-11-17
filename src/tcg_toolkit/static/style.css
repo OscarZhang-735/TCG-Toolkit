@@ -520,10 +520,13 @@ button.fav-toggle:disabled:hover, button.fav-refresh:disabled:hover, button.fav-
 .card-foot .group-tag { margin-right: 6px; }
 td.group-col { white-space: nowrap; }
 /* Multi-select: checkboxes and the action bar only show while selecting. */
-#favorites-panel:not(.selecting) .select-col, #cards-panel:not(.selecting) .select-col { display: none; }
+#favorites-panel:not(.selecting) .select-col, #cards-panel:not(.selecting) .select-col, #graded-panel:not(.selecting) .select-col { display: none; }
 th.select-col, td.select-col { width: 1%; padding-right: 0; }
 input.select-box { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--color-primary); }
 .card-image input.select-box { position: absolute; top: 12px; left: 12px; z-index: 3; width: 20px; height: 20px; }
+/* Graded tiles carry two images; the checkbox sits over the pair. */
+.graded-images:has(> input.select-box) { position: relative; }
+.graded-images > input.select-box { position: absolute; top: 10px; left: 10px; z-index: 3; width: 20px; height: 20px; }
 tr.selected td { background: var(--color-hover); }
 .card.selected { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); }
 .selection-bar {

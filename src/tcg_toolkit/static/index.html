@@ -268,8 +268,9 @@
 <section class="results">
 <div class="section-heading">
 <div class="heading-left"><h2 data-i18n="graded_list"></h2><span class="count" id="graded-count" hidden></span><span id="graded-status" role="status" aria-live="polite"></span></div>
-<div class="heading-actions"><button id="graded-add" type="button" class="compact" aria-haspopup="dialog" disabled><i class="bi bi-plus-lg" aria-hidden="true"></i><span data-i18n="graded_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
+<div class="heading-actions"><button id="graded-select" type="button" class="secondary compact" aria-pressed="false" disabled><i class="bi bi-check2-square"></i><span data-i18n="favorite_select"></span></button><button id="graded-add" type="button" class="compact" aria-haspopup="dialog" disabled><i class="bi bi-plus-lg" aria-hidden="true"></i><span data-i18n="graded_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
+<div id="graded-selection-bar" class="selection-bar" hidden><label class="select-all"><input id="graded-select-all" type="checkbox"/><span data-i18n="favorite_select_all"></span></label><span id="graded-selection-count" class="selection-count" role="status" aria-live="polite"></span><div class="selection-actions"><button id="graded-bulk-refresh" type="button" class="secondary compact"><i class="bi bi-arrow-clockwise"></i><span data-i18n="graded_refresh"></span></button><button id="graded-bulk-delete" type="button" class="secondary compact"><i class="bi bi-trash3"></i><span data-i18n="cards_delete"></span></button></div></div>
 <button id="graded-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
 <div class="panel filters" id="graded-filters" hidden>
 <div class="filter-top">
@@ -282,7 +283,7 @@
 </div>
 <div class="chips" id="graded-provider-chips" role="group" data-i18n-aria-label="graded_providers_to_show"></div>
 </div>
-<div class="panel table-panel" id="graded-table" hidden><div class="table-scroll"><table><thead><tr><th data-i18n="graded_images_column"></th><th data-i18n="graded_provider"></th><th data-i18n="graded_grade"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="graded_cert_number"></th><th data-i18n="graded_refreshed_column"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="graded-rows"></tbody></table></div></div>
+<div class="panel table-panel" id="graded-table" hidden><div class="table-scroll"><table><thead><tr><th class="select-col"></th><th data-i18n="graded_images_column"></th><th data-i18n="graded_provider"></th><th data-i18n="graded_grade"></th><th data-i18n="name"></th><th class="numeric" data-i18n="price"></th><th data-i18n="graded_cert_number"></th><th data-i18n="graded_refreshed_column"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="graded-rows"></tbody></table></div></div>
 <div id="graded-grid" class="card-grid graded-grid" hidden></div>
 <div id="graded-empty" class="empty" hidden><i class="bi bi-award"></i><h3></h3></div>
 </section>
