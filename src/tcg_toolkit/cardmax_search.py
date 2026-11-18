@@ -1,13 +1,14 @@
 """Card Max's category-scoped single-card search."""
 
 import re
+from dataclasses import replace
 from functools import partial
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
-from bs4 import Tag
+from bs4 import BeautifulSoup, Tag
 
-from .models import Game, SearchItem, StockStatus
+from .models import Game, SearchItem, SearchPage, StockStatus
 from .search_base import PagedSearcher, _text
 
 
@@ -18,6 +19,33 @@ class CardMaxSearcher(PagedSearcher):
     main_selector = 'form[name="form_se"]'
     cards_selector = ".search-end-list tr:has(td)"
     client_type = partial(httpx.Client, trust_env=False, follow_redirects=True)
+
+    def __init__(self, *, stock: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self.stock = stock
+
+    def search_page(self, keyword: str, *, page: int = 1) -> SearchPage:
+        result = super().search_page(keyword, page=page)
+        if not self.stock:
+            return result
+        items = []
+        for item in result.items:
+            html = self.fetch_html(item.product_url, keyword=result.keyword, page=page)
+            soup = BeautifulSoup(html, "html.parser")
+            node = soup.select_one('span[class*="M_item-stock-"]')
+            label = _text(node)
+            count = re.fullmatch(r"残りあと\s*([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*個", label)
+            quantity = None
+            status = StockStatus.UNKNOWN
+            if node and "M_item-stock-soldout" in node.get("class", []):
+                status, quantity = StockStatus.OUT_OF_STOCK, 0
+            elif count:
+                quantity = int(count[1].replace(",", ""))
+                status = StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK
+            elif label in ("在庫あり", "在庫有り"):
+                status = StockStatus.IN_STOCK
+            items.append(replace(item, stock_quantity=quantity, stock_status=status, stock_text=label))
+        return replace(result, items=items)
 
     def response_html(self, response: httpx.Response) -> str:
         # The EUC-JP storefront includes extended characters such as №.

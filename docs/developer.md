@@ -115,7 +115,7 @@ with ProxyGoClient() as client:
 
 Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经现有加密代理访问，代理的 `allowed_hosts` 需包含 `www.hobbystation-single.jp`。库存符号如 ◎ 表示有货，`stock_quantity` 为 `null`。页面标记售罄时数量为 0。Lycee 商品编号如 `LO-LO-4899` 返回印刷编号 `LO-4899`，同名异版保留各自的编号和商品链接。Hobby Station 的 `cart` 字段为 `null`。
 
-Card Max 使用服务器直连。例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014`。WS 可输入完整编号，如 `AMG/W121-019SP`。搜索仅返回单卡，结果列表未提供库存时返回 `stock_status="unknown"` 和 `stock_quantity=null`。CARDMAX 的 WSR 分类目前仅有盒装商品。
+Card Max 使用服务器直连，例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014&stock=true`。默认只读取搜索列表，列表包含售罄单卡（如实测的 `GBF/S134-132S`），库存返回 `unknown` 和 `null`。可用 `stock=true`、CLI 的 `--stock` 或 Python 搜索器构造参数 `stock=True` 开启详情查询，每条单卡结果额外请求一次详情页。`残りあとN個` 返回具体数量，`売り切れ` 返回 `out_of_stock` 和 0。WS 可输入完整编号，如 `AMG/W121-019SP`。Card Max 的 WSR 分类目前仅有盒装商品。
 
 命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee` 或 `tcg-search "BP22-014" --source cardmax --game sev`，同样支持 `--page` 和 `--all`。
 

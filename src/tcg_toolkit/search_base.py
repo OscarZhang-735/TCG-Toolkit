@@ -57,13 +57,16 @@ class PagedSearcher:
         if page != 1:
             params[self.page_param] = str(page)
         url = str(httpx.URL(self.base_url + self.search_path, params=params))
-        context = dict(game=self.game, keyword=keyword, page=page, url=url)
+        html = self.fetch_html(url, keyword=keyword, page=page)
+        return self.parse_page(html, keyword=keyword, page=page, url=url)
+
+    def fetch_html(self, url: str, *, keyword: str, page: int) -> str:
         try:
             response = self._client.get(url, timeout=self.timeout)
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise SearchRequestError(str(exc), **context) from exc
-        return self.parse_page(self.response_html(response), keyword=keyword, page=page, url=url)
+            raise SearchRequestError(str(exc), game=self.game, keyword=keyword, page=page, url=url) from exc
+        return self.response_html(response)
 
     def query_keyword(self, keyword: str) -> str:
         return keyword

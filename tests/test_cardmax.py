@@ -64,3 +64,26 @@ def test_only_explicit_zero_count_is_empty():
             searcher.parse_page(empty.replace('総0件', '総1件'), **args)
         with pytest.raises(SearchParseError, match='Item 1'):
             searcher.parse_page(fixture('ws').replace('4,980円', '未定'), **args)
+
+
+@pytest.mark.parametrize(('stock', 'expected'), [
+    (False, [('unknown', None), ('unknown', None)]),
+    (True, [('in_stock', 4), ('out_of_stock', 0)]),
+])
+def test_optional_detail_stock(stock, expected):
+    paths = []
+    def respond(request):
+        paths.append(request.url.path)
+        if request.url.path == '/shop/shopbrand.html':
+            return httpx.Response(200, text=fixture('sev'))
+        labels = {
+            '/shopdetail/000000235105': '<span class="M_item-stock-smallstock">残りあと4個</span>',
+            '/shopdetail/000000235103': '<span class="M_item-stock-soldout">売り切れ</span>',
+        }
+        return httpx.Response(200, content=labels[request.url.path].encode('euc-jp'),
+                              headers={'content-type': 'text/html; charset=EUC-JP'})
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = CardMaxSEVSearcher(client=client, stock=stock).search_page('BP22')
+    assert [(i.stock_status, i.stock_quantity) for i in result.items] == expected
+    assert result.next_page == 2
+    assert len(paths) == (3 if stock else 1)

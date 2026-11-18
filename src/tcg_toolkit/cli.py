@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-g", "--game", action="append", required=True, choices=tuple(Game),
                         help="搜索器，可重复指定；多个搜索器使用同一关键词")
     parser.add_argument("--clean", action="store_true", help="以易读表格输出结果")
+    parser.add_argument("--stock", action="store_true", help="逐张查询 Card Max 详情页库存")
     parser.add_argument("--page", type=int, default=1, help="页码或遍历起始页（默认 1）")
     parser.add_argument("--all", action="store_true", help="从指定页遍历至末页，每页输出一行 JSON")
     args = parser.parse_args(argv)
@@ -61,7 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     for game in games:
         searcher_type = searchers[game]
         try:
-            with searcher_type() as searcher:
+            options = {"stock": True} if args.source == SearchSource.CARDMAX and args.stock else {}
+            with searcher_type(**options) as searcher:
                 pages = (searcher.iter_pages(args.keyword, start_page=args.page) if args.all
                          else [searcher.search_page(args.keyword, page=args.page)])
                 for page in pages:
