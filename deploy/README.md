@@ -22,6 +22,8 @@
 - `PROXY_GO_API` / `PROXY_GO_API_KEY`：PSA、CGC 证书网页查询使用的 `proxy-go` 网关地址和密钥，地址支持基础 URL 或完整 `/v1/fetch`。缺少任一项时查询返回 503 `psa_not_configured` 或 `cgc_not_configured`。迁移 Proxy-Go 到服务器时更新这两项并重新创建 Web 容器；地址须能从容器访问。ARS 直连官网。返回结构与验收方式见[开发文档](../docs/developer.md#评级卡证书查询)。
 - 保留 `API_DOMAIN`、`TCG_PROXY_IPS`、RapidAPI、搜索代理、SMTP 参数及稳定的 `TCG_EMAIL_CODE_SECRET`。
 
+查价代理使用加密协议。将与代理端一致的 32 字节原始密钥保存到 `/opt/tcg-http/secrets/search-proxy.key`（权限 600、属主 UID 1000），或通过 `TCG_PROXY_KEY_HOST_FILE` 指定宿主机文件。部署 Compose 将其只读挂载到 `/run/secrets/search-proxy.key`，并设置 `TCG_PROXY_KEY_FILE`。缺少密钥会使查价返回 502；代理 TCP 连通不能替代加密请求验证。
+
 `.env` 保持权限 600，不提交到 Git。当前代理网关为 `172.19.0.1`；保留现有 default 网络，若改变网关应同步更新信任 IP。
 
 ## 首次通过 SSH 部署
