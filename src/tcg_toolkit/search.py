@@ -1,4 +1,4 @@
-"""Synchronous searchers sharing YuYu-Tei's search-result markup."""
+"""Paginated merchant searches and their supported games."""
 
 import re
 import time
@@ -10,23 +10,23 @@ from bs4 import BeautifulSoup, Tag
 
 from .errors import SearchPaginationError, SearchParseError, SearchRequestError
 from .external.search_proxy import SearchProxyClient
-from .models import Game, SearchItem, SearchPage, StockStatus
+from .models import Game, SearchItem, SearchPage, SearchSource, StockStatus
 
 
 def _text(node: Tag | None) -> str:
     return " ".join(node.get_text(" ", strip=True).split()) if node else ""
 
 
-class BaseSearcher:
-    """Override game/search_path or parsing methods for another searcher.
+class PagedSearcher:
+    """Sequential keyword search. Injected clients remain owned by the caller."""
 
-    Internally created clients are owned and closed by this object. Injected
-    clients remain owned by the caller. Instances are intended for sequential use.
-    """
-
-    base_url = "https://yuyu-tei.jp"
+    base_url: str
     game: Game
     search_path: str
+    cards_selector: str
+    page_param = "page"
+    fixed_params: dict[str, str] = {}
+    client_type = SearchProxyClient
 
     def __init__(self, *, client: httpx.Client | SearchProxyClient | None = None,
                  timeout: float = 30.0, page_interval: float = 1.0):
@@ -35,7 +35,7 @@ class BaseSearcher:
         self.timeout = timeout
         self.page_interval = page_interval
         self._owns_client = client is None
-        self._client = client if client is not None else SearchProxyClient()
+        self._client = client if client is not None else self.client_type()
 
     def __enter__(self):
         return self
@@ -53,9 +53,9 @@ class BaseSearcher:
         if type(page) is not int or page < 1:
             raise ValueError("page must be a positive integer")
         keyword = keyword.strip()
-        params = {"search_word": keyword}
+        params = {"search_word": keyword, **self.fixed_params}
         if page != 1:
-            params["page"] = str(page)
+            params[self.page_param] = str(page)
         url = str(httpx.URL(self.base_url + self.search_path, params=params))
         context = dict(game=self.game, keyword=keyword, page=page, url=url)
         try:
@@ -82,9 +82,8 @@ class BaseSearcher:
         context = dict(game=self.game, keyword=keyword, page=page, url=url)
         soup = BeautifulSoup(html, "html.parser")
         main = soup.select_one("main")
-        cards = main.select(".cards-list .card-product") if main else []
-        empty = main and "検索条件に該当する商品は見つかりませんでした。" in main.get_text()
-        if not cards and not empty:
+        cards = main.select(self.cards_selector) if main else []
+        if not main or (not cards and not self.is_empty(main)):
             raise SearchParseError("Unrecognized search result page", **context)
         try:
             next_page = self.parse_pagination(main, page=page)
@@ -97,6 +96,25 @@ class BaseSearcher:
             except ValueError as exc:
                 raise SearchParseError(f"Item {index + 1}: {exc}", **context) from exc
         return SearchPage(items=items, keyword=keyword, page=page, next_page=next_page)
+
+    def parse_item(self, card: Tag, *, url: str) -> SearchItem:
+        raise NotImplementedError
+
+    def is_empty(self, main: Tag) -> bool:
+        raise NotImplementedError
+
+    def parse_pagination(self, main: Tag, *, page: int) -> int | None:
+        raise NotImplementedError
+
+
+class BaseSearcher(PagedSearcher):
+    """Base class for the YuYu-Tei game searchers."""
+
+    base_url = "https://yuyu-tei.jp"
+    cards_selector = ".cards-list .card-product"
+
+    def is_empty(self, main: Tag) -> bool:
+        return "検索条件に該当する商品は見つかりませんでした。" in main.get_text()
 
     def parse_item(self, card: Tag, *, url: str) -> SearchItem:
         name = _text(card.select_one("h4"))
@@ -239,3 +257,101 @@ class SEVSearcher(BaseSearcher):
 SEARCHERS = {searcher.game: searcher for searcher in (
     WSRSearcher, LyceeSearcher, ChaosTCGSearcher, WSSearcher, PMSearcher, SEVSearcher,
 )}
+
+
+class HobbyStationClient(SearchProxyClient):
+    relay_host = 'www.hobbystation-single.jp'
+
+    def get(self, url, *, timeout):
+        response = super().get(url, timeout=timeout)
+        if (response.status_code == 200 and response.url.host == self.relay_host
+                and '<title>安全な接続を確認中...</title>' in response.text):
+            # The storefront issues a session cookie in its landing page, then reloads.
+            cookie = re.search(r'document\.cookie\s*=\s*"eccube_bot_check=([\w-]+);', response.text)
+            if cookie:
+                self.client.cookies.set('eccube_bot_check', cookie[1], domain=self.relay_host, path='/')
+                return super().get(url, timeout=timeout)
+        return response
+
+
+class HobbyStationSearcher(PagedSearcher):
+    base_url = f"https://{HobbyStationClient.relay_host}"
+    cards_selector = "section.result .searchRsultList > li"
+    page_param = "pageno"
+    fixed_params = {"match_type": "1"}
+    client_type = HobbyStationClient
+
+    def is_empty(self, main: Tag) -> bool:
+        return _text(main.select_one('.ec-searchnavRole__counter')) == 'お探しの商品は見つかりませんでした'
+
+    def parse_item(self, card: Tag, *, url: str) -> SearchItem:
+        link = card.select_one('.list_product_Name_pc a[href]')
+        name = _text(link)
+        number = _text(card.find('div', recursive=False))
+        detail = card.select_one('.packageDetail')
+        price = re.match(r'([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*円', _text(detail))
+        if not name or not number or not price or not link.get('href'):
+            raise ValueError("Missing or invalid name, card number, price or product URL")
+        if self.game == Game.LYCEE:
+            number = re.sub(r'^LO-(?:D-)?(?=LO-)', '', number)
+        if detail.select_one('img[alt="SOLD OUT"]'):
+            stock_text, status, quantity = 'SOLD OUT', StockStatus.OUT_OF_STOCK, 0
+        else:
+            stock_text = _text(detail.select_one('.stock'))
+            value = re.sub(r'^在庫数\s*[:：]\s*', '', stock_text)
+            quantity = int(value) if re.fullmatch(r'[0-9]+', value) else None
+            if quantity is not None:
+                status = StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK
+            elif value in ('◎', '○', '◯', '△'):
+                status = StockStatus.IN_STOCK
+            else:
+                status = StockStatus.UNKNOWN
+        rarity = re.search(r'\(([A-Z][A-Z0-9+★]*)\)$', name)
+        image = card.select_one('figure img[src]')
+        return SearchItem(
+            game=self.game, name=name, card_number=number,
+            price=int(price[1].replace(',', '')), currency='JPY',
+            stock_status=status, stock_quantity=quantity, stock_text=stock_text,
+            product_url=urljoin(url, link['href']),
+            image_url=urljoin(url, image['src']) if image and image['src'] else None,
+            rarity=rarity[1] if rarity else None,
+        )
+
+    def parse_pagination(self, main: Tag, *, page: int) -> int | None:
+        pager = main.select_one('.ec-pager')
+        if pager is None:
+            if page != 1:
+                raise ValueError("No pagination confirms the requested page")
+            return None
+        if _text(pager.select_one('.ec-pager__item--active')) != str(page):
+            raise ValueError("Active page does not match the requested page")
+        for link in pager.select('a'):
+            if _text(link) == '次へ':
+                values = parse_qs(urlsplit(link.get('href', '')).query).get('pageno')
+                if values != [str(page + 1)]:
+                    raise ValueError("Invalid next page")
+                return page + 1
+        return None
+
+
+class HobbyStationLyceeSearcher(HobbyStationSearcher):
+    game = Game.LYCEE
+    search_path = "/lo/product/list"
+
+
+class HobbyStationWSSearcher(HobbyStationSearcher):
+    game = Game.WS
+    search_path = "/ws/product/list"
+
+
+class HobbyStationWSRSearcher(HobbyStationSearcher):
+    game = Game.WSR
+    search_path = "/wr/product/list"
+
+
+SEARCH_SOURCES = {
+    SearchSource.YUYUTEI: SEARCHERS,
+    SearchSource.HOBBYSTATION: {searcher.game: searcher for searcher in (
+        HobbyStationLyceeSearcher, HobbyStationWSSearcher, HobbyStationWSRSearcher,
+    )},
+}

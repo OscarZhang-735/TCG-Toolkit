@@ -19,13 +19,14 @@ def proxy_url():
 class YuYuTeiProxyTransport(httpx.BaseTransport):
     """Relay on the wire while HTTPX keeps cookies scoped to the target host."""
 
-    def __init__(self, *, transport=None):
+    def __init__(self, *, transport=None, relay_host='yuyu-tei.jp'):
         self.url = proxy_url()
+        self.relay_host = relay_host
         self.key_file = os.getenv('TCG_PROXY_KEY_FILE', '')
         self.transport = transport if transport is not None else httpx.HTTPTransport()
 
     def handle_request(self, request):
-        if not self.url or request.url.host != 'yuyu-tei.jp':
+        if not self.url or request.url.host != self.relay_host:
             return self.transport.handle_request(request)
         return self.encrypted_request(request)
 
@@ -76,9 +77,11 @@ class YuYuTeiProxyTransport(httpx.BaseTransport):
 class SearchProxyClient:
     """Use encrypted forwarding for proxy requests; preserve HTTPX errors."""
 
+    relay_host = 'yuyu-tei.jp'
+
     def __init__(self, *, transport=None):
         self.url = proxy_url()
-        self.client = httpx.Client(transport=YuYuTeiProxyTransport(transport=transport),
+        self.client = httpx.Client(transport=YuYuTeiProxyTransport(transport=transport, relay_host=self.relay_host),
                                    follow_redirects=True, trust_env=False)
 
     def get(self, url, *, timeout):

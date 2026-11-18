@@ -4,6 +4,7 @@ import pytest
 
 from tcg_toolkit import Game, SearchPage, SearchRequestError
 from tcg_toolkit import cli
+from tcg_toolkit.search import SEARCHERS, HobbyStationLyceeSearcher
 
 
 @pytest.fixture
@@ -17,8 +18,8 @@ def calls(monkeypatch):
             return SearchPage([], keyword, page, None)
         def iter_pages(self, keyword, *, start_page):
             yield self.search_page(keyword, page=start_page)
-    for game in cli.SEARCHERS:
-        monkeypatch.setitem(cli.SEARCHERS, game, Fake)
+    for game in SEARCHERS:
+        monkeypatch.setitem(SEARCHERS, game, Fake)
     return calls
 
 
@@ -42,7 +43,7 @@ def test_continue_after_error(calls, capsys, monkeypatch):
         def __enter__(self):
             raise SearchRequestError("failed", game=Game.WSR, keyword="X", page=1, url="test")
         def __exit__(self, *args): pass
-    monkeypatch.setitem(cli.SEARCHERS, Game.WSR, Broken)
+    monkeypatch.setitem(SEARCHERS, Game.WSR, Broken)
     assert cli.main(["X", "-g", "wsr", "-g", "lycee"]) == 1
     output = capsys.readouterr()
     assert "搜索失败" in output.err
@@ -75,6 +76,17 @@ def test_game_option_is_required(calls):
         cli.main(["wsr", "01"])
     assert exc.value.code == 2
     assert calls == []
+
+
+def test_hobby_source(monkeypatch, capsys):
+    def search(self, keyword, *, page):
+        return SearchPage([], keyword, page, None)
+    monkeypatch.setattr(HobbyStationLyceeSearcher, 'search_page', search)
+    assert cli.main(['LO-4899', '--source', 'hobbystation', '-g', 'lycee']) == 0
+    assert json.loads(capsys.readouterr().out)['keyword'] == 'LO-4899'
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['LO-4899', '--source', 'hobbystation', '-g', 'sev'])
+    assert exc.value.code == 2
 
 
 def test_new_games_combined(calls, capsys):

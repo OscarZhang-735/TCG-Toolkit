@@ -4,6 +4,11 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 
 
+class SearchSource(StrEnum):
+    YUYUTEI = "yuyutei"
+    HOBBYSTATION = "hobbystation"
+
+
 class Game(StrEnum):
     SEV = "sev"
     WS = "ws"

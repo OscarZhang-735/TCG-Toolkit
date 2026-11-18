@@ -45,7 +45,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_TRUSTED_ORIGINS` | 允许登录的访问地址，多个用逗号分隔，不含路径 | 空（不允许登录） |
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
-| `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
+| `TCG_SEARCH_PROXY_URL` | Hobby Station 搜索及游游亭搜索、商品详情、凭据验证和购物车的加密转发接口；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
 | `ZYTE_API_KEY` | PSA 与 CGC 网页查询使用的 Zyte Extract API 密钥 | 空 |
 | `PROXY_GO_API` | 独立 `proxy-go` 客户端网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
 | `PROXY_GO_API_KEY` | `proxy-go` 服务端 API 密钥，仅填写密钥本身 | 空 |
@@ -99,7 +99,7 @@ with ProxyGoClient() as client:
 | 职责 | 模块与依赖方向 |
 | --- | --- |
 | 认证 | `auth/schemas.py` 定义请求模型；`auth/dependencies.py` 提供访问控制；`auth/runtime.py` 初始化服务和限流；`auth/routes.py` 处理端点 |
-| 搜索与商品 | `search.py` 的 `SEARCHERS` 是 Web、收藏、报价和 CLI 共用的注册表；`product_identity.py` 定义商品身份，`cart_models.py` 定义购物车目标模型 |
+| 搜索与商品 | Web 搜索和 CLI 使用 `search.py` 的 `SEARCH_SOURCES` 按商家和游戏选择搜索器。游游亭的游戏注册表 `SEARCHERS` 也供收藏和报价使用。`product_identity.py` 定义商品身份，`cart_models.py` 定义购物车目标模型 |
 | 商品详情数据源 | `external/yuyutei_products.py` 管理抓取、解析及缓存，抛出 `ProductSourceError`；`product_details.py` 等 HTTP 调用方负责转换为接口响应，后台任务直接记录数据源错误 |
 | 收藏与订阅 | `subscription_schedule.py` 提供 API 和后台共用的时间计算；`subscription_service.py` 原子提交订阅、收藏和邮件待发记录；`subscription_worker.py` 负责扫描、运行状态和投递重试 |
 | 通知 | `notifications.py` 提供 SMTP 发送、收件地址选择和订阅消息组装；认证验证码、通知设置路由及后台任务直接使用该模块 |
@@ -107,7 +107,15 @@ with ProxyGoClient() as client:
 | 数据库 | `schema.py` 负责版本检查和迁移；`db_cli.py` 只解析命令行参数，运行期模块直接依赖 `schema.py` |
 | 前端 | `cards-ui.js` 组合库存界面，`cards-transfer-ui.js` 管理导入导出交互；`card-prices.js`、`card-money.js`、`product-identity.js` 和 `quantity.js` 分别提供报价、金额、商品身份和数量处理 |
 
-新增搜索游戏时，在 `search.py` 的唯一注册表中登记搜索器，CLI 的游戏选项随之更新；新增报价商家使用 `prices.py` 的 `MERCHANTS` 注册表。新增界面功能直接引用负责该职责的模块；静态 ES 模块保持在 `static/` 一级目录，由现有 Pages 构建脚本自动收集。
+新增搜索游戏时，在对应商家的游戏注册表中登记搜索器。新增报价商家使用 `prices.py` 的 `MERCHANTS` 注册表。
+
+### 按商家搜索
+
+登录后可调用 `GET /api/search?source=hobbystation&game=lycee&keyword=LO-4899&page=1`。省略 `source` 时默认使用 `yuyutei`。Hobby Station 支持 `lycee`、`ws` 和 `wsr`，不支持的来源或游戏组合返回 422。两个来源使用相同的商品字段和分页结构，调用方可按 `next_page` 继续查询至其为 `null`。
+
+Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经现有加密代理访问，代理的 `allowed_hosts` 需包含 `www.hobbystation-single.jp`。库存符号如 ◎ 表示有货，`stock_quantity` 为 `null`。页面标记售罄时数量为 0。Lycee 商品编号如 `LO-LO-4899` 返回印刷编号 `LO-4899`，同名异版保留各自的编号和商品链接。Hobby Station 的 `cart` 字段为 `null`。
+
+命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee`，同样支持 `--page` 和 `--all`。
 
 命令行搜索统一使用 `tcg-search "关键词" --game wsr`，多游戏可重复 `--game`，例如 `tcg-search "BP01" --game ws --game sev --all`。旧 `tcg-search 游戏 关键词` 格式已移除。内部模块调用方应使用上述新路径，不提供旧模块路径的兼容转发。数据库迁移链继续保留，以支持已有数据库升级。
 

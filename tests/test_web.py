@@ -42,9 +42,23 @@ def test_search(game, monkeypatch):
 
 
 @pytest.mark.parametrize('params', [dict(game='bad', keyword='x'), dict(game='wsr', keyword=' '),
+                                    dict(game='pm', keyword='x', source='hobbystation'),
+                                    dict(game='lycee', keyword='x', source='unknown'),
                                     dict(game='wsr', keyword='x', page=0), dict(game='wsr')])
 def test_validation(params):
     assert client.get('/api/search', params=params).status_code == 422
+
+
+@pytest.mark.parametrize(('game', 'path'), [('lycee', 'lo'), ('ws', 'ws'), ('wsr', 'wr')])
+def test_hobbystation_search(game, path, monkeypatch):
+    def get(self, url, *, timeout):
+        assert url == f'https://www.hobbystation-single.jp/{path}/product/list?search_word=abc&match_type=1'
+        html = '<main><div class="ec-searchnavRole__counter">お探しの商品は見つかりませんでした</div></main>'
+        return httpx.Response(200, text=html, request=httpx.Request('GET', url))
+    monkeypatch.setattr('tcg_toolkit.external.search_proxy.SearchProxyClient.get', get)
+    result = client.get('/api/search', params={'source': 'hobbystation', 'game': game, 'keyword': 'abc'})
+    assert result.status_code == 200
+    assert result.json() == dict(game=game, keyword='abc', page=1, items=[], next_page=None, has_next=False)
 
 
 @pytest.mark.parametrize('kind,status', [('request', 502), ('timeout', 504), ('parse', 502)])
