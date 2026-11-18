@@ -1,10 +1,11 @@
 from .errors import SearchError, SearchPaginationError, SearchParseError, SearchRequestError
 from .models import Game, SearchItem, SearchPage, SearchSource, StockStatus
 from .search import BaseSearcher, ChaosTCGSearcher, LyceeSearcher, WSRSearcher, WSSearcher, PMSearcher, SEVSearcher
-from .search import HobbyStationLyceeSearcher, HobbyStationWSSearcher, HobbyStationWSRSearcher
+from .search import HobbyStationLyceeSearcher, HobbyStationWSSearcher, HobbyStationWSRSearcher, create_searcher
 from .cardmax_search import CardMaxSEVSearcher, CardMaxWSSearcher
 
 __all__ = [
+    "create_searcher",
     "SEVSearcher",
     "BaseSearcher", "WSSearcher", "PMSearcher", "WSRSearcher", "LyceeSearcher", "ChaosTCGSearcher",
     "HobbyStationLyceeSearcher", "HobbyStationWSSearcher", "HobbyStationWSRSearcher",

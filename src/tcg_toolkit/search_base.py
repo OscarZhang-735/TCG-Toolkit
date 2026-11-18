@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup, Tag
 
 from .errors import SearchPaginationError, SearchParseError, SearchRequestError
 from .external.search_proxy import SearchProxyClient
-from .models import Game, SearchItem, SearchPage
+from .models import Game, SearchItem, SearchPage, SearchSource
 
 
 def _text(node: Tag | None) -> str:
@@ -20,6 +20,7 @@ class PagedSearcher:
 
     base_url: str
     game: Game
+    source: SearchSource
     search_path: str
     cards_selector: str
     main_selector = "main"
@@ -29,11 +30,12 @@ class PagedSearcher:
     client_type = SearchProxyClient
 
     def __init__(self, *, client: httpx.Client | SearchProxyClient | None = None,
-                 timeout: float = 30.0, page_interval: float = 1.0):
+                 timeout: float = 30.0, page_interval: float = 1.0, stock: bool = False):
         if timeout <= 0 or page_interval < 0:
             raise ValueError("timeout must be positive and page_interval non-negative")
         self.timeout = timeout
         self.page_interval = page_interval
+        self.stock = stock
         self._owns_client = client is None
         self._client = client if client is not None else self.client_type()
 
@@ -106,7 +108,7 @@ class PagedSearcher:
                     items.append(item)
             except ValueError as exc:
                 raise SearchParseError(f"Item {index + 1}: {exc}", **context) from exc
-        return SearchPage(items=items, keyword=keyword, page=page, next_page=next_page)
+        return SearchPage(items=items, keyword=keyword, page=page, next_page=next_page, source=self.source)
 
     def parse_item(self, card: Tag, *, url: str) -> SearchItem | None:
         raise NotImplementedError

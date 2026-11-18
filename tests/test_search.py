@@ -105,6 +105,7 @@ def test_iteration_lazy_order_interval_and_preserves_duplicate_numbers(monkeypat
         first = next(pages)
         assert calls == [1] and sleeps == []
         second = next(pages)
+        assert first.to_dict()['source'] == second.to_dict()['source'] == 'yuyutei'
         assert calls == [1, 2] and sleeps == [1.0]
         assert list(pages) == []
         assert list(searcher.iter_results("YZ")) == first.items + second.items

@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tcg_toolkit import CardMaxSEVSearcher, CardMaxWSSearcher, SearchPaginationError, SearchParseError
+from tcg_toolkit import CardMaxSEVSearcher, CardMaxWSSearcher, SearchPaginationError, SearchParseError, create_searcher
 
 
 def fixture(game):
@@ -70,7 +70,7 @@ def test_only_explicit_zero_count_is_empty():
     (False, [('unknown', None), ('unknown', None)]),
     (True, [('in_stock', 4), ('out_of_stock', 0)]),
 ])
-def test_optional_detail_stock(stock, expected):
+def test_optional_detail_stock(stock, expected, monkeypatch):
     paths = []
     def respond(request):
         paths.append(request.url.path)
@@ -82,8 +82,11 @@ def test_optional_detail_stock(stock, expected):
         }
         return httpx.Response(200, content=labels[request.url.path].encode('euc-jp'),
                               headers={'content-type': 'text/html; charset=EUC-JP'})
-    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        result = CardMaxSEVSearcher(client=client, stock=stock).search_page('BP22')
+    monkeypatch.setattr(CardMaxSEVSearcher, 'client_type', staticmethod(
+        lambda: httpx.Client(transport=httpx.MockTransport(respond))))
+    with create_searcher('cardmax', 'sev', stock=stock) as searcher:
+        result = searcher.search_page('BP22')
+    assert result.to_dict()['source'] == 'cardmax'
     assert [(i.stock_status, i.stock_quantity) for i in result.items] == expected
     assert result.next_page == 2
     assert len(paths) == (3 if stock else 1)

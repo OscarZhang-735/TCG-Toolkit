@@ -57,6 +57,7 @@ class SearchPage:
     keyword: str
     page: int
     next_page: int | None
+    source: SearchSource = SearchSource.YUYUTEI
 
     @property
     def has_next(self) -> bool:
@@ -64,6 +65,7 @@ class SearchPage:
 
     def to_dict(self) -> dict:
         return {
+            "source": self.source.value,
             "items": [item.to_dict() for item in self.items],
             "keyword": self.keyword,
             "page": self.page,

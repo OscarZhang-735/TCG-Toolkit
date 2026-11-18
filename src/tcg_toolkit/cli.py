@@ -7,7 +7,7 @@ import unicodedata
 
 from .errors import SearchError
 from .models import Game, SearchSource
-from .search import SEARCH_SOURCES
+from .search import create_searcher, get_searcher_type
 
 
 def _width(text: str) -> int:
@@ -16,7 +16,7 @@ def _width(text: str) -> int:
 
 
 def print_table(game, page) -> None:
-    print(f"{game} | {len(page.items)} results")
+    print(f"{page.source} | {game} | {len(page.items)} results")
     if not page.items:
         print("No results found.")
         return
@@ -48,10 +48,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="从指定页遍历至末页，每页输出一行 JSON")
     args = parser.parse_args(argv)
     games = list(dict.fromkeys(args.game))
-    searchers = SEARCH_SOURCES[args.source]
-    for game in games:
-        if game not in searchers:
-            parser.error(f"{args.source} does not support {game}")
+    try:
+        for game in games:
+            get_searcher_type(args.source, game)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not args.keyword.strip():
         parser.error("Keyword must not be empty" if args.clean else "关键词不能为空")
     if args.page < 1:
@@ -60,10 +61,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     status = 0
     for game in games:
-        searcher_type = searchers[game]
         try:
-            options = {"stock": True} if args.source == SearchSource.CARDMAX and args.stock else {}
-            with searcher_type(**options) as searcher:
+            with create_searcher(args.source, game, stock=args.stock) as searcher:
                 pages = (searcher.iter_pages(args.keyword, start_page=args.page) if args.all
                          else [searcher.search_page(args.keyword, page=args.page)])
                 for page in pages:

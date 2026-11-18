@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from .auth.dependencies import current_user
 from .errors import SearchParseError, SearchRequestError
 from .models import Game, SearchSource
-from .search import SEARCH_SOURCES
+from .search import create_searcher
 
 router = APIRouter()
 
@@ -18,13 +18,12 @@ def search(game: Game, keyword: Annotated[str, Query(min_length=1)],
            stock: bool = False):
     if not keyword.strip():
         raise HTTPException(422, detail={"type": "validation_error", "message": "Keyword must not be empty."})
-    searcher_type = SEARCH_SOURCES[source].get(game)
-    if searcher_type is None:
-        raise HTTPException(422, detail={"type": "validation_error",
-                                         "message": f"{source} does not support {game}."})
     try:
-        options = {"stock": True} if source == SearchSource.CARDMAX and stock else {}
-        with searcher_type(**options) as searcher:
+        searcher = create_searcher(source, game, stock=stock)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"type": "validation_error", "message": str(exc)}) from exc
+    try:
+        with searcher:
             result = searcher.search_page(keyword, page=page)
         return {**result.to_dict(), "game": game.value}
     except SearchRequestError as exc:

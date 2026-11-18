@@ -13,6 +13,7 @@ from .search_base import PagedSearcher, _text
 class BaseSearcher(PagedSearcher):
     """Base class for the YuYu-Tei game searchers."""
 
+    source = SearchSource.YUYUTEI
     base_url = "https://yuyu-tei.jp"
     cards_selector = ".cards-list .card-product"
 
@@ -178,6 +179,7 @@ class HobbyStationClient(SearchProxyClient):
 
 
 class HobbyStationSearcher(PagedSearcher):
+    source = SearchSource.HOBBYSTATION
     base_url = f"https://{HobbyStationClient.relay_host}"
     cards_selector = "section.result .searchRsultList > li"
     page_param = "pageno"
@@ -259,3 +261,17 @@ SEARCH_SOURCES = {
         HobbyStationLyceeSearcher, HobbyStationWSSearcher, HobbyStationWSRSearcher,
     )},
 }
+
+
+def get_searcher_type(source: SearchSource | str, game: Game | str) -> type[PagedSearcher]:
+    source, game = SearchSource(source), Game(game)
+    searcher_type = SEARCH_SOURCES[source].get(game)
+    if searcher_type is None:
+        raise ValueError(f"{source} does not support {game}.")
+    return searcher_type
+
+
+def create_searcher(source: SearchSource | str, game: Game | str, *, stock: bool = False) -> PagedSearcher:
+    """Create a merchant searcher. stock=True allows extra detail requests for inventory."""
+    searcher_type = get_searcher_type(source, game)
+    return searcher_type(stock=stock)

@@ -30,6 +30,7 @@ def test_static_and_health():
 @pytest.mark.parametrize('game', list(Game))
 def test_search(game, monkeypatch):
     class Fake:
+        def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def search_page(self, keyword, *, page):
@@ -38,7 +39,8 @@ def test_search(game, monkeypatch):
     monkeypatch.setitem(SEARCHERS, game, Fake)
     result = client.get('/api/search', params={'game': game.value, 'keyword': 'OS01', 'page': 2})
     assert result.status_code == 200
-    assert result.json() == dict(items=[], keyword='OS01', page=2, next_page=3, has_next=True, game=game.value)
+    assert result.json() == dict(source='yuyutei', items=[], keyword='OS01', page=2, next_page=3,
+                                 has_next=True, game=game.value)
 
 
 @pytest.mark.parametrize('params', [dict(game='bad', keyword='x'), dict(game='wsr', keyword=' '),
@@ -63,6 +65,7 @@ def test_cardmax_search(game, category, monkeypatch):
     response = client.get('/api/search', params={'source': 'cardmax', 'game': game, 'keyword': 'test'})
     assert response.status_code == 200
     data = response.json()
+    assert data['source'] == 'cardmax'
     assert data['game'] == game and data['items'][0]['game'] == game
     assert data['has_next'] == (game == 'sev')
 
@@ -74,14 +77,16 @@ def test_hobbystation_search(game, path, monkeypatch):
         html = '<main><div class="ec-searchnavRole__counter">お探しの商品は見つかりませんでした</div></main>'
         return httpx.Response(200, text=html, request=httpx.Request('GET', url))
     monkeypatch.setattr('tcg_toolkit.external.search_proxy.SearchProxyClient.get', get)
-    result = client.get('/api/search', params={'source': 'hobbystation', 'game': game, 'keyword': 'abc'})
+    result = client.get('/api/search', params={'source': 'hobbystation', 'game': game, 'keyword': 'abc', 'stock': True})
     assert result.status_code == 200
-    assert result.json() == dict(game=game, keyword='abc', page=1, items=[], next_page=None, has_next=False)
+    assert result.json() == dict(source='hobbystation', game=game, keyword='abc', page=1,
+                                 items=[], next_page=None, has_next=False)
 
 
 @pytest.mark.parametrize('kind,status', [('request', 502), ('timeout', 504), ('parse', 502)])
 def test_errors(kind, status, monkeypatch):
     class Broken:
+        def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def search_page(self, *args, **kwargs):

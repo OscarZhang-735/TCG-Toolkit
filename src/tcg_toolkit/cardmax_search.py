@@ -8,21 +8,18 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from .models import Game, SearchItem, SearchPage, StockStatus
+from .models import Game, SearchItem, SearchPage, SearchSource, StockStatus
 from .search_base import PagedSearcher, _text
 
 
 class CardMaxSearcher(PagedSearcher):
+    source = SearchSource.CARDMAX
     base_url = "https://www.cardmax.jp"
     search_path = "/shop/shopbrand.html"
     keyword_param = "search"
     main_selector = 'form[name="form_se"]'
     cards_selector = ".search-end-list tr:has(td)"
     client_type = partial(httpx.Client, trust_env=False, follow_redirects=True)
-
-    def __init__(self, *, stock: bool = False, **kwargs):
-        super().__init__(**kwargs)
-        self.stock = stock
 
     def search_page(self, keyword: str, *, page: int = 1) -> SearchPage:
         result = super().search_page(keyword, page=page)

@@ -111,6 +111,16 @@ with ProxyGoClient() as client:
 
 ### 按商家搜索
 
+HTTP、CLI 和 Python 共用 `create_searcher(source, game, *, stock=False)` 选择搜索器。每页结果（含空页）都在顶层提供 `source`。默认读取列表中的库存，开启 `stock` 后允许额外查询详情页。目前只有 Card Max 会为此发出额外请求。
+
+```python
+from tcg_toolkit import create_searcher
+
+with create_searcher("cardmax", "sev", stock=True) as searcher:
+    page = searcher.search_page("BP22-014")
+    print(page.to_dict()["source"])  # cardmax
+```
+
 登录后可调用 `GET /api/search?source=hobbystation&game=lycee&keyword=LO-4899&page=1`。省略 `source` 时默认使用 `yuyutei`。Hobby Station 支持 `lycee`、`ws` 和 `wsr`，Card Max 支持 `ws` 和 `sev`。不支持的来源或游戏组合返回 422。各来源使用相同的商品字段和分页结构，调用方可按 `next_page` 继续查询至其为 `null`。
 
 Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经现有加密代理访问，代理的 `allowed_hosts` 需包含 `www.hobbystation-single.jp`。库存符号如 ◎ 表示有货，`stock_quantity` 为 `null`。页面标记售罄时数量为 0。Lycee 商品编号如 `LO-LO-4899` 返回印刷编号 `LO-4899`，同名异版保留各自的编号和商品链接。Hobby Station 的 `cart` 字段为 `null`。

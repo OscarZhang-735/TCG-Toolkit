@@ -11,6 +11,7 @@ from tcg_toolkit.search import SEARCHERS, HobbyStationLyceeSearcher
 def calls(monkeypatch):
     calls = []
     class Fake:
+        def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def search_page(self, keyword, *, page):
@@ -40,6 +41,7 @@ def test_clean_all(calls, capsys):
 
 def test_continue_after_error(calls, capsys, monkeypatch):
     class Broken:
+        def __init__(self, *, stock): pass
         def __enter__(self):
             raise SearchRequestError("failed", game=Game.WSR, keyword="X", page=1, url="test")
         def __exit__(self, *args): pass
@@ -80,10 +82,11 @@ def test_game_option_is_required(calls):
 
 def test_hobby_source(monkeypatch, capsys):
     def search(self, keyword, *, page):
-        return SearchPage([], keyword, page, None)
+        return SearchPage([], keyword, page, None, self.source)
     monkeypatch.setattr(HobbyStationLyceeSearcher, 'search_page', search)
     assert cli.main(['LO-4899', '--source', 'hobbystation', '-g', 'lycee']) == 0
-    assert json.loads(capsys.readouterr().out)['keyword'] == 'LO-4899'
+    data = json.loads(capsys.readouterr().out)
+    assert (data['source'], data['keyword']) == ('hobbystation', 'LO-4899')
     with pytest.raises(SystemExit) as exc:
         cli.main(['LO-4899', '--source', 'hobbystation', '-g', 'sev'])
     assert exc.value.code == 2
