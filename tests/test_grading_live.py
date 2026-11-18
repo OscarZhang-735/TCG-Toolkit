@@ -1,9 +1,8 @@
-"""Opt-in live HTTP lookups: PSA/CGC through Proxy-Go, ARS directly."""
+"""Opt-in live HTTP lookups: PSA/CGC through Zyte, ARS directly."""
 import json
 import logging
 import os
 from pathlib import Path
-import re
 import socket
 import threading
 import time
@@ -105,14 +104,11 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
                 proxy_messages = [record.getMessage() for record in caplog.records
                                   if record.name == 'tcg_toolkit.grading'
                                   and record.getMessage().startswith(
-                                      f'{provider.upper()} proxy-go request_id=')]
-                request_id = None
+                                      f'{provider.upper()} zyte target_status=')]
                 if provider == 'ars':
                     assert not proxy_messages
                 else:
                     assert len(proxy_messages) == 1
-                    request_id = re.search(r'request_id=(\S+)', proxy_messages[0])
-                    assert request_id and request_id.group(1) != 'None'
                     assert 'target_status=200' in proxy_messages[0]
 
             output = os.getenv(f'TCG_LIVE_{provider.upper()}_OUTPUT')
@@ -121,12 +117,11 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
             print(json.dumps({
-                'flow': f'GET {certificate_path} -> {"direct" if provider == "ars" else "proxy-go"} -> {provider.upper()} -> parsed certificate',
+                'flow': f'GET {certificate_path} -> {"direct" if provider == "ars" else "zyte"} -> {provider.upper()} -> parsed certificate',
                 'status': response.status_code,
                 'provider': result['provider'],
                 'cert_number': result['cert_number'],
                 'image_count': len(result['images']),
-                'proxy_request_id': request_id.group(1) if request_id else None,
                 'lookup_seconds': round(elapsed, 2),
             }))
         finally:

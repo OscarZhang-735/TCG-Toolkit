@@ -46,7 +46,8 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
 | `TCG_SEARCH_PROXY_URL` | 游游亭转发接口（搜索、商品详情、凭据验证和购物车）；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
-| `PROXY_GO_API` | PSA 与 CGC 网页查询使用的 `proxy-go` 网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
+| `ZYTE_API_KEY` | PSA 与 CGC 网页查询使用的 Zyte Extract API 密钥 | 空 |
+| `PROXY_GO_API` | 独立 `proxy-go` 客户端网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
 | `PROXY_GO_API_KEY` | `proxy-go` 服务端 API 密钥，仅填写密钥本身 | 空 |
 | `PGHOST` / `PGPORT` | PostgreSQL 地址；Compose 内使用服务名 | `db` / `5432`（Compose） |
 | `PGDATABASE` / `PGUSER` / `PGPASSWORD` | 应用数据库、非超级用户角色及密码 | Compose 默认库和角色为 `tcg`；密码必填 |
@@ -65,7 +66,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 
 `ProxyGoClient` 用于需要处理风控或验证的 GET/HEAD 请求，由业务代码显式调用。PSA 与 CGC 证书查询通过此客户端抓取网页；游游亭加密代理、直连开关和 ARS 查询保持原有行为。
 
-在 `.env` 中设置 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。配置优先级为构造参数、进程环境、当前工作目录的 `.env`；显式空值会报告配置错误，不会继续读取较低优先级的值。主机直接运行 Python 时可使用 `http://127.0.0.1:18087/v1/fetch`。Docker Desktop 中的 Web 连接宿主机时改用 `http://host.docker.internal:18087/v1/fetch`，并确保 Proxy-Go 监听容器可达的地址。迁移到服务器后更新地址和密钥即可；三份 Compose 均只向 Web 服务传入这两个变量，修改后重新创建 Web 容器。
+在 `.env` 中设置 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。配置优先级为构造参数、进程环境、当前工作目录的 `.env`；显式空值会报告配置错误，不会继续读取较低优先级的值。主机直接运行 Python 时可使用 `http://127.0.0.1:18087/v1/fetch`。Docker Desktop 中的 Web 连接宿主机时改用 `http://host.docker.internal:18087/v1/fetch`，并确保 Proxy-Go 监听容器可达的地址。迁移到服务器后更新地址和密钥即可；PSA/CGC 已改用 Zyte；三份 Compose 向 Web 服务传入 `ZYTE_API_KEY`。
 
 ```python
 from tcg_toolkit.external import ProxyGoClient, ProxyGoGatewayError
@@ -275,7 +276,7 @@ $env:TCG_BROWSER_TEST="0"
 | Python 全量回归 | 846 通过、5 项可选测试跳过；新增 schema 14→15 数据保留用例另行通过 |
 | Node 全量回归 | 207 通过；修正扫码测试预期及 Canvas 替身，清理测试遗留计时器 |
 | Chromium WebUI | 通过上述浏览器流程；修复切换语言后成功提示仍保留旧语言的问题 |
-| 真实 PSA / CGC 查询 | 两项均 HTTP 200，各返回两张证书图片，经 Proxy-Go 约 16 秒完成 |
+| 真实 PSA / CGC 查询 | 两项均 HTTP 200，各返回两张证书图片，经 Zyte 完成，PSA 约 14 秒、CGC 约 39 秒 |
 | 真实 ARS 查询 | HTTP 200，保留编号前导零，等级 10，图片列表为空，直连约 1 秒完成 |
 
 首次全量运行因 C 盘空间和内存分配不足中断；将本轮 `TEMP` / `TMP` 指向 D 盘后重新完成全量回归。上述通过数来自成功重跑，不含中断运行。测试未修改生产数据库。
@@ -290,9 +291,7 @@ PCG-CN 使用机构 ID `pcgcn`，通过 `GET /api/grading/pcgcn/certificates/{ce
 
 `GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa`、`cgc`、`ars` 和 `pcgcn`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
 
-配置服务端 `PROXY_GO_API` 与 `PROXY_GO_API_KEY`。PSA 查询使用 `ProxyGoClient`，以 `country="US"` 抓取 `https://www.psacard.com/en-CA/cert/{cert_number}/psa`。Proxy-Go 负责目标网站验证和代理重试；TCG 客户端默认超时 220 秒、连接超时 5 秒，不自动重试、不跟随重定向。修改 Compose 中的配置后重新创建 Web 容器。
-
-Docker Desktop 中的 Web 访问宿主机 Proxy-Go 时，地址应为 `http://host.docker.internal:18087/v1/fetch`；`127.0.0.1` 在容器内指向容器自身。宿主机直接运行 Python 则可使用 `http://127.0.0.1:18087/v1/fetch`。两种运行方式共用 `.env` 时，可在本地 Compose 覆盖文件中为 `services.web.environment.PROXY_GO_API` 单独设置容器地址。部署后应从实际 Web 容器验证证书查询，仅宿主机测试通过不能证明容器到网关可达。
+配置服务端 `ZYTE_API_KEY`。PSA 查询通过 Zyte Extract API 抓取 `https://www.psacard.com/en-CA/cert/{cert_number}/psa`，请求 HTTP 响应正文并跟随目标重定向。密钥优先读取进程环境，再读取当前工作目录的 `.env`；显式空值报告配置错误。请求超时 220 秒、连接超时 5 秒，不自动重试，忽略系统代理环境变量。三份 Compose 均传入 `ZYTE_API_KEY`，修改配置后重新创建 Web 容器。
 
 请求示例（`TCG_LOGIN_TOKEN` 为本站登录 Token）：
 
@@ -317,16 +316,16 @@ Invoke-RestMethod -Uri 'http://localhost:8000/api/grading/psa/certificates/98428
 | 422 | `unsupported_grading_provider` / `invalid_cert_number` | 机构或编号错误 |
 | 404 | `grading_certificate_not_found` | 页面明确返回无记录 |
 | 429 | `grading_busy` | 当前账号或进程的并发查询已达上限 |
-| 503 | `psa_not_configured` | Proxy-Go 地址或密钥未配置 |
-| 504 | `psa_timeout` | 网关返回 504 或网络请求超时 |
-| 502 | `psa_authentication_failed` | Proxy-Go 网关返回 401/403 |
-| 502 | `psa_rate_limited` | 网关或目标站返回 429 |
+| 503 | `psa_not_configured` | Zyte 密钥未配置 |
+| 504 | `psa_timeout` | Zyte 报告超时或网络请求超时 |
+| 502 | `psa_authentication_failed` | Zyte 返回 401/403 |
+| 502 | `psa_rate_limited` | Zyte 限流或目标站返回 429 |
 | 502 | `psa_unreadable` | 非 HTML、页面无法解析或证书编号不匹配 |
 | 502 | `psa_unavailable` | 其他上游请求错误 |
 
-网关 HTTP 200 后仍检查目标站状态及页面内容。服务器日志记录请求 ID、目标状态、代理字节和尝试次数；客户端错误响应不包含凭据或上游错误正文。
+网关 HTTP 200 后仍检查目标站状态及页面内容。服务器日志记录 Zyte API 错误状态及原因，或成功响应的目标状态；客户端错误响应不包含凭据或上游错误正文。
 
-`tests/test_grading.py` 使用模拟响应验证 PSA 网页解析和错误映射。`tests/test_grading_live.py` 按 PSA、CGC、ARS 参数化，从对应 TCG 接口调用开始访问真实官网；PSA/CGC 经过 Proxy-Go，ARS 直连。每个机构默认跳过，独立开关启用。运行时使用上文的专用测试 PostgreSQL 配置及可用的 Proxy-Go 配置，PSA 示例：
+`tests/test_grading.py` 使用模拟响应验证 PSA 网页解析和错误映射。`tests/test_grading_live.py` 按 PSA、CGC、ARS 参数化，从对应 TCG 接口调用开始访问真实官网；PSA/CGC 经过 Zyte，ARS 直连。每个机构默认跳过，独立开关启用。运行时使用上文的专用测试 PostgreSQL 配置及可用的 `ZYTE_API_KEY`，PSA 示例：
 
 ```powershell
 $env:TCG_LIVE_PSA_TEST="1"
@@ -337,7 +336,7 @@ python -m pytest -q -s tests/test_grading_live.py
 
 ### CGC 网页查询
 
-`GET /api/grading/cgc/certificates/{cert_number}` 沿用上述登录、编号校验和 `no-store` 规则。使用同一 Proxy-Go 配置，以 `country="US"` 抓取 `https://www.cgccards.com/certlookup/{cert_number}/`。默认超时 220 秒、连接超时 5 秒，客户端不自动重试、不跟随重定向。
+`GET /api/grading/cgc/certificates/{cert_number}` 沿用上述登录、编号校验和 `no-store` 规则。使用同一 Zyte 配置抓取 `https://www.cgccards.com/certlookup/{cert_number}/`。默认超时 220 秒、连接超时 5 秒，客户端不自动重试，Zyte 跟随目标重定向。
 
 返回 `provider: "cgc"`、`cert_number`、`source_url`、`certificate`、`images`；`source_url` 为抓取地址。`certificate.title` 取 `Card Name`，`grade` 取 `Grade`，`fields` 保留证书信息的原始标签和值。当前页面的 Population 区域只有 JavaScript 异步模板，没有实际数量，因此 `population` 返回 `{"at_grade": null, "higher": null}`，不把缺失值当作零。
 

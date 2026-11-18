@@ -1,4 +1,4 @@
-"""PSA webpage lookup through the real proxy-go client and an in-memory gateway."""
+"""PSA webpage lookup through the real Zyte client and an in-memory gateway."""
 import base64
 import json
 from pathlib import Path
@@ -31,12 +31,9 @@ IMAGES = [
 
 def gateway_response(html=HTML, *, target_status=200, content_type='text/html; charset=utf-8'):
     return httpx.Response(200, json={
-        'request_id': 'psa-request-1', 'country': 'US', 'status_code': target_status,
-        'headers': {'content-type': content_type},
-        'body_base64': base64.b64encode(html.encode()).decode(),
-        'proxy_traffic': {'upload_bytes': 100, 'download_bytes': 900, 'total_bytes': 1000,
-                          'attempts': [{'attempt_id': 'attempt-1', 'upload_bytes': 100,
-                                        'download_bytes': 900, 'total_bytes': 1000}]},
+        'url': f'https://www.psacard.com/en-CA/cert/{NUMBER}/psa', 'statusCode': target_status,
+        'httpResponseHeaders': [{'name': 'content-type', 'value': content_type}],
+        'httpResponseBody': base64.b64encode(html.encode()).decode(),
     })
 
 
@@ -82,17 +79,16 @@ def test_absent_population_remains_unknown():
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
-    monkeypatch.setenv('PROXY_GO_API', 'http://proxy-go.test/v1/fetch')
-    monkeypatch.setenv('PROXY_GO_API_KEY', 'test-proxy-secret')
+    monkeypatch.setenv('ZYTE_API_KEY', 'test-proxy-secret')
     monkeypatch.setenv('TCG_PSA_API_TOKEN', 'must-not-send')
-    real_client = module.ProxyGoClient
+    real_client = httpx.Client
     calls, replies = [], []
 
     def handle(request):
         calls.append(request)
         assert request.method == 'POST'
-        assert str(request.url) == 'http://proxy-go.test/v1/fetch'
-        assert request.headers['authorization'] == 'Bearer test-proxy-secret'
+        assert str(request.url) == 'https://api.zyte.com/v1/extract'
+        assert request.headers['authorization'] == 'Basic ' + base64.b64encode(b'test-proxy-secret:').decode()
         assert 'must-not-send' not in str(request.headers)
         assert b'must-not-send' not in request.content
         reply = replies.pop(0) if replies else gateway_response()
@@ -100,10 +96,8 @@ def client(monkeypatch):
             raise reply
         return reply
 
-    def factory():
-        return real_client(transport=httpx.MockTransport(handle))
-
-    monkeypatch.setattr(module, 'ProxyGoClient', factory)
+    monkeypatch.setattr(httpx, 'Client',
+                        lambda **kwargs: real_client(transport=httpx.MockTransport(handle), **kwargs))
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as browser:
         browser.headers['Authorization'] = 'Bearer ' + register_user(browser).json()['token']
         yield browser, calls, replies
@@ -118,11 +112,10 @@ def test_complete_lookup_uses_one_proxy_fetch(client, monkeypatch, caplog):
     assert response.headers['cache-control'] == 'no-store'
     assert len(calls) == 1
     assert json.loads(calls[0].content) == {
-        'url': f'https://www.psacard.com/en-CA/cert/{NUMBER}/psa', 'country': 'US', 'method': 'GET',
+        'url': f'https://www.psacard.com/en-CA/cert/{NUMBER}/psa', 'httpResponseBody': True, 'httpResponseHeaders': True, 'followRedirect': True,
     }
     assert calls[0].extensions['timeout'] == {'connect': 5, 'read': 220, 'write': 220, 'pool': 220}
-    assert 'request_id=psa-request-1' in caplog.text
-    assert 'proxy_total_bytes=1000' in caplog.text
+    assert 'PSA zyte target_status=200' in caplog.text
     assert 'test-proxy-secret' not in caplog.text
     # Queries stay fresh and the old PSA API token is no longer required.
     monkeypatch.delenv('TCG_PSA_API_TOKEN')
@@ -161,7 +154,7 @@ def test_authentication_required(client):
     assert not calls
 
 
-@pytest.mark.parametrize('variable', ['PROXY_GO_API', 'PROXY_GO_API_KEY'])
+@pytest.mark.parametrize('variable', ['ZYTE_API_KEY'])
 def test_missing_proxy_configuration(client, monkeypatch, variable):
     browser, calls, _ = client
     monkeypatch.setenv(variable, '')
@@ -211,11 +204,18 @@ def test_gateway_errors_preserve_safe_diagnostics(client, caplog, gateway_status
     assert response.json() == {'detail': detail}
     assert response.headers['cache-control'] == 'no-store'
     assert len(calls) == 1
-    assert 'request_id=failed-request' in caplog.text
-    assert 'proxy_total_bytes=12345' in caplog.text
-    assert 'proxy_attempts=3' in caplog.text
+    assert f'zyte api_status={gateway_status}' in caplog.text
     assert 'private gateway detail' not in caplog.text
     assert 'test-proxy-secret' not in caplog.text
+
+
+def test_zyte_capacity_is_reported_as_rate_limit(client):
+    browser, calls, replies = client
+    replies.append(httpx.Response(503, json={'detail': 'challenge_solver_busy'}))
+    response = browser.get(URL)
+    assert response.status_code == 502
+    assert response.json() == {'detail': 'psa_rate_limited'}
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize('error,status,detail', [

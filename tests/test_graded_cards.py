@@ -315,10 +315,11 @@ def test_registry_forgets_outcomes_after_a_while():
     assert registry._outcomes.keys() == {('alice', 'early-0001')}
 
 
-@pytest.mark.parametrize('provider', ['ars', 'psa'])
+@pytest.mark.parametrize('provider', ['ars', 'psa', 'cgc'])
 def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch, provider):
     """The production fetchers register their httpx client; closing it ends a slow read."""
     import http.server
+    import httpx
     import threading
     import time
 
@@ -337,8 +338,14 @@ def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch, provider)
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Slow)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setattr(grading, 'ARS_URL', f'http://127.0.0.1:{server.server_port}/')
-    monkeypatch.setenv('PROXY_GO_API', f'http://127.0.0.1:{server.server_port}')
-    monkeypatch.setenv('PROXY_GO_API_KEY', 'test-cancel-gateway-key')
+    monkeypatch.setenv('ZYTE_API_KEY', 'test-cancel-zyte-key')
+    real_post = httpx.Client.post
+
+    def local_zyte(client, url, **kwargs):
+        assert url == 'https://api.zyte.com/v1/extract'
+        return real_post(client, f'http://127.0.0.1:{server.server_port}/', **kwargs)
+
+    monkeypatch.setattr(httpx.Client, 'post', local_zyte)
     monkeypatch.setattr(grading, 'LOOKUP_SLOTS', grading.LookupSlots())
     registry = grading.LookupRegistry()
 

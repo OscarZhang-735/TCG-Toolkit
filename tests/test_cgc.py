@@ -1,4 +1,4 @@
-"""CGC certificate parsing and proxy-go routing with recorded HTML."""
+"""CGC certificate parsing and Zyte routing with recorded HTML."""
 import base64
 import json
 from pathlib import Path
@@ -37,10 +37,9 @@ FIELDS = {
 
 def gateway_response(html=HTML, *, target_status=200):
     return httpx.Response(200, json={
-        'request_id': 'cgc-request-1', 'country': 'US', 'status_code': target_status,
-        'headers': {'content-type': 'text/html; charset=utf-8'},
-        'body_base64': base64.b64encode(html.encode()).decode(),
-        'proxy_traffic': None,
+        'url': SOURCE_URL, 'statusCode': target_status,
+        'httpResponseHeaders': [{'name': 'content-type', 'value': 'text/html; charset=utf-8'}],
+        'httpResponseBody': base64.b64encode(html.encode()).decode(),
     })
 
 
@@ -88,38 +87,37 @@ def test_missing_required_field_is_unreadable(field):
 def client(monkeypatch):
     origin = 'https://testserver'
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', origin)
-    monkeypatch.setenv('PROXY_GO_API', 'http://proxy-go.test/v1/fetch')
-    monkeypatch.setenv('PROXY_GO_API_KEY', 'test-proxy-secret')
+    monkeypatch.setenv('ZYTE_API_KEY', 'test-proxy-secret')
     monkeypatch.setenv('TCG_PSA_API_TOKEN', 'must-not-send')
-    real_client = module.ProxyGoClient
+    real_client = httpx.Client
     calls, replies = [], []
 
     def handle(request):
         calls.append(request)
         assert request.method == 'POST'
-        assert str(request.url) == 'http://proxy-go.test/v1/fetch'
-        assert request.headers['authorization'] == 'Bearer test-proxy-secret'
+        assert str(request.url) == 'https://api.zyte.com/v1/extract'
+        assert request.headers['authorization'] == 'Basic ' + base64.b64encode(b'test-proxy-secret:').decode()
         assert b'must-not-send' not in request.content
         reply = replies.pop(0) if replies else gateway_response()
         if isinstance(reply, Exception):
             raise reply
         return reply
 
-    monkeypatch.setattr(module, 'ProxyGoClient',
-                        lambda: real_client(transport=httpx.MockTransport(handle)))
+    monkeypatch.setattr(httpx, 'Client',
+                        lambda **kwargs: real_client(transport=httpx.MockTransport(handle), **kwargs))
     with TestClient(app, base_url=origin, headers={'Origin': origin}) as browser:
         browser.headers['Authorization'] = 'Bearer ' + register_user(browser).json()['token']
         yield browser, calls, replies
 
 
-def test_authenticated_lookup_uses_proxy_go(client):
+def test_authenticated_lookup_uses_zyte(client):
     browser, calls, _ = client
     response = browser.get('/api/grading/cgc/certificates/%20' + NUMBER + '%20')
     assert response.status_code == 200
     assert response.json() == module.parse_cgc(HTML, NUMBER)
     assert response.headers['cache-control'] == 'no-store'
     assert len(calls) == 1
-    assert json.loads(calls[0].content) == {'url': SOURCE_URL, 'country': 'US', 'method': 'GET'}
+    assert json.loads(calls[0].content) == {'url': SOURCE_URL, 'httpResponseBody': True, 'httpResponseHeaders': True, 'followRedirect': True}
     assert calls[0].extensions['timeout'] == {'connect': 5, 'read': 220, 'write': 220, 'pool': 220}
     browser.headers.pop('Authorization')
     assert browser.get(URL).status_code == 401
@@ -146,7 +144,7 @@ def test_invalid_number_never_fetches(client, number):
 
 def test_missing_proxy_configuration_has_cgc_error(client, monkeypatch):
     browser, calls, _ = client
-    monkeypatch.setenv('PROXY_GO_API_KEY', '')
+    monkeypatch.setenv('ZYTE_API_KEY', '')
     response = browser.get(URL)
     assert response.status_code == 503
     assert response.json() == {'detail': 'cgc_not_configured'}
@@ -166,6 +164,7 @@ def test_no_images_returns_empty_list(client):
 
 
 @pytest.mark.parametrize('reply,status,detail', [
+    (httpx.Response(503), 502, 'cgc_rate_limited'),
     (gateway_response(target_status=403), 502, 'cgc_unavailable'),
     (httpx.Response(403, json={'detail': 'private gateway detail'}), 502, 'cgc_authentication_failed'),
     (gateway_response(target_status=429), 502, 'cgc_rate_limited'),

@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import run_in_threadpool
 
 from .auth.dependencies import current_user
-from .external.proxy_go import ProxyGoClient, ProxyGoConfigError, ProxyGoGatewayError
+from .external.zyte import extract_http_response, ZyteConfigError, ZyteAPIError
 
 
 router = APIRouter(prefix='/api/grading', dependencies=[Depends(current_user)])
@@ -169,30 +169,23 @@ def fetch_cgc(cert_number):
 
 def _fetch_proxied_certificate(provider, cert_number, url, parse):
     try:
-        with ProxyGoClient() as client:
-            _cancellable(client)
-            response = client.get(url, country='US')
-    except ProxyGoConfigError:
+        response = extract_http_response(url, on_client=_cancellable)
+    except ZyteConfigError:
         raise HTTPException(503, detail=f'{provider}_not_configured') from None
-    except ProxyGoGatewayError as exc:
-        logger.warning('%s proxy-go gateway_status=%s request_id=%s proxy_total_bytes=%s proxy_attempts=%s',
-                       provider.upper(), exc.status_code, exc.request_id,
-                       exc.proxy_total_bytes, exc.proxy_attempts)
-        if exc.status_code == 504:
+    except ZyteAPIError as exc:
+        logger.warning('%s zyte api_status=%s reason=%s', provider.upper(),
+                       exc.response.status_code, exc.reason)
+        if exc.reason == 'timeout':
             raise HTTPException(504, detail=f'{provider}_timeout') from None
-        detail = ('authentication_failed' if exc.status_code in (401, 403) else
-                  'rate_limited' if exc.status_code == 429 else 'unavailable')
+        detail = ('authentication_failed' if exc.reason in ('authentication_failed', 'account_forbidden') else
+                  'rate_limited' if exc.reason == 'rate_limited' else 'unavailable')
         raise HTTPException(502, detail=f'{provider}_{detail}') from None
     except httpx.TimeoutException:
         raise HTTPException(504, detail=f'{provider}_timeout') from None
     except httpx.HTTPError:
         raise HTTPException(502, detail=f'{provider}_unavailable') from None
 
-    metadata = response.extensions['proxy_go']
-    traffic = metadata['proxy_traffic'] or {}
-    logger.info('%s proxy-go request_id=%s target_status=%s proxy_total_bytes=%s proxy_attempts=%s',
-                provider.upper(), metadata['request_id'], response.status_code, traffic.get('total_bytes'),
-                len(traffic.get('attempts', [])))
+    logger.info('%s zyte target_status=%s', provider.upper(), response.status_code)
     if response.status_code == 429:
         raise HTTPException(502, detail=f'{provider}_rate_limited')
     if response.status_code not in (200, 404):
