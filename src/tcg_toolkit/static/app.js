@@ -22,10 +22,12 @@ import {createProductDetails} from './product-details.js';
 import {showFeedback, markDot} from './feedback.js';
 import {messageTier} from './notices.js';
 import {createCartStock} from './cart-stock.js';
+import {SEARCH_SOURCES, searchTargets, searchParams, isYuyutei} from './search-sources.js';
 const $ = id => document.getElementById(id);
 const checked = name => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(el => el.value);
 const gameKeys = {"wsr": "wsr", "lycee": "lycee", "chaos": "chaostcg", "ws": "ws", "pm": "pm", "sev": "sev", "sev_en": "sev_en"};
 const gameLabel = game => t(gameKeys[game]);
+const sourceLabel = source => t(SEARCH_SOURCES[source]?.label ?? source);
 let items = [], limit = 100, controller = null, batch = 0, started = false;
 const stockKeys = {"in_stock": "in_stock", "out_of_stock": "out_of_stock", "unknown": "unknown"};
 const stockIcons = {in_stock: 'bi-check-circle-fill', out_of_stock: 'bi-x-circle', unknown: 'bi-question-circle'};
@@ -178,7 +180,10 @@ function setStatus(key, iconName = '') {
   $('status').replaceChildren(...(iconName ? [icon(iconName)] : []), text);
 }
 function validateSearch() {
-  const message = !$('keyword').value.trim() ? t('enter_a_keyword') : !checked('source').length ? t('select_at_least_one_game') : '';
+  const games = checked('source'), sources = checked('merchant');
+  $('cardmax-stock-option').hidden = !sources.includes('cardmax');
+  const message = !$('keyword').value.trim() ? t('enter_a_keyword') : !games.length ? t('select_at_least_one_game')
+    : !searchTargets(games, sources).length ? t('no_supported_source') : '';
   $('search-button').title = message;
   $('search-button').disabled = Boolean(message);
 }
@@ -189,10 +194,11 @@ function setView(next) {
   // Other pages (My cards) re-render on this instead of relying on click-handler order.
   document.dispatchEvent(new CustomEvent('viewchange', {detail: view}));
 }
+const linkHosts = new Set(['yuyu-tei.jp', 'www.hobbystation-single.jp', 'www.cardmax.jp']);
 function cardLink(item, className = '') {
   const link = el('a', className, item.name);
   const url = new URL(item.product_url, location.origin);
-  if (url.protocol === 'https:' && url.hostname === 'yuyu-tei.jp') link.href = url.href;
+  if (url.protocol === 'https:' && linkHosts.has(url.hostname)) link.href = url.href;
   link.target = '_blank'; link.rel = 'noopener noreferrer';
   const confirm = event => {
     event.preventDefault();
@@ -396,26 +402,32 @@ window.addEventListener('hashchange', () => {
   if (location.hash === '#cart' && userId) cart.refresh();
 });
 document.addEventListener('inventorychange', () => {render(); renderFavorites();});
+// Search results carry their merchant; saved items (favorites) have none and show only the game.
+function gameTags(item) {
+  const tags = [el('span', 'game-tag', gameLabel(item.game))];
+  if (item.source) tags.push(el('span', `source-tag source-${item.source}`, sourceLabel(item.source)));
+  return tags;
+}
 function tableRow(item, inFavorites = false) {
   const row = document.createElement('tr');
   const cell = (child, className = '') => {const td = el('td', className); td.append(child); row.append(td);};
   if (inFavorites) { cell(selectBox(item), 'select-col'); row.classList.toggle('selected', selection.state.keys.has(cardKey(item))); }
   const product = el('div', 'product-summary'); product.append(cardImage(item), cardLink(item));
-  cell(el('span', 'game-tag', gameLabel(item.game))); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
+  const tagBox = el('span', 'tag-stack'); tagBox.append(...gameTags(item)); cell(tagBox); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
   const owned = ownedQuantity(item);
   cell(priceDisplay(item), 'numeric'); cell(stockBadge(item));
   cell(owned ? owned.toLocaleString(getLanguage()) : '—', `numeric owned-cell${owned ? '' : ' muted'}`);
   cell(cartControls(item), 'cart-col');
   if (inFavorites) cell(groupTag(item) ?? el('span', 'muted', '—'), 'group-col');
-  cell(favoriteCell(item), 'action-col');
+  cell(isYuyutei(item) ? favoriteCell(item) : el('span', 'muted', '—'), 'action-col');
   return row;
 }
 function gridCard(item, inFavorites = false) {
   const card = el('article', `card ${item.stock_status}`);
-  const tags = el('div', 'card-tags'); tags.append(el('span', 'game-tag', gameLabel(item.game)), rarityBadge(item));
+  const tags = el('div', 'card-tags'); tags.append(...gameTags(item), rarityBadge(item));
   const top = el('div', 'card-top'); top.append(tags, numberButton(item.card_number));
   const bottom = el('div', 'card-bottom'); bottom.append(priceDisplay(item), stockBadge(item));
-  const image = cardImage(item); image.append(favoriteToggle(item));
+  const image = cardImage(item); if (isYuyutei(item)) image.append(favoriteToggle(item));
   if (inFavorites && selection.state.active) {
     image.append(selectBox(item)); card.classList.toggle('selected', selection.state.keys.has(cardKey(item)));
   }
@@ -466,9 +478,10 @@ $('search-form').addEventListener('submit', async event => {
   const active = new AbortController(); controller = active;
   items = []; started = true; searchFilters.reset(); errors = []; renderErrors();
   setStatus('searching', 'bi-arrow-repeat'); $('stop').hidden = false;
-  const failed = await loadResults({games: checked('source'), keyword: $('keyword').value.trim(), signal: active.signal,
-    fetchPage: async (game, keyword, page, signal) => {
-      const response = await requestAPI(`/api/search?${new URLSearchParams({game, keyword, page})}`, {signal});
+  const cardmaxStock = $('cardmax-stock').checked;
+  const failed = await loadResults({targets: searchTargets(checked('source'), checked('merchant')), keyword: $('keyword').value.trim(), signal: active.signal,
+    fetchPage: async (target, keyword, page, signal) => {
+      const response = await requestAPI(`/api/search?${searchParams(target, keyword, page, {cardmaxStock})}`, {signal});
       const data = await response.json();
       if (!response.ok) {
         const key = response.status === 504 ? 'the_source_timed_out' : response.status === 422 ? 'invalid_search_parameters' : ['SearchParseError', 'SearchPaginationError'].includes(data.detail?.type) ? 'could_not_read_the_source_results' : 'could_not_retrieve_results_from_the_source';
@@ -477,11 +490,12 @@ $('search-form').addEventListener('submit', async event => {
       return data;
     },
     onPage: result => {if (current === batch) {
-      items.push(...result.items);
-      for (const item of result.items) productDetails.remember(cartTarget(item), item);
+      const found = result.items.map(item => ({...item, source: result.source}));
+      items.push(...found);
+      for (const item of found) if (isYuyutei(item)) productDetails.remember(cartTarget(item), item);
       render();
     }},
-    onError: (game, error) => {if (current === batch) {errors.push({game, key: error.translationKey || 'unable_to_search_this_game'}); renderErrors();}}, wait});
+    onError: ({game, source}, error) => {if (current === batch) {errors.push({game, source, key: error.translationKey || 'unable_to_search_this_game'}); renderErrors();}}, wait});
   if (current !== batch) return;
   controller = null; $('stop').hidden = true;
   if (active.signal.aborted) setStatus('stopped', 'bi-stop-circle'); else if (failed) setStatus('incomplete', 'bi-exclamation-triangle'); else setStatus('done', 'bi-check2');
@@ -489,12 +503,14 @@ $('search-form').addEventListener('submit', async event => {
 });
 $('stop').addEventListener('click', () => {controller?.abort(); setStatus('stopped', 'bi-stop-circle'); $('stop').hidden = true;});
 $('keyword').addEventListener('input', validateSearch);
-document.querySelectorAll('[name="source"]').forEach(el => el.addEventListener('change', validateSearch));
+document.querySelectorAll('[name="source"], [name="merchant"]').forEach(el => el.addEventListener('change', validateSearch));
 $('more').addEventListener('click', () => {limit += 100; render();});
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
 function renderErrors() {
-  $('errors').replaceChildren(...errors.map(({game, key}) => {
-    const p = el('p'); p.append(icon('bi-exclamation-triangle'), t('game_error', {game: gameLabel(game), message: t(key)})); return p;
+  $('errors').replaceChildren(...errors.map(({game, source, key}) => {
+    const message = source && source !== 'yuyutei' ? t('source_error', {source: sourceLabel(source), game: gameLabel(game), message: t(key)})
+      : t('game_error', {game: gameLabel(game), message: t(key)});
+    const p = el('p'); p.append(icon('bi-exclamation-triangle'), message); return p;
   }));
 }
 function refreshLanguage() {

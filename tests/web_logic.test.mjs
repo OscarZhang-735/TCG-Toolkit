@@ -20,7 +20,7 @@ test('numeric sorting, stable ties and unknown quantities last', () => {
 });
 test('round robin, next links, failures and continued results', async () => {
  const calls=[],received=[],errors=[]; let waits=0;
- const failed=await loadResults({games:['wsr','lycee','chaos'],keyword:'x',signal:new AbortController().signal,
+ const failed=await loadResults({targets:['wsr','lycee','chaos'],keyword:'x',signal:new AbortController().signal,
   fetchPage:async(g,k,p)=>{calls.push([g,p]);if(g==='lycee')throw Error('failed');return {game:g,next_page:p===1?2:null};},
   onPage:r=>received.push(r),onError:g=>errors.push(g),wait:async()=>{waits++;}});
  assert.equal(failed,true);assert.deepEqual(errors,['lycee']);assert.equal(received.length,4);
@@ -28,7 +28,7 @@ test('round robin, next links, failures and continued results', async () => {
 });
 test('stop ignores in-flight response and prevents further requests',async()=>{
  const controller=new AbortController();let received=0,calls=0;
- await loadResults({games:['wsr','chaos'],keyword:'x',signal:controller.signal,
+ await loadResults({targets:['wsr','chaos'],keyword:'x',signal:controller.signal,
  fetchPage:async()=>{calls++;controller.abort();return {next_page:2};},
  onPage:()=>received++,onError:()=>assert.fail(),wait:async()=>assert.fail()});
  assert.equal(calls,1);assert.equal(received,0);

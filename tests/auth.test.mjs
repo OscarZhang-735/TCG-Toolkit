@@ -8,7 +8,7 @@ const {readHistory, saveHistory} = await import(await moduleURL('history.js'));
 test('401 aborts all subsequent search pages', async () => {
   const controller = new AbortController(); let calls = 0, expired = 0;
   const api = createAuthenticatedRequest(() => {expired++; controller.abort();}, async () => {calls++; return {status: 401};});
-  await loadResults({games: ['wsr','lycee'], keyword: 'test', signal: controller.signal,
+  await loadResults({targets: ['wsr','lycee'], keyword: 'test', signal: controller.signal,
     fetchPage: () => api.fetch('/api/search'), onPage: () => assert.fail('page after expiry'),
     onError: () => assert.fail('error after expiry'), wait: async () => {}});
   assert.equal(calls, 1); assert.equal(expired, 1);

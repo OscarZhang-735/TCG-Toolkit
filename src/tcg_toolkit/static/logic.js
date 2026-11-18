@@ -18,20 +18,21 @@ export function selectItems(items, filters) {
   });
 }
 
-export async function loadResults({games, keyword, signal, fetchPage, onPage, onError, wait}) {
-  const queue = games.map(game => ({game, page: 1}));
+// Targets are opaque (e.g. {game, source} pairs); each is paged round-robin until its next_page is null.
+export async function loadResults({targets, keyword, signal, fetchPage, onPage, onError, wait}) {
+  const queue = targets.map(target => ({target, page: 1}));
   let failed = false;
   while (queue.length && !signal.aborted) {
-    const {game, page} = queue.shift();
+    const {target, page} = queue.shift();
     try {
-      const result = await fetchPage(game, keyword, page, signal);
+      const result = await fetchPage(target, keyword, page, signal);
       if (signal.aborted) break;
-      onPage(result);
-      if (result.next_page !== null) queue.push({game, page: result.next_page});
+      onPage(result, target);
+      if (result.next_page !== null) queue.push({target, page: result.next_page});
     } catch (error) {
       if (signal.aborted) break;
       failed = true;
-      onError(game, error);
+      onError(target, error);
     }
     if (queue.length && !signal.aborted) await wait(signal);
   }

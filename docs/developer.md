@@ -127,6 +127,8 @@ Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经�
 
 Card Max 使用服务器直连，例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014&stock=true`。默认只读取搜索列表，列表包含售罄单卡（如实测的 `GBF/S134-132S`），库存返回 `unknown` 和 `null`。可用 `stock=true`、CLI 的 `--stock` 或 Python 搜索器构造参数 `stock=True` 开启详情查询，每条单卡结果额外请求一次详情页。`残りあとN個` 返回具体数量，`売り切れ` 返回 `out_of_stock` 和 0。WS 可输入完整编号，如 `AMG/W121-019SP`。Card Max 的 WSR 分类目前仅有盒装商品。
 
+网页搜索可多选来源，前端 `static/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。非游游亭结果不提供收藏和购物车操作。新增来源时需同步更新该文件。
+
 命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee` 或 `tcg-search "BP22-014" --source cardmax --game sev`，同样支持 `--page` 和 `--all`。
 
 命令行搜索统一使用 `tcg-search "关键词" --game wsr`，多游戏可重复 `--game`，例如 `tcg-search "BP01" --game ws --game sev --all`。旧 `tcg-search 游戏 关键词` 格式已移除。内部模块调用方应使用上述新路径，不提供旧模块路径的兼容转发。数据库迁移链继续保留，以支持已有数据库升级。

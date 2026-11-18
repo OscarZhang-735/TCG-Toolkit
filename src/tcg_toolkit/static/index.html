@@ -317,6 +317,15 @@
 <header><h1 data-i18n="search"></h1></header>
 <section class="panel">
 <form id="search-form">
+<div class="chips source-chips" data-i18n-aria-label="sources_to_search" role="group">
+<label class="chip"><input checked="" name="merchant" type="checkbox" value="yuyutei"/><i class="bi bi-check-lg"></i><span data-i18n="source_yuyutei"></span></label>
+<label class="chip"><input name="merchant" type="checkbox" value="hobbystation"/><i class="bi bi-check-lg"></i><span data-i18n="source_hobbystation"></span></label>
+<label class="chip"><input name="merchant" type="checkbox" value="cardmax"/><i class="bi bi-check-lg"></i><span data-i18n="source_cardmax"></span></label>
+<span class="source-option" id="cardmax-stock-option" hidden>
+<label class="checkbox-option"><input id="cardmax-stock" type="checkbox" aria-describedby="cardmax-stock-tip"/><span data-i18n="cardmax_stock"></span></label>
+<span class="info-tip"><button type="button" class="icon-button" data-i18n-aria-label="cardmax_stock_about" aria-describedby="cardmax-stock-tip"><i class="bi bi-info-circle"></i></button><span class="tip" role="tooltip" id="cardmax-stock-tip" data-i18n="cardmax_stock_hint"></span></span>
+</span>
+</div>
 <div class="search-line">
 <div class="input-icon" id="keyword-wrapper">
 <i class="bi bi-search"></i>
