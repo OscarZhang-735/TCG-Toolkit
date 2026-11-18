@@ -111,11 +111,13 @@ with ProxyGoClient() as client:
 
 ### 按商家搜索
 
-登录后可调用 `GET /api/search?source=hobbystation&game=lycee&keyword=LO-4899&page=1`。省略 `source` 时默认使用 `yuyutei`。Hobby Station 支持 `lycee`、`ws` 和 `wsr`，不支持的来源或游戏组合返回 422。两个来源使用相同的商品字段和分页结构，调用方可按 `next_page` 继续查询至其为 `null`。
+登录后可调用 `GET /api/search?source=hobbystation&game=lycee&keyword=LO-4899&page=1`。省略 `source` 时默认使用 `yuyutei`。Hobby Station 支持 `lycee`、`ws` 和 `wsr`，Card Max 支持 `ws` 和 `sev`。不支持的来源或游戏组合返回 422。各来源使用相同的商品字段和分页结构，调用方可按 `next_page` 继续查询至其为 `null`。
 
 Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经现有加密代理访问，代理的 `allowed_hosts` 需包含 `www.hobbystation-single.jp`。库存符号如 ◎ 表示有货，`stock_quantity` 为 `null`。页面标记售罄时数量为 0。Lycee 商品编号如 `LO-LO-4899` 返回印刷编号 `LO-4899`，同名异版保留各自的编号和商品链接。Hobby Station 的 `cart` 字段为 `null`。
 
-命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee`，同样支持 `--page` 和 `--all`。
+Card Max 使用服务器直连。例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014`。WS 可输入完整编号，如 `AMG/W121-019SP`。搜索仅返回单卡，结果列表未提供库存时返回 `stock_status="unknown"` 和 `stock_quantity=null`。CARDMAX 的 WSR 分类目前仅有盒装商品。
+
+命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee` 或 `tcg-search "BP22-014" --source cardmax --game sev`，同样支持 `--page` 和 `--all`。
 
 命令行搜索统一使用 `tcg-search "关键词" --game wsr`，多游戏可重复 `--game`，例如 `tcg-search "BP01" --game ws --game sev --all`。旧 `tcg-search 游戏 关键词` 格式已移除。内部模块调用方应使用上述新路径，不提供旧模块路径的兼容转发。数据库迁移链继续保留，以支持已有数据库升级。
 

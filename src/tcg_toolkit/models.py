@@ -7,6 +7,7 @@ from enum import StrEnum
 class SearchSource(StrEnum):
     YUYUTEI = "yuyutei"
     HOBBYSTATION = "hobbystation"
+    CARDMAX = "cardmax"
 
 
 class Game(StrEnum):

@@ -43,10 +43,28 @@ def test_search(game, monkeypatch):
 
 @pytest.mark.parametrize('params', [dict(game='bad', keyword='x'), dict(game='wsr', keyword=' '),
                                     dict(game='pm', keyword='x', source='hobbystation'),
+                                    dict(game='wsr', keyword='x', source='cardmax'),
                                     dict(game='lycee', keyword='x', source='unknown'),
                                     dict(game='wsr', keyword='x', page=0), dict(game='wsr')])
 def test_validation(params):
     assert client.get('/api/search', params=params).status_code == 422
+
+
+@pytest.mark.parametrize(('game', 'category'), [('ws', 'ct1847'), ('sev', 'ct1740')])
+def test_cardmax_search(game, category, monkeypatch):
+    from pathlib import Path
+    from tcg_toolkit.cardmax_search import CardMaxSearcher
+    def respond(request):
+        assert dict(request.url.params) == {'search': 'test', 'category': category}
+        html = (Path(__file__).parent / 'fixtures' / f'cardmax_{game}.html').read_text(encoding='utf-8')
+        return httpx.Response(200, text=html)
+    monkeypatch.setattr(CardMaxSearcher, 'client_type', staticmethod(
+        lambda: httpx.Client(transport=httpx.MockTransport(respond))))
+    response = client.get('/api/search', params={'source': 'cardmax', 'game': game, 'keyword': 'test'})
+    assert response.status_code == 200
+    data = response.json()
+    assert data['game'] == game and data['items'][0]['game'] == game
+    assert data['has_next'] == (game == 'sev')
 
 
 @pytest.mark.parametrize(('game', 'path'), [('lycee', 'lo'), ('ws', 'ws'), ('wsr', 'wr')])
