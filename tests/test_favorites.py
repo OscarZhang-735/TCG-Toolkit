@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
 from uuid import UUID
@@ -16,9 +17,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tcg_toolkit.auth.store import UserStore
+from tcg_toolkit.cardmax_search import CardMaxSEVSearcher
 from tcg_toolkit.models import Game, SearchItem, SearchPage, StockStatus
 from tcg_toolkit.errors import SearchRequestError, SearchParseError
-from tcg_toolkit.search import SEARCHERS
+from tcg_toolkit.search import SEARCHERS, HobbyStationLyceeSearcher
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -53,6 +55,7 @@ def add(client, item=None):
 
 def test_persistence_idempotency_and_isolation(client):
     saved = add(client)
+    assert saved['source'] == 'yuyutei'
     assert add(client, replace(card(), price=999)) == saved
     assert client.get('/api/favorites').json()['items'] == [saved]
     reopened = UserStore(app.state.auth.store.conninfo)
@@ -87,6 +90,7 @@ def test_refresh_exact_match_across_pages(client, monkeypatch, game):
     saved = add(client, item)
     updated = replace(item, price=250, stock_quantity=0, stock_status=StockStatus.OUT_OF_STOCK)
     class Fake:
+        def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def iter_pages(self, keyword):
@@ -108,6 +112,7 @@ def test_favorite_preserves_cart_condition_on_save_and_refresh(client, monkeypat
     assert saved['item']['cart'] == damaged.cart
 
     class Fake:
+        def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def iter_pages(self, keyword):
@@ -123,6 +128,7 @@ def test_favorite_preserves_cart_condition_on_save_and_refresh(client, monkeypat
 def test_refresh_failures_preserve_snapshot(client, monkeypatch, failure, status):
     saved = add(client)
     class Fake:
+        def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def iter_pages(self, keyword):
@@ -151,6 +157,93 @@ def groups(client):
     assert response.status_code == 200
     assert response.headers['cache-control'] == 'no-store'
     return response.json()['items']
+
+
+def test_three_shops_share_a_group_and_keep_separate_favorites(client):
+    group_id = group(client)['id']
+    snapshot = {**card(Game.WS).to_dict(), 'group_id': group_id}
+    urls = {
+        'yuyutei': snapshot['product_url'],
+        'hobbystation': 'https://www.hobbystation-single.jp/ws/product/detail/123',
+        'cardmax': 'https://www.cardmax.jp/shopdetail/000000123',
+    }
+    saved_ids = {}
+    for source, url in urls.items():
+        response = client.post('/api/favorites', json={**snapshot, 'product_url': url})
+        assert response.status_code == 200
+        saved = response.json()
+        assert saved['source'] == source and saved['group_id'] == group_id
+        saved_ids[source] = saved['id']
+        duplicate_url = url if source == 'yuyutei' else url + '/'
+        duplicate = client.post('/api/favorites', json={**snapshot, 'price': 200, 'group_id': None,
+                                'source': source, 'product_url': duplicate_url})
+        assert duplicate.json() == saved
+    assert len(set(saved_ids.values())) == 3
+    group_url = '/api/favorites?group_id=' + group_id
+    assert {row['source'] for row in client.get(group_url).json()['items']} == set(urls)
+    hobby = '/api/favorites/' + saved_ids['hobbystation']
+    assert client.put(hobby + '/group', json={'group_id': None}).json()['group_id'] is None
+    assert client.request('DELETE', '/api/favorites/' + saved_ids['cardmax'], json={}).status_code == 204
+    assert [row['source'] for row in client.get(group_url).json()['items']] == ['yuyutei']
+
+
+@pytest.mark.parametrize('url,game,extra', [
+    ('https://www.hobbystation-single.jp/ws/product/detail/1', 'wsr', {}),
+    ('https://www.hobbystation-single.jp/ws/product/detail/1', 'ws', {'source': 'cardmax'}),
+    ('https://www.cardmax.jp/shopdetail/00001', 'wsr', {}),
+    ('http://www.cardmax.jp/shopdetail/00001', 'ws', {}),
+    ('https://www.cardmax.jp/shopdetail/00001?other=1', 'ws', {}),
+    ('https://www.cardmax.jp/shopdetail/00001', 'ws',
+     {'cart': {'gid': 7, 'ver': 'set', 'cid': '001', 'kizu': 0}}),
+])
+def test_merchant_favorite_validation(client, url, game, extra):
+    response = client.post('/api/favorites', json={**card().to_dict(), 'game': game,
+                           'product_url': url, **extra})
+    assert response.status_code == 422
+
+
+def test_hobby_refresh_preserves_exact_variant_and_image_proxy(client, monkeypatch):
+    html = (Path(__file__).parent / 'fixtures/hobbystation_lo.html').read_text(encoding='utf-8')
+    def respond(request):
+        assert request.url.path == '/lo/product/list'
+        return httpx.Response(200, text=html)
+    monkeypatch.setattr(HobbyStationLyceeSearcher, 'client_type', staticmethod(
+        lambda: httpx.Client(transport=httpx.MockTransport(respond))))
+    search = client.get('/api/search', params={'source': 'hobbystation', 'game': 'lycee', 'keyword': 'LO-4899'})
+    parallel = search.json()['items'][1]
+    saved = client.post('/api/favorites', json={**parallel, 'price': 1}).json()
+    row = client.post(f"/api/favorites/{saved['id']}/refresh", json={}).json()
+    assert row['source'] == 'hobbystation'
+    assert row['item'] == parallel
+    assert row['item']['image_url'] == ORIGIN + '/api/images/hobbystation/lo/LO-LO-4899-K.jpg'
+    assert row['item']['stock_status'] == 'in_stock' and row['item']['stock_quantity'] is None
+    assert client.get('/api/favorites').json()['items'] == [row]
+
+
+def test_cardmax_refresh_reads_only_saved_detail_and_preserves_snapshot_on_failure(client, monkeypatch):
+    html = (Path(__file__).parent / 'fixtures/cardmax_sev.html').read_text(encoding='utf-8')
+    detail = '/shopdetail/000000235103'
+    paths = []
+    responses = iter([httpx.Response(200, text='<span class="M_item-stock-soldout">売り切れ</span>'),
+                      httpx.Response(503)])
+    def respond(request):
+        paths.append(request.url.path)
+        if request.url.path == detail:
+            return next(responses)
+        assert request.url.path == '/shop/shopbrand.html'
+        assert dict(request.url.params) == {'category': 'ct1740', 'search': 'BP22-014'}
+        return httpx.Response(200, text=html)
+    monkeypatch.setattr(CardMaxSEVSearcher, 'client_type', staticmethod(
+        lambda: httpx.Client(transport=httpx.MockTransport(respond))))
+    saved = add(client, replace(card(Game.SEV), card_number='BP22-014', product_url='https://www.cardmax.jp' + detail))
+    path = f"/api/favorites/{saved['id']}/refresh"
+    updated = client.post(path, json={}).json()
+    assert paths == ['/shop/shopbrand.html', detail]
+    assert updated['source'] == 'cardmax'
+    assert updated['item']['price'] == 30
+    assert (updated['item']['stock_status'], updated['item']['stock_quantity']) == ('out_of_stock', 0)
+    assert client.post(path, json={}).status_code == 502
+    assert client.get('/api/favorites').json()['items'] == [updated]
 
 
 @pytest.mark.parametrize('created_at', [(100, 100, 100), (100, 101, 102)])

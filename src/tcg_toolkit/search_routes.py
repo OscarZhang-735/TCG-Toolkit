@@ -1,25 +1,17 @@
 """Authenticated HTTP access to the shared card search registry."""
 from typing import Annotated
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from .auth.dependencies import current_user
 from .errors import SearchParseError, SearchRequestError
+from .hobby_images import HOBBY_IMAGE_ROOT, HOBBY_ORIGIN, IMAGE_TYPES, public_hobby_image_url, valid_image
 from .models import Game, SearchSource
 from .search import create_searcher
 
 router = APIRouter()
-
-HOBBY_ORIGIN = "https://www.hobbystation-single.jp"
-HOBBY_IMAGE_ROOT = "/html/upload/save_image/"
-IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-
-
-def valid_image(game_dir: str, filename: str) -> bool:
-    return (game_dir in {"lo", "ws", "wr"} and "/" not in filename and "\\" not in filename
-            and filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")))
 
 
 @router.get("/api/images/hobbystation/{game_dir}/{filename}")
@@ -67,14 +59,7 @@ def search(request: Request, game: Game, keyword: Annotated[str, Query(min_lengt
         data = result.to_dict()
         if source == SearchSource.HOBBYSTATION:
             for item in data["items"]:
-                image_url = item.get("image_url") or ""
-                if image_url.startswith(HOBBY_ORIGIN + HOBBY_IMAGE_ROOT):
-                    path = unquote(urlsplit(image_url).path.removeprefix(HOBBY_IMAGE_ROOT))
-                    game_dir, _, filename = path.partition("/")
-                    if valid_image(game_dir, filename):
-                        item["image_url"] = str(request.url_for(
-                            "hobby_card_image", game_dir=game_dir, filename=quote(filename, safe=""),
-                        ))
+                item["image_url"] = public_hobby_image_url(request, item["image_url"])
         return {**data, "game": game.value}
     except SearchRequestError as exc:
         timeout = isinstance(exc.__cause__, httpx.TimeoutException)

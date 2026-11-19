@@ -195,7 +195,15 @@ python -m tcg_toolkit.db_cli check
 部署仍通过 `tcg-db migrate` 执行，不能用 `Base.metadata.create_all()` 或直接 `alembic upgrade` 绕过发布锁和兼容校验。
 `tcg-db check` 检查已应用版本及 ORM 元数据差异；Web 启动只检查版本，不自动建表。
 
-## 收藏分组后端
+## 收藏夹后端
+
+同一账号可在一个分组中收藏多个店铺的商品。同一卡号在不同店铺分别保存。调用 `POST /api/favorites` 时可直接提交搜索结果中的一条 `item`，后端按 `product_url` 识别来源。也可在请求体中传入搜索页顶层的 `source`。来源与商品域名不符、商品链接格式错误或店铺不支持该游戏时返回 422。
+
+| `source` | 支持的 `game` | 收藏刷新 |
+| --- | --- | --- |
+| `yuyutei` | `ws`、`wsr`、`lycee`、`sev`、`pm`、`chaos` | 匹配商品链接，快照带有购物车品相时同时匹配品相 |
+| `hobbystation` | `ws`、`wsr`、`lycee` | 从列表读取价格和库存，`◎` 返回 `in_stock`、数量为 `null`。图片使用后端转发地址 |
+| `cardmax` | `ws`、`sev` | 从列表匹配商品并读取价格，再请求该商品的详情页读取库存 |
 
 收藏夹提供单层可选分组：收藏默认未分组（`group_id` 为 `null`），也可加入一个用户新建的分组。没有默认组，注册时不创建分组。分组可以创建、改名和删除，删除时在同一事务内将其中收藏改为未分组，保留收藏 ID、快照、创建／刷新时间及独立订阅。
 
@@ -208,10 +216,12 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 | `PUT /api/favorites/groups/{group_id}` | `{"name":"新名称"}`；返回 200 和更新后的分组记录 |
 | `DELETE /api/favorites/groups/{group_id}` | JSON `{}`；将其中收藏改为未分组后删除分组，返回 204 |
 | `GET /api/favorites?group_id=…` | 返回该组的 `{"items":[收藏记录,…]}`；不传参数时仍返回全部收藏，保留创建时间、内部排序号倒序 |
-| `POST /api/favorites` | 原卡牌快照字段加可选 `group_id`；省略或 `null` 表示未分组；返回 200 和收藏记录 |
+| `POST /api/favorites` | 卡牌快照字段，可选 `source` 和 `group_id`。省略 `group_id` 或传 `null` 表示未分组。返回 200 和收藏记录 |
 | `PUT /api/favorites/{favorite_id}/group` | `{"group_id":"目标组 ID"}`，`null` 表示移出分组；返回 200 和移动后的收藏记录 |
+| `POST /api/favorites/{favorite_id}/refresh` | JSON `{}`。按原店铺、游戏和卡号搜索，匹配商品链接后更新快照。商品未找到返回 404，上游请求或解析失败返回 502，超时返回 504。失败时保留原快照 |
+| `DELETE /api/favorites/{favorite_id}` | JSON `{}`。删除当前用户的收藏，返回 204 |
 
-分组记录为 `id`、`name`、`created_at`。收藏记录为 `id`、`group_id`（未分组为 `null`）、`item`、`created_at`、`refreshed_at`；`item` 保持原卡牌快照结构，不包含 `group_id`。时间为 Unix 秒。重复收藏返回原记录，即使指定不同分组也不会隐式移动或覆盖快照；移动使用专用 PUT 接口。原取消收藏和刷新接口继续适用。
+分组记录为 `id`、`name`、`created_at`。收藏记录为 `id`、`source`、`group_id`（未分组为 `null`）、`item`、`created_at`、`refreshed_at`。`item` 使用卡牌快照结构。时间为 Unix 秒。历史游游亭收藏也返回 `source: "yuyutei"`，无需为来源迁移数据。重复收藏返回原记录，移动分组使用专用 PUT 接口。
 
 名称去除首尾空白后须为 1–100 个字符。同一用户内名称唯一、区分大小写。无效输入返回 422；名称冲突返回 409 `favorite_group_name_taken`。不存在或属于其他用户的分组统一返回 404 `favorite_group_not_found`，收藏仍使用 404 `favorite_not_found`。
 

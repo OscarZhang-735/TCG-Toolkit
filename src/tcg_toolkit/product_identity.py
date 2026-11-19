@@ -1,11 +1,40 @@
-"""YuYu-Tei product identities shared by search, offers and cart inputs."""
+"""Merchant product URLs for favorites and YuYu-Tei offer and cart identities."""
 import re
 from urllib.parse import urlsplit
 
-from .models import Game
+from .models import Game, SearchSource
+from .search import get_searcher_type
 
 GAME_PATHS = {7: 'ws', 8: 'chaos', 11: 'pm', 34: 'lo', 47: 'sev', 56: 'wsr'}
 GAME_CODES = {game: 'lo' if game == Game.LYCEE else game.value for game in Game}
+
+FAVORITE_HOSTS = {
+    'yuyu-tei.jp': SearchSource.YUYUTEI,
+    'www.hobbystation-single.jp': SearchSource.HOBBYSTATION,
+    'www.cardmax.jp': SearchSource.CARDMAX,
+}
+
+
+def favorite_source(product_url: str) -> SearchSource:
+    host = urlsplit(product_url).netloc.lower()
+    if host not in FAVORITE_HOSTS:
+        raise ValueError('Unsupported favorite product host')
+    return FAVORITE_HOSTS[host]
+
+
+def normalize_favorite_url(source: SearchSource, game: Game | str, value: str) -> str:
+    if favorite_source(value) != source:
+        raise ValueError('Favorite source does not match product URL')
+    if source == SearchSource.YUYUTEI:
+        return normalize_product_url(game, value)
+    searcher = get_searcher_type(source, game)
+    path = (searcher.search_path.removesuffix('/list') + '/detail'
+            if source == SearchSource.HOBBYSTATION else '/shopdetail')
+    url = urlsplit(value)
+    if (url.scheme != 'https' or url.query or url.fragment
+            or not re.fullmatch(rf'{path}/[0-9]{{1,32}}/?', url.path)):
+        raise ValueError('Invalid product URL for this game')
+    return searcher.base_url + url.path.rstrip('/')
 
 
 def normalize_product_url(game, value):

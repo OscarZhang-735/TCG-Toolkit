@@ -25,24 +25,25 @@ class CardMaxSearcher(PagedSearcher):
         result = super().search_page(keyword, page=page)
         if not self.stock:
             return result
-        items = []
-        for item in result.items:
-            html = self.fetch_html(item.product_url, keyword=result.keyword, page=page)
-            soup = BeautifulSoup(html, "html.parser")
-            node = soup.select_one('span[class*="M_item-stock-"]')
-            label = _text(node)
-            count = re.fullmatch(r"残りあと\s*([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*個", label)
-            quantity = None
-            status = StockStatus.UNKNOWN
-            if node and "M_item-stock-soldout" in node.get("class", []):
-                status, quantity = StockStatus.OUT_OF_STOCK, 0
-            elif count:
-                quantity = int(count[1].replace(",", ""))
-                status = StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK
-            elif label in ("在庫あり", "在庫有り"):
-                status = StockStatus.IN_STOCK
-            items.append(replace(item, stock_quantity=quantity, stock_status=status, stock_text=label))
+        items = [self.read_item_stock(item, keyword=result.keyword, page=page) for item in result.items]
         return replace(result, items=items)
+
+    def read_item_stock(self, item: SearchItem, *, keyword: str, page: int) -> SearchItem:
+        html = self.fetch_html(item.product_url, keyword=keyword, page=page)
+        soup = BeautifulSoup(html, "html.parser")
+        node = soup.select_one('span[class*="M_item-stock-"]')
+        label = _text(node)
+        count = re.fullmatch(r"残りあと\s*([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*個", label)
+        quantity = None
+        status = StockStatus.UNKNOWN
+        if node and "M_item-stock-soldout" in node.get("class", []):
+            status, quantity = StockStatus.OUT_OF_STOCK, 0
+        elif count:
+            quantity = int(count[1].replace(",", ""))
+            status = StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK
+        elif label in ("在庫あり", "在庫有り"):
+            status = StockStatus.IN_STOCK
+        return replace(item, stock_quantity=quantity, stock_status=status, stock_text=label)
 
     def response_html(self, response: httpx.Response) -> str:
         # The EUC-JP storefront includes extended characters such as №.

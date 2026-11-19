@@ -13,11 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .auth.dependencies import current_user, write_guard
-from .models import Game, StockStatus
+from .cardmax_search import CardMaxSearcher
+from .models import Game, SearchSource, StockStatus
 from .errors import SearchRequestError, SearchParseError
 from .cart_models import CartTarget
-from .product_identity import normalize_product_url
-from .search import SEARCHERS
+from .hobby_images import public_hobby_image_url
+from .product_identity import favorite_source, normalize_favorite_url
+from .search import create_searcher
 
 
 router = APIRouter(prefix='/api/favorites')
@@ -37,16 +39,26 @@ class CardSnapshot(BaseModel):
     rarity: str | None = None
 
     @model_validator(mode='after')
-    def product_location(self):
+    def nonblank_card_fields(self):
         if not self.name.strip() or not self.card_number.strip():
             raise ValueError('Name and card number must not be blank')
-        normalize_product_url(self.game, self.product_url)
         return self
 
 
 class FavoriteInput(CardSnapshot):
+    source: SearchSource | None = None
     group_id: str | None = Field(default=None, min_length=1)
     cart: CartTarget | None = None
+
+    @model_validator(mode='after')
+    def favorite_location(self):
+        source = self.source or favorite_source(self.product_url)
+        url = normalize_favorite_url(source, self.game, self.product_url)
+        if source != SearchSource.YUYUTEI:
+            if self.cart is not None:
+                raise ValueError('Cart targets are only supported for yuyutei')
+            self.product_url = url
+        return self
 
 
 class GroupName(BaseModel):
@@ -67,8 +79,12 @@ def store(request):
     return request.app.state.auth.store
 
 
-def record(row: Favorite):
-    return {'id': row.id, 'group_id': row.group_id, 'item': json.loads(row.snapshot),
+def record(row: Favorite, request: Request):
+    source = favorite_source(row.product_url)
+    item = json.loads(row.snapshot)
+    if source == SearchSource.HOBBYSTATION:
+        item['image_url'] = public_hobby_image_url(request, item.get('image_url'))
+    return {'id': row.id, 'group_id': row.group_id, 'source': source, 'item': item,
             'created_at': row.created_at, 'refreshed_at': row.refreshed_at}
 
 
@@ -153,7 +169,7 @@ def listing(request: Request, group_id: str | None = None, user=Depends(current_
             query = query.where(Favorite.group_id == group_id)
         rows = db.scalars(query.order_by(
             Favorite.created_at.desc(), Favorite.sort_id.desc()))
-        return {'items': [record(row) for row in rows]}
+        return {'items': [record(row, request) for row in rows]}
 
 
 @router.post('', dependencies=[Depends(write_guard)])
@@ -161,14 +177,16 @@ def add(body: FavoriteInput, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
         lock_user(db, user['id'])
         group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
-        excluded = {'group_id'} if body.cart is not None else {'group_id', 'cart'}
+        excluded = {'group_id', 'source'}
+        if body.cart is None:
+            excluded.add('cart')
         db.execute(insert(Favorite).values(
             id=str(uuid.uuid4()), user_id=user['id'], group_id=group_id, game=body.game.value,
             product_url=body.product_url, snapshot=body.model_dump_json(exclude=excluded), created_at=int(time.time())
         ).on_conflict_do_nothing(index_elements=[Favorite.user_id, Favorite.game, Favorite.product_url]))
         row = db.scalar(select(Favorite).where(Favorite.user_id == user['id'],
                         Favorite.game == body.game.value, Favorite.product_url == body.product_url))
-        return record(row)
+        return record(row, request)
 
 
 @router.put('/{favorite_id}/group', dependencies=[Depends(write_guard)])
@@ -178,7 +196,7 @@ def move(favorite_id: str, body: GroupTarget, request: Request, user=Depends(cur
         group_id = None if body.group_id is None else owned_group(db, user['id'], body.group_id).id
         row = owned(db, user['id'], favorite_id, lock=True)
         row.group_id = group_id
-        return record(row)
+        return record(row, request)
 
 
 @router.delete('/{favorite_id}', status_code=204, dependencies=[Depends(write_guard)])
@@ -196,15 +214,20 @@ def remove(favorite_id: str, request: Request, user=Depends(current_user)):
 @router.post('/{favorite_id}/refresh', dependencies=[Depends(write_guard)])
 def refresh(favorite_id: str, request: Request, user=Depends(current_user)):
     with store(request).session() as db:
-        saved = record(owned(db, user['id'], favorite_id))['item']
+        row = owned(db, user['id'], favorite_id)
+        saved = json.loads(row.snapshot)
+        source = favorite_source(row.product_url)
+        product_url = normalize_favorite_url(source, row.game, row.product_url)
     condition = (saved.get('cart') or {}).get('kizu')
     match = None
     try:
-        with SEARCHERS[Game(saved['game'])]() as searcher:
+        with create_searcher(source, saved['game']) as searcher:
             for page in searcher.iter_pages(saved['card_number']):
-                match = next((item for item in page.items if item.product_url == saved['product_url']
+                match = next((item for item in page.items if item.product_url.rstrip('/') == product_url
                               and (condition is None or (item.cart or {}).get('kizu', 0) == condition)), None)
                 if match is not None:
+                    if isinstance(searcher, CardMaxSearcher):
+                        match = searcher.read_item_stock(match, keyword=page.keyword, page=page.page)
                     break
     except SearchRequestError as exc:
         raise HTTPException(504 if isinstance(exc.__cause__, httpx.TimeoutException) else 502,
@@ -215,5 +238,6 @@ def refresh(favorite_id: str, request: Request, user=Depends(current_user)):
         raise HTTPException(404, detail='refresh_product_missing')
     with store(request).session() as db:
         row = owned(db, user['id'], favorite_id, lock=True)
-        row.snapshot, row.refreshed_at = json.dumps(match.to_dict()), int(time.time())
-        return record(row)
+        row.snapshot = json.dumps({**match.to_dict(), 'product_url': row.product_url})
+        row.refreshed_at = int(time.time())
+        return record(row, request)
