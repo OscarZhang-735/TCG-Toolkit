@@ -6,8 +6,10 @@ import uuid
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from ..catalog.providers.yuyutei_products import fetch_product_snapshot
-from ..persistence.models import Subscription, User
+from ..catalog.identity import favorite_source
+from ..catalog.models import SearchSource
+from ..persistence.models import Favorite, Subscription, User
+from .products import fetch_product_snapshot
 from .recipients import notification_recipient
 from .schedule import scheduled_scan
 
@@ -20,6 +22,12 @@ def _record(row):
     return dict(id=row.id, item=json.loads(row.snapshot), created_at=row.created_at,
                 checked_at=row.checked_at, last_error=row.last_error,
                 next_check_at=row.next_check_at)
+
+
+def merge_snapshot_metadata(snapshot, saved):
+    """Keep catalog metadata when the merchant detail page omits it."""
+    return {**snapshot, **{key: saved[key] for key in ('card_number', 'rarity', 'image_url')
+                           if not snapshot.get(key) and saved.get(key)}}
 
 
 def _settings(db, account):
@@ -64,6 +72,11 @@ def subscribe(database, user_id, game, product_url):
     with database.session() as db:
         # Serialize creation with account-wide interval changes after network I/O.
         account = db.get(User, user_id, with_for_update=True)
+        if favorite_source(product_url) != SearchSource.YUYUTEI:
+            saved = db.scalar(select(Favorite.snapshot).where(
+                Favorite.user_id == user_id, Favorite.game == game.value, Favorite.product_url == product_url))
+            if saved:
+                snapshot = merge_snapshot_metadata(snapshot, json.loads(saved))
         db.execute(insert(Subscription).values(
             id=str(uuid.uuid4()), user_id=user_id, game=game.value,
             product_url=product_url, snapshot=json.dumps(snapshot),

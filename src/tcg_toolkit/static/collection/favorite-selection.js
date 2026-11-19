@@ -1,5 +1,4 @@
 import {cardKey} from './favorites.js';
-import {isYuyutei} from '../catalog/search-sources.js';
 
 // Multi-select on the favorites page. Bulk actions run one card at a time through the same
 // favorites / subscriptions models, so per-card busy state and error notes still apply.
@@ -50,9 +49,8 @@ export function createSelection(favorites, subscriptions, onChange, pause = () =
     state.running = false; onChange();
   }
   const moveTo = groupId => run(async row => !await favorites.move(row.item, groupId));
-  // Subscriptions only watch YuYu-Tei products; other merchants' cards are passed over.
-  const subscribe = () => run(row => !isYuyutei(row.item) || subscriptions.add(row.item), {keep: true});
-  const unsubscribe = () => run(row => !isYuyutei(row.item) || subscriptions.remove(row.item), {keep: true});
+  const subscribe = () => run(row => subscriptions.add(row.item), {keep: true});
+  const unsubscribe = () => run(row => subscriptions.remove(row.item), {keep: true});
   // Refresh queries the source for each card, so it keeps the same pace as "Refresh all".
   const refresh = () => run(async row => {
     await favorites.refresh(row.item);

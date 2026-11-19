@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 import json
 import logging
+import os
 import smtplib
 from threading import Event, Thread
 import time
@@ -12,11 +13,14 @@ import uuid
 from sqlalchemy import func, select
 
 from ..catalog.errors import ProductSourceError
-from ..catalog.providers.yuyutei_products import fetch_product_snapshot
+from ..catalog.identity import favorite_source
+from ..catalog.models import SearchSource
+from ..external.search_proxy import direct_search
 from ..mail.delivery import SMTPMailer
 from ..persistence.models import Subscription, SubscriptionEmail, SubscriptionRun, User
 from .checks import apply_check_results
 from .messages import digest_message
+from .products import fetch_product_snapshot
 from .recipients import notification_recipient
 from .schedule import next_hour
 
@@ -27,10 +31,21 @@ RETRY_DELAYS = (60, 300, 1800)
 SLOT_TOLERANCE = 600
 
 
+def fetch_scheduled_product(game, url):
+    if (os.getenv('TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT', '').lower() == 'true'
+            and favorite_source(url) == SearchSource.HOBBYSTATION):
+        token = direct_search.set(True)
+        try:
+            return fetch_product_snapshot(game, url)
+        finally:
+            direct_search.reset(token)
+    return fetch_product_snapshot(game, url)
+
+
 class SubscriptionWorker:
     def __init__(self, store, *, fetcher=None, mailer=None, clock=time.time):
         self.store = store
-        self.fetcher = fetcher or fetch_product_snapshot
+        self.fetcher = fetcher or fetch_scheduled_product
         self.mailer = mailer if mailer is not None else SMTPMailer()
         self.clock = clock
         self.stopping = Event()
@@ -93,8 +108,7 @@ class SubscriptionWorker:
                 raise InterruptedError('Subscription checks stopped')
             try:
                 snapshot = self.fetcher(game, url)
-                if (snapshot['stock_status'] == 'unknown' or snapshot['stock_quantity'] is None
-                        or snapshot['price'] is None):
+                if snapshot['stock_status'] not in ('in_stock', 'out_of_stock') or snapshot['price'] is None:
                     raise ProductSourceError('product_unreadable')
                 products[(game, url)] = (snapshot, None)
             except ProductSourceError as exc:

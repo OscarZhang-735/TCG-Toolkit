@@ -11,6 +11,27 @@ from ..models import Game, SearchItem, SearchSource, StockStatus
 from ..pagination import PagedSearcher, _text
 
 
+def hobby_number(game, number):
+    return re.sub(r'^LO-(?:D-)?(?=LO-)', '', number) if game == Game.LYCEE else number
+
+
+def hobby_rarity(name):
+    label = unicodedata.normalize('NFKC', name)
+    rarity = re.search(r'\(\s*([A-Z][A-Z0-9+★☆]*)\s*\)(?:\s*\([^()]*[ぁ-龯][^()]*\))*$', label)
+    return rarity[1] if rarity else None
+
+
+def hobby_stock(detail):
+    if detail.select_one('img[alt="SOLD OUT"]'):
+        return 'SOLD OUT', StockStatus.OUT_OF_STOCK, 0
+    label = _text(detail.select_one('.stock'))
+    value = re.sub(r'^在庫数\s*[:：]\s*', '', label)
+    if re.fullmatch(r'[0-9]+', value):
+        quantity = int(value)
+        return label, StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK, quantity
+    return label, StockStatus.IN_STOCK if value in ('◎', '○', '◯', '△') else StockStatus.UNKNOWN, None
+
+
 class HobbyStationClient(SearchProxyClient):
     relay_host = 'www.hobbystation-single.jp'
 
@@ -45,30 +66,15 @@ class HobbyStationSearcher(PagedSearcher):
         price = re.match(r'([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*円', _text(detail))
         if not name or not number or not price or not link.get('href'):
             raise ValueError("Missing or invalid name, card number, price or product URL")
-        if self.game == Game.LYCEE:
-            number = re.sub(r'^LO-(?:D-)?(?=LO-)', '', number)
-        if detail.select_one('img[alt="SOLD OUT"]'):
-            stock_text, status, quantity = 'SOLD OUT', StockStatus.OUT_OF_STOCK, 0
-        else:
-            stock_text = _text(detail.select_one('.stock'))
-            value = re.sub(r'^在庫数\s*[:：]\s*', '', stock_text)
-            quantity = int(value) if re.fullmatch(r'[0-9]+', value) else None
-            if quantity is not None:
-                status = StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK
-            elif value in ('◎', '○', '◯', '△'):
-                status = StockStatus.IN_STOCK
-            else:
-                status = StockStatus.UNKNOWN
-        label = unicodedata.normalize('NFKC', name)
-        rarity = re.search(r'\(\s*([A-Z][A-Z0-9+★☆]*)\s*\)(?:\s*\([^()]*[ぁ-龯][^()]*\))*$', label)
+        stock_text, status, quantity = hobby_stock(detail)
         image = card.select_one('figure img[src]')
         return SearchItem(
-            game=self.game, name=name, card_number=number,
+            game=self.game, name=name, card_number=hobby_number(self.game, number),
             price=int(price[1].replace(',', '')), currency='JPY',
             stock_status=status, stock_quantity=quantity, stock_text=stock_text,
             product_url=urljoin(url, link['href']),
             image_url=urljoin(url, image['src']) if image and image['src'] else None,
-            rarity=rarity[1] if rarity else None,
+            rarity=hobby_rarity(name),
         )
 
     def parse_pagination(self, main: Tag, *, page: int) -> int | None:

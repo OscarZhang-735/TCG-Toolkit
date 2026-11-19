@@ -103,6 +103,34 @@ def test_subscription_idempotency_normalization_and_isolation(client, monkeypatc
     assert client.get('/api/subscriptions').json()['items'] == []
 
 
+def test_merchant_favorites_subscribe_independently_with_fresh_baselines(client, monkeypatch):
+    urls = ('https://www.hobbystation-single.jp/ws/product/detail/123',
+            'https://www.cardmax.jp/shopdetail/123')
+    calls = []
+
+    def fetch(game, url):
+        calls.append((game, url))
+        return {**snapshot(url, price=200), 'game': game.value, 'rarity': None, 'card_number': None,
+                'stock_status': 'in_stock', 'stock_quantity': None, 'stock_text': '在庫あり'}
+
+    monkeypatch.setattr(api, 'fetch_product_snapshot', fetch)
+    favorites, subscriptions = [], []
+    for url in urls:
+        favorites.append(favorite(client, {**snapshot(url), 'game': 'ws', 'price': 500}))
+        body = {'game': 'ws', 'product_url': url + '/'}
+        result = client.post('/api/subscriptions', json=body)
+        assert result.status_code == 200, result.text
+        assert result.json()['item'] == {
+            **snapshot(url, price=200), 'game': 'ws', 'stock_status': 'in_stock',
+            'stock_quantity': None, 'stock_text': '在庫あり'}
+        subscriptions.append(result.json())
+        assert client.post('/api/subscriptions', json={**body, 'product_url': url}).json() == result.json()
+    assert calls == [('ws', url) for url in urls]
+    assert subscriptions[0]['id'] != subscriptions[1]['id']
+    assert client.request('DELETE', '/api/favorites/' + favorites[0]['id'], json={}).status_code == 204
+    assert client.get('/api/subscriptions').json()['items'] == subscriptions[1:]
+
+
 def test_unfavorite_removes_only_the_matching_users_subscription(client):
     favorite = client.post('/api/favorites', json=snapshot(URL + '/'))
     assert favorite.status_code == 200
@@ -147,6 +175,9 @@ def test_unfavorite_rolls_back_subscription_if_favorite_delete_fails(client):
     URL.replace('/wsr/', '/ws/'), URL + '?next=1', URL + '#x',
     URL.replace('OS01', '..'), URL.replace('OS01', '%2e%2e'),
     URL.replace('yuyu-tei.jp', 'yuyu-tei.jp@localhost'), URL + '/more',
+    'https://www.hobbystation-single.jp/ws/product/detail/123',
+    'https://www.hobbystation-single.jp/wr/product/detail/123?next=1',
+    'https://www.cardmax.jp/shopdetail/123',  # Card Max does not sell WSR through this integration.
 ])
 def test_invalid_urls_never_fetch(client, monkeypatch, url):
     monkeypatch.setattr(api, 'fetch_product_snapshot', lambda *args: pytest.fail('invalid URL fetched'))
@@ -207,6 +238,32 @@ def test_unchanged_is_silent_and_restock_is_not(client):
     service.clock = lambda: NOW + 86400
     service.check_due()
     assert json.loads(emails()[0].changes)[0]['before']['stock_status'] == 'out_of_stock'
+
+
+def test_storefront_checks_refresh_favorites_and_send_one_mixed_digest(client, monkeypatch):
+    urls = ['https://www.hobbystation-single.jp/ws/product/detail/387566',
+            'https://www.cardmax.jp/shopdetail/000000160917']
+    def offer(url, price):
+        return {**snapshot(url, price), 'game': 'ws', 'rarity': None, 'stock_status': 'in_stock',
+                'stock_quantity': None, 'stock_text': '在庫あり'}
+
+    monkeypatch.setattr(api, 'fetch_product_snapshot', lambda game, url: offer(url, 100))
+    for url in urls:
+        favorite(client, {**snapshot(url), 'game': 'ws'})
+        assert client.post('/api/subscriptions', json={'game': 'ws', 'product_url': url}).status_code == 200
+
+    service = worker(lambda game, url: offer(url, 90))
+    assert service.check_due()
+    favorites = client.get('/api/favorites').json()['items']
+    assert all(f['item']['price'] == 90 and f['item']['rarity'] == 'R' and f['refreshed_at'] == NOW
+               for f in favorites)
+    service.deliver_due()
+    message, = service.mailer.messages
+    html = message.get_body(preferencelist=('html',)).get_content()
+    plain = message.get_body(preferencelist=('plain',)).get_content()
+    assert all(url in html and url in plain for url in urls)
+    assert 'View on Hobby Station' in html and 'View on Card Max' in html
+    assert '有货 In stock' in html and '有货 In stock → 有货 In stock' in plain
 
 
 @pytest.mark.parametrize('price', [100, 200])
@@ -483,6 +540,19 @@ def test_hourly_schedule_startup_and_missed_hours(monkeypatch):
     service.tick()
     assert calls == [before, noon, now[0]]
     assert service.deadline == now[0] + 3600
+
+
+def test_local_direct_transport_only_applies_to_scheduled_hobby_checks(monkeypatch):
+    from tcg_toolkit.external.search_proxy import direct_search
+    from tcg_toolkit.subscriptions import worker as runner
+    hs = 'https://www.hobbystation-single.jp/ws/product/detail/387566'
+    monkeypatch.setattr(runner, 'fetch_product_snapshot', lambda game, url: direct_search.get())
+    monkeypatch.setenv('TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT', 'true')
+    assert runner.fetch_scheduled_product('ws', hs)
+    assert not direct_search.get()
+    assert not runner.fetch_scheduled_product('wsr', URL)
+    monkeypatch.delenv('TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT')
+    assert not runner.fetch_scheduled_product('ws', hs)
 
 
 def test_busy_mail_worker_does_not_skip_due_check(client):

@@ -6,6 +6,9 @@ import uuid
 from sqlalchemy import func, select
 
 from ..persistence.models import Favorite, Subscription, SubscriptionEmail, User
+from ..catalog.identity import favorite_source
+from ..catalog.models import SearchSource
+from .service import merge_snapshot_metadata
 
 
 CHANGE_FIELDS = ('price', 'stock_quantity', 'stock_status')
@@ -37,16 +40,20 @@ def apply_check_results(store, user_id, ids, products, *, run_id, local_date, st
             if error:
                 continue
             before = json.loads(row.snapshot)
+            merchant_listing = favorite_source(row.product_url) != SearchSource.YUYUTEI
+            if merchant_listing:
+                snapshot = merge_snapshot_metadata(snapshot, before)
             if any(before[key] != snapshot[key] for key in CHANGE_FIELDS):
                 changes.append(dict(subscription_id=row.id, before=before, after=snapshot,
                                     checked_at=slot))
             row.snapshot = json.dumps(snapshot)
             for favorite in favorites[(row.game, row.product_url)]:
                 saved = json.loads(favorite.snapshot)
-                # Subscriptions only fetch normal-condition offers.
+                # A YuYu-Tei product URL can also identify a damaged favorite.
                 if (saved.get('cart') or {}).get('kizu', 0) != 0:
                     continue
-                favorite.snapshot = json.dumps({**saved, **snapshot, 'product_url': favorite.product_url})
+                details = merge_snapshot_metadata(snapshot, saved) if merchant_listing else snapshot
+                favorite.snapshot = json.dumps({**saved, **details, 'product_url': favorite.product_url})
                 favorite.refreshed_at = slot
         if changes:
             db.add(SubscriptionEmail(id=str(uuid.uuid4()), user_id=user_id, run_id=run_id, run_date=local_date,

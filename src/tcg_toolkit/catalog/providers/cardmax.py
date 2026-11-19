@@ -29,6 +29,23 @@ def read_stock(soup: BeautifulSoup) -> tuple[StockStatus, int | None, str]:
     return status, quantity, label
 
 
+def card_details(title, rarity, format_number):
+    # The final parenthesized field before ◇ is the card number, preceded by an optional rarity.
+    label = title.partition("◇")[0].strip()
+    fields = re.fullmatch(r"(?:\(([^()]+)\)|【([^】]+)】)\s*(.+?)\s*\(([^()]*[0-9][^()]*)\)", label)
+    if not fields:
+        raise ValueError("Missing card name or number")
+    series = (fields[1] or fields[2]).strip()
+    name = fields[3].strip()
+    rarity_match = re.search(r"[（(]([A-Za-z0-9+★☆/-]+)[)）]$", name)
+    if rarity in ('', '-', '－', '—'):
+        rarity = rarity_match[1] if rarity_match else None
+    if rarity_match:
+        name = name[:rarity_match.start()].strip()
+    number = fields[4].strip().replace("ー", "-")
+    return name, format_number(series, number), rarity
+
+
 class CardMaxSearcher(PagedSearcher):
     source = SearchSource.CARDMAX
     base_url = "https://www.cardmax.jp"
@@ -51,7 +68,8 @@ class CardMaxSearcher(PagedSearcher):
         status, quantity, label = read_stock(soup)
         return replace(item, stock_quantity=quantity, stock_status=status, stock_text=label)
 
-    def response_html(self, response: httpx.Response) -> str:
+    @staticmethod
+    def response_html(response: httpx.Response) -> str:
         # The EUC-JP storefront includes extended characters such as №.
         if response.encoding and response.encoding.lower() == "euc-jp":
             return response.content.decode("euc_jis_2004", errors="replace")
@@ -84,35 +102,22 @@ class CardMaxSearcher(PagedSearcher):
         if re.search(r"BOX\s*【", title, flags=re.IGNORECASE):
             return None
 
-        # The set precedes the name. The last parenthesized field before ◇
-        # is the card number; the preceding field, when present, is the rarity.
-        label = title.partition("◇")[0].strip()
-        fields = re.fullmatch(r"(?:\(([^()]+)\)|【([^】]+)】)\s*(.+?)\s*\(([^()]*[0-9][^()]*)\)", label)
-        if not fields:
-            raise ValueError("Missing card name or number")
-        series = (fields[1] or fields[2]).strip()
-        name = fields[3].strip()
-        rarity_match = re.search(r"[（(]([A-Za-z0-9+★☆/-]+)[)）]$", name)
-        rarity = _text(cells[3])
-        if rarity in ('', '-', '－', '—'):
-            rarity = rarity_match[1] if rarity_match else None
-        if rarity_match:
-            name = name[:rarity_match.start()].strip()
-        number = fields[4].strip().replace("ー", "-")
+        name, number, rarity = card_details(title, _text(cells[3]), self.card_number)
         price = re.fullmatch(r"([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)円", _text(cells[4]))
         brandcode = parse_qs(urlsplit(link["href"]).query).get("brandcode", [])
         if not name or not price or len(brandcode) != 1 or not re.fullmatch(r"[0-9]+", brandcode[0]):
             raise ValueError("Invalid product name, price or link")
         image = cells[1].select_one("img[src]")
         return SearchItem(
-            game=self.game, name=name, card_number=self.card_number(series, number),
+            game=self.game, name=name, card_number=number,
             price=int(price[1].replace(",", "")), currency="JPY", rarity=rarity,
             product_url=f"{self.base_url}/shopdetail/{brandcode[0]}",
             image_url=urljoin(url, image["src"]) if image and image["src"] else None,
             stock_status=StockStatus.UNKNOWN, stock_quantity=None, stock_text="",
         )
 
-    def card_number(self, series: str, number: str) -> str:
+    @staticmethod
+    def card_number(series: str, number: str) -> str:
         raise NotImplementedError
 
 
@@ -126,7 +131,8 @@ class CardMaxWSSearcher(CardMaxSearcher):
             return keyword.replace("/", " ")
         return keyword
 
-    def card_number(self, series: str, number: str) -> str:
+    @staticmethod
+    def card_number(series: str, number: str) -> str:
         if "/" in number or number.startswith(series + "-"):
             return number
         return f"{series}/{number}"
@@ -136,5 +142,6 @@ class CardMaxSEVSearcher(CardMaxSearcher):
     game = Game.SEV
     fixed_params = {"category": CARDMAX_CATEGORIES[game]}
 
-    def card_number(self, series: str, number: str) -> str:
+    @staticmethod
+    def card_number(series: str, number: str) -> str:
         return number if "-" in number else f"{series}-{number}"

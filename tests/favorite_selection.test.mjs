@@ -5,10 +5,8 @@ const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const noticesModule = asModule(await readFile(new URL('shared/notices.js', base), 'utf8'));
 const favoritesSource = (await readFile(new URL('collection/favorites.js', base), 'utf8')).replace("'../shared/notices.js'", JSON.stringify(noticesModule));
-const sourcesModule = asModule(await readFile(new URL('catalog/search-sources.js', base), 'utf8'));
 const source = (await readFile(new URL('collection/favorite-selection.js', base), 'utf8'))
-  .replace("'./favorites.js'", JSON.stringify(asModule(favoritesSource)))
-  .replace("'../catalog/search-sources.js'", JSON.stringify(sourcesModule));
+  .replace("'./favorites.js'", JSON.stringify(asModule(favoritesSource)));
 const {createSelection} = await import(asModule(source));
 const {cardKey} = await import(asModule(favoritesSource));
 
@@ -101,13 +99,17 @@ test('bulk subscribe, unsubscribe and refresh keep the selection; refresh is pac
   assert.equal(pauses, 2);
 });
 
-test('bulk subscribe passes over other merchants without counting them as failures', async () => {
+test('bulk subscribe and unsubscribe include selected Hobby Station and Card Max offers', async () => {
   const {favorites, subscriptions, records, calls} = models();
+  records.push({id: 'hs', item: {game: 'ws', product_url: 'https://www.hobbystation-single.jp/ws/product/detail/1', name: 'hs', source: 'hobbystation'}, group_id: null});
   records.push({id: 'cm', item: {game: 'sev', product_url: 'https://www.cardmax.jp/shopdetail/1', name: 'cm', source: 'cardmax'}, group_id: null});
-  subscriptions.add = async item => { calls.push(['subscribe', item.name]); return true; };
+  subscriptions.add = async item => { calls.push(['subscribe', item.name]); return item.name !== 'cm'; };
   const selection = createSelection(favorites, subscriptions, () => {});
   selection.setActive(true); selection.setAll(records.map(row => row.item), true);
   await selection.subscribe();
-  assert.deepEqual(calls.map(call => call.join(' ')), ['subscribe a', 'subscribe b', 'subscribe c']);
-  assert.equal(selection.state.failed, 0); assert.equal(selection.state.done, 4);
+  assert.equal(selection.state.failed, 1); assert.equal(selection.state.done, 5);
+  await selection.unsubscribe();
+  assert.deepEqual(calls.map(call => call.join(' ')), ['subscribe a', 'subscribe b', 'subscribe c', 'subscribe hs', 'subscribe cm',
+    'unsubscribe a', 'unsubscribe b', 'unsubscribe c', 'unsubscribe hs', 'unsubscribe cm']);
+  assert.equal(selection.state.failed, 0); assert.equal(selection.state.done, 5);
 });

@@ -1,10 +1,10 @@
-"""Account-scoped subscriptions to normal-condition YuYu-Tei offers."""
+"""Account-scoped subscriptions to merchant product offers."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..auth.dependencies import current_user, write_guard
 from ..catalog.errors import ProductSourceError
-from ..catalog.identity import normalize_product_url
+from ..catalog.identity import favorite_source, normalize_favorite_url
 from ..catalog.models import Game
 from . import service
 
@@ -23,7 +23,7 @@ class SubscribeInput(BaseModel):
 
     @model_validator(mode='after')
     def product_location(self):
-        self.product_url = normalize_product_url(self.game, self.product_url)
+        self.product_url = normalize_favorite_url(favorite_source(self.product_url), self.game, self.product_url)
         return self
 
 

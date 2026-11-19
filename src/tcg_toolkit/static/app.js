@@ -286,8 +286,7 @@ function subscriptionToggle(item) {
 // Refresh and subscribe act on saved cards, so they only appear on the favorites page.
 function favoritePageActions(item) {
   if (!favorites.find(item) || location.hash !== '#favorites') return [];
-  // Subscriptions only watch YuYu-Tei products.
-  return [favoriteRefresh(item), ...(favorites.state.groups.length ? [favoriteMove(item)] : []), ...(isYuyutei(item) ? [subscriptionToggle(item)] : [])];
+  return [favoriteRefresh(item), ...(favorites.state.groups.length ? [favoriteMove(item)] : []), subscriptionToggle(item)];
 }
 function favoriteMove(item) {
   const busy = favorites.state.busy.has(cardKey(item));

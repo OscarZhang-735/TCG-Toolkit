@@ -71,7 +71,7 @@ def _change_row(label, old, new, improved):
     if old == new:
         value = f'<span style="color:{TEXT}">{escape(new)}</span>'
     else:
-        color = BETTER if improved else WORSE
+        color = TEXT if improved is None else BETTER if improved else WORSE
         value = (f'<span style="color:{MUTED};text-decoration:line-through">{escape(old)}</span>'
                  f'<span style="color:{MUTED}">&nbsp;→&nbsp;</span><strong style="color:{color}">{escape(new)}</strong>')
     return (f'<tr><td style="padding:4px 12px 4px 0;font-size:13px;color:{MUTED};white-space:nowrap">{label}</td>'
@@ -86,6 +86,13 @@ def digest_subject(run_date):
     return f'TCG Toolkit 卡牌更新 · Card updates · {run_date}'
 
 
+def stock_label(item):
+    quantity = item['stock_quantity']
+    if quantity is not None:
+        return f'{quantity:,}'
+    return '有货 In stock' if item['stock_status'] == 'in_stock' else '缺货 Out of stock'
+
+
 def digest_html(run_date, changes):
     zh_title, en_title = digest_titles(len(changes))
     checked = datetime.fromtimestamp(max(change['checked_at'] for change in changes)).astimezone().strftime('%Y-%m-%d %H:%M')
@@ -95,16 +102,23 @@ def digest_html(run_date, changes):
         rarity = after.get('rarity')
         badge = (f'<span style="display:inline-block;margin-right:6px;padding:0 6px;border:1px solid {BORDER};border-radius:4px;'
                  f'background:{SURFACE};font-size:11px;font-weight:bold;line-height:18px;color:{TEXT}">{escape(rarity)}</span>') if rarity else ''
-        # Stock is a bare count so the comparison reads the same in both languages.
-        old_stock, new_stock = before['stock_quantity'] or 0, after['stock_quantity'] or 0
+        old_stock, new_stock = before['stock_quantity'], after['stock_quantity']
+        improved = None
+        if old_stock is not None and new_stock is not None:
+            improved = new_stock > old_stock
+        elif before['stock_status'] != after['stock_status']:
+            improved = after['stock_status'] == 'in_stock'
+        merchant = {'www.hobbystation-single.jp': '在 Hobby Station 查看 View on Hobby Station',
+                    'www.cardmax.jp': '在 Card Max 查看 View on Card Max'}.get(
+                        urlsplit(after['product_url']).hostname, '在游游亭查看 View on YuYu-Tei')
         rows = (_change_row('价格 Price', f"{before['price']:,} JPY", f"{after['price']:,} JPY", after['price'] < before['price'])
-                + _change_row('库存 Stock', f'{old_stock:,}', f'{new_stock:,}', new_stock > old_stock))
+                + _change_row('库存 Stock', stock_label(before), stock_label(after), improved))
         divider = f'border-top:1px solid {BORDER};' if index else ''
         cards.append(f'''<tr><td style="{divider}padding:16px 0">
 <a href="{escape(after['product_url'], quote=True)}" style="font-size:15px;font-weight:bold;line-height:1.5;color:{TEXT};text-decoration:none;overflow-wrap:anywhere">{escape(after['name'])}</a>
 <div style="margin:4px 0 8px;font-size:12px;line-height:20px;color:{MUTED}">{badge}{escape(after['card_number'])}</div>
 <table role="presentation" cellspacing="0" cellpadding="0">{rows}</table>
-<a href="{escape(after['product_url'], quote=True)}" style="display:inline-block;margin-top:8px;font-size:13px;color:{TEXT};text-decoration:underline">在游游亭查看 View on YuYu-Tei</a>
+<a href="{escape(after['product_url'], quote=True)}" style="display:inline-block;margin-top:8px;font-size:13px;color:{TEXT};text-decoration:underline">{merchant}</a>
 </td></tr>''')
     content = f'''<h1 style="margin:0;font-size:20px;line-height:1.4">{zh_title}</h1>{_en(en_title, 14)}
 <p style="margin:12px 0 8px;font-size:14px;line-height:1.7;color:{MUTED}">检查时间 Checked at：{escape(checked)}</p>
