@@ -11,7 +11,8 @@ export function hobbystationErrorKey(error) {
     hobbystation_timeout: 'hs_cart_timeout'})[error?.detail?.type] ?? 'hs_cart_failed';
 }
 
-export function bindHobbystationSettings(client) {
+// onCart receives the cart read while verifying, or null when the saved values changed without one.
+export function bindHobbystationSettings(client, {onCart = () => {}} = {}) {
   // expanded: null follows the state (open until verified); true/false is the user's choice.
   let statusKey = '', parameters = {}, verifying = false, verified = false, rejected = false, expanded = null, run = 0;
   function render() {
@@ -46,11 +47,13 @@ export function bindHobbystationSettings(client) {
       const cart = await client.query();
       if (current !== run) return;
       verified = true; expanded = null; statusKey = 'hs_cart_verified';
+      onCart(cart);
       parameters = {quantity: (cart.total_quantity ?? 0).toLocaleString(getLanguage())};
     } catch (error) {
       if (current !== run || error?.name === 'AbortError') return;
       statusKey = hobbystationErrorKey(error); expanded = true;
       rejected = statusKey === 'hs_cart_credentials_rejected';
+      onCart(null);
     } finally {
       if (current === run) { verifying = false; render(); }
     }
@@ -72,7 +75,7 @@ export function bindHobbystationSettings(client) {
   $('hs-cart-toggle').addEventListener('click', () => { expanded = $('hs-cart-body').hidden; render(); });
   $('hs-cart-clear').addEventListener('click', () => {
     try { client.clearCredentials(); } catch { /* signed out */ }
-    reset(); statusKey = 'cart_cleared'; render();
+    reset(); statusKey = 'cart_cleared'; render(); onCart(null);
   });
   // Signing out or switching account must not leave the previous status behind.
   function reset() {

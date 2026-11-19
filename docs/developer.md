@@ -127,7 +127,7 @@ Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经�
 
 Card Max 使用服务器直连，例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014&stock=true`。默认只读取搜索列表，列表包含售罄单卡（如实测的 `GBF/S134-132S`），库存返回 `unknown` 和 `null`。可用 `stock=true`、CLI 的 `--stock` 或 Python 搜索器构造参数 `stock=True` 开启详情查询，每条单卡结果额外请求一次详情页。`残りあとN個` 返回具体数量，`売り切れ` 返回 `out_of_stock` 和 0。WS 可输入完整编号，如 `AMG/W121-019SP`。Card Max 的 WSR 分类目前仅有盒装商品。
 
-网页搜索可多选来源，前端 `static/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。各来源的结果都可直接收藏，收藏页可按来源筛选。WebUI 的购物车和订阅仅支持游游亭商品，其他来源不显示对应操作，批量订阅时跳过。Hobby Station 收藏保存原站图片地址，而非本服务的图片转发地址。新增来源时需同步更新该文件。
+网页搜索可多选来源，前端 `static/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。各来源的结果都可直接收藏，收藏页可按来源筛选。WebUI 的订阅仅支持游游亭商品，其他来源不显示订阅操作，批量订阅时跳过。购物车数量控件支持游游亭和 Hobby Station 商品，Card Max 商品显示“—”。Hobby Station 收藏保存原站图片地址，而非本服务的图片转发地址。新增来源时需同步更新该文件。
 
 命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee` 或 `tcg-search "BP22-014" --source cardmax --game sev`，同样支持 `--page` 和 `--all`。
 
@@ -807,7 +807,11 @@ Content-Type: application/json
 }
 ```
 
-商品行同时返回字符串 `product_id` 和 `product_class_id`。修改或删除时使用后者。写接口成功时返回已核对的 `cart`。数量调整中途失败时，`last_verified_quantity` 表示最后一次已确认的数量，重新查询可获得当前状态。凭据限于本次请求；幂等记录保存业务参数摘要和结果。WebUI 购物车仍仅接入游游亭。
+商品行同时返回字符串 `product_id` 和 `product_class_id`。修改或删除时使用后者。写接口成功时返回已核对的 `cart`。数量调整中途失败时，`last_verified_quantity` 表示最后一次已确认的数量，重新查询可获得当前状态。凭据限于本次请求；幂等记录保存业务参数摘要和结果。
+
+加购响应中的 `done: false` 如果附有库存不足或单次限购提示，接口返回 HTTP 409 和 `hobbystation_stock_exceeded`。商品旁的气泡按 `detail.reason` 显示原因：`stock` 表示购买数量超过可用库存，`purchase_limit` 表示超过单次限购上限。旧响应缺少原因时显示“已达到库存或购买上限”。其他业务拒绝仍返回 `hobbystation_cart_rejected`。
+
+WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相同的数量控件。`static/hs-cart.js` 把该接口适配到 `cart.js` 的购物车状态：商品键为 `gid: 'hs'` 加商品 ID，购物车行的 `type` 为 `product_class_id`。加购回复自带核对后的购物车，因此不再重新查询。凭据错误、访问检查等账户级问题以页面提示显示。购物车页和导航计数仍只统计游游亭。
 
 用户中心的“Hobby Station 登录凭据”面板要求同时填写 `eccube` 和 `eccube_bot_check`，并附打码的 DevTools 截图（`static/hs-help-cookies.webp`）。前端 `static/hobbystation-client.js` 把两个值按当前账号存入本标签页的 `sessionStorage`（`tcg.hobbystation.credentials`），切换账号、退出登录或关闭标签页即清除；`static/hs-cart-settings.js` 保存后调用 `/query` 验证，页面重新加载时会再验证一次。
 

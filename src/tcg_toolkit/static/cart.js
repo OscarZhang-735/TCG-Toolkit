@@ -45,7 +45,10 @@ export function planQuantity(range, desired) {
   return {value: desired, note: null};
 }
 
-export function createCart(client, onView = () => {}, newKey = randomKey) {
+// options adapt the same state machine to another shop (see hs-cart.js): its error messages,
+// its missing-credentials error, and whether an add reply carries the verified cart.
+export function createCart(client, onView = () => {}, newKey = randomKey,
+  {errorKey = cartErrorKey, missingError = 'yuyutei_credentials_missing', addReturnsCart = false} = {}) {
   // Views redraw on every change; a failing view must never leave state (e.g. busy) half-updated.
   const onChange = () => { try { onView(); } catch (error) { console.error(error); } };
   // generation: signed-in user; reads: latest cart query (older replies are dropped).
@@ -82,7 +85,7 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
       const cart = await client.query();
       if (current === generation && read === reads) apply(cart);
     } catch (error) {
-      if (current === generation && read === reads && error.name !== 'AbortError') state.error = cartErrorKey(error);
+      if (current === generation && read === reads && error.name !== 'AbortError') state.error = errorKey(error);
     }
     if (current === generation && read === reads) { state.loading = false; onChange(); }
   }
@@ -100,9 +103,9 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
       reads++; state.loading = false; state.error = ''; state.notice = '';
     } catch (error) {
       if (current !== generation || error.name === 'AbortError') return;
-      report(key, cartErrorKey(error));
+      report(key, errorKey(error));
       // The outcome may differ from what we believe: read the real cart again.
-      resync = error.status !== 422 && error.message !== 'yuyutei_credentials_missing';
+      resync = error.status !== 422 && error.message !== missingError;
     } finally {
       if (current === generation) { state.busy.delete(key); onChange(); }
     }
@@ -136,6 +139,7 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
       error.detail = {type: 'cart_limit_reached'};
       throw error;
     }
+    if (addReturnsCart && result.cart) { apply(result.cart); return; }
     // Reflect the verified count locally instead of re-reading the whole cart.
     const rows = rowsFor(target), normal = rows.find(row => row.type === 'normal');
     // Only reserved rows: which row grew is unknown, so read the cart again.
@@ -183,7 +187,12 @@ export function createCart(client, onView = () => {}, newKey = randomKey) {
       apply(result.cart);
     });
   }
-  return {state, refresh, clear, quantity, dismissNotice() { state.notice = ''; onChange(); }, increase, decrease, remove, setTo, range,
+  // A cart read elsewhere (e.g. while verifying credentials) replaces the current one.
+  function load(cart) {
+    reads++; state.configured = configured(); state.loading = false; state.error = '';
+    apply(cart); onChange();
+  }
+  return {state, refresh, clear, load, quantity, dismissNotice() { state.notice = ''; onChange(); }, increase, decrease, remove, setTo, range,
     isBusy: target => state.busy.has(productKey(target)),
     // When this card's bubble started; undefined once the bubble is over.
     bubbleStarted: target => messages.started(productKey(target)),

@@ -35,12 +35,12 @@ export function createHobbystationClient({storage = browserStorage(), request = 
     generation++; userId = null; token = null;
     if (clear) erase();
   }
-  async function call(path, method, payload = {}) {
+  async function call(path, method, payload = {}, headers = {}) {
     requireAccount();
     const value = stored();
     if (value?.userId !== userId) { erase(); throw new Error('hobbystation_credentials_missing'); }
     const started = generation;
-    const response = await send(path, {method, cache: 'no-store', headers: {'Content-Type': 'application/json'},
+    const response = await send(path, {method, cache: 'no-store', headers: {'Content-Type': 'application/json', ...headers},
       body: JSON.stringify({...payload, credentials: value.credentials})});
     if (started !== generation) throw new DOMException('Stale session', 'AbortError');
     if (response.status === 401) { deactivate(); throw new Error('authentication_required'); }
@@ -72,6 +72,13 @@ export function createHobbystationClient({storage = browserStorage(), request = 
       } catch { erase(); throw new Error('credential_storage_unavailable'); }
     },
     query() { return call('/api/hobbystation/cart/query', 'POST'); },
+    add({product_url, counter = 1}, idempotencyKey) {
+      if (typeof idempotencyKey !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(idempotencyKey))
+        throw new Error('idempotency_key_required');
+      return call('/api/hobbystation/cart', 'POST', {product_url, counter}, {'Idempotency-Key': idempotencyKey});
+    },
+    setQuantity(product_class_id, quantity) { return call('/api/hobbystation/cart/quantity', 'PUT', {product_class_id, quantity}); },
+    remove(product_class_id) { return call('/api/hobbystation/cart', 'DELETE', {product_class_id}); },
   };
 }
 

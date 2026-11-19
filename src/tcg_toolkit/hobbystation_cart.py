@@ -183,6 +183,15 @@ def add_product(body):
             except ValueError:
                 raise error() from None
             if isinstance(result, dict) and result.get('done') is False:
+                messages = result.get('messages')
+                if isinstance(messages, list):
+                    for message in messages:
+                        if not isinstance(message, str):
+                            continue
+                        if '販売制限数を超える購入はできません' in message:
+                            raise error('stock_exceeded', 409, reason='purchase_limit')
+                        if '在庫が不足しております' in message:
+                            raise error('stock_exceeded', 409, reason='stock')
                 raise error('cart_rejected', 409)
             if not isinstance(result, dict) or result.get('done') is not True:
                 raise error()

@@ -62,6 +62,8 @@ def shop(client, monkeypatch):
             assert data == {'_token': ['form-token'], 'quantity': ['2'],
                             'product_id': ['305273'], 'ProductClass': ['304858']}
             assert req.headers['X-Requested-With'] == 'XMLHttpRequest'
+            if 'add_reply' in state:
+                return httpx.Response(200, json=state['add_reply'])
             state['quantity'] += 2
             return httpx.Response(200, json={'done': True})
         assert data == {'_method': ['post' if path == '/cart/clear' else 'put'], '_token': ['row-token']}
@@ -106,6 +108,21 @@ def test_add_query_quantity_remove_and_clear(client, shop):
     assert client.request('DELETE', API + '/clear', json=creds).json()['removed_quantity'] == 3
     assert client.request('DELETE', API + '/clear', json=creds).json()['removed_quantity'] == 0
     assert shop['writes'].count('/cart/clear') == 1
+
+
+@pytest.mark.parametrize(('message', 'kind', 'reason'), [
+    ('「迷子のバンド 椎名立希(SR)」は販売制限しております。一度に販売制限数を超える購入はできません。', 'stock_exceeded', 'purchase_limit'),
+    ('「カード」の在庫が不足しております。一度に在庫数を超える購入はできません。', 'stock_exceeded', 'stock'),
+    ('「カード」の在庫が不足しております。該当商品をカートから削除しました。', 'stock_exceeded', 'stock'),
+    ('商品を購入できません。', 'cart_rejected', None),
+])
+def test_add_rejection_uses_store_message(client, shop, message, kind, reason):
+    shop.update(quantity=4, add_reply={'done': False, 'messages': [message]})
+    result = client.post(API, json={**BODY, 'product_url': URL, 'counter': 2})
+    assert result.status_code == 409
+    assert result.json()['detail']['type'] == 'hobbystation_' + kind
+    assert result.json()['detail'].get('reason') == reason
+    assert shop['writes'] == ['/products/add_cart/305273']
 
 
 def test_secrets_origin_and_upstream_scope(client, shop):
