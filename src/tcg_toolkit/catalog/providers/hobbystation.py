@@ -1,17 +1,14 @@
 """Hobby Station keyword search."""
 import re
 import unicodedata
-from dataclasses import replace
 from urllib.parse import parse_qs, urljoin, urlsplit
 
-import httpx
 from bs4 import Tag
 
 from ...external.search_proxy import SearchProxyClient
 from ..identity import HOBBY_GAME_DIRS
 from ..models import Game, SearchItem, SearchSource, StockStatus
 from ..pagination import PagedSearcher, _text
-from .official import LYCEE_SEARCH, parse_lycee
 
 
 class HobbyStationClient(SearchProxyClient):
@@ -94,22 +91,6 @@ class HobbyStationSearcher(PagedSearcher):
 class HobbyStationLyceeSearcher(HobbyStationSearcher):
     game = Game.LYCEE
     search_path = f"/{HOBBY_GAME_DIRS[game]}/product/list"
-
-    def search_page(self, keyword: str, *, page: int = 1):
-        result = super().search_page(keyword, page=page)
-        if all(item.rarity for item in result.items):
-            return result
-        # Some printings share a shop title. Match the full official number, including its suffix.
-        try:
-            response = httpx.get(LYCEE_SEARCH, params={'word': result.keyword}, follow_redirects=True,
-                                 timeout=min(self.timeout, 5))
-            response.raise_for_status()
-            rarities = {card['card_number']: card['rarity'] for card in parse_lycee(response.text)}
-        except (httpx.HTTPError, ValueError):
-            return result
-        return replace(result, items=[replace(item, rarity=item.rarity or rarities.get(item.card_number))
-                                      for item in result.items])
-
 
 class HobbyStationWSSearcher(HobbyStationSearcher):
     game = Game.WS

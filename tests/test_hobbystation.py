@@ -29,7 +29,7 @@ def test_hobby_rarity_matches_exact_lycee_printing(monkeypatch):
     official = (official.replace('LO-1606-S', 'LO-4899-K').replace('LO-1606', 'LO-4899')
                 .replace('>SP<', '>KR<').replace('>SR<', '>R<'))
     def lookup(url, **kwargs):
-        assert kwargs['params'] == {'word': 'LO-4899'}
+        assert kwargs['params']['word'] in ('LO-4899', 'LO-4899-K')
         return httpx.Response(200, text=official, request=httpx.Request('GET', url))
     monkeypatch.setattr(httpx, 'get', lookup)
     with httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text=fixture('')))) as client:

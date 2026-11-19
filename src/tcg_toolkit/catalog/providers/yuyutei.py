@@ -74,7 +74,7 @@ class BaseSearcher(PagedSearcher):
     def parse_rarity(self, card: Tag, number: str) -> str | None:
         group = card.find_parent(class_='cards-list')
         label = _text(group.select_one('h3 span')) if group else ''
-        if label:
+        if label and label not in ('-', '－', '—'):
             return label
         image = card.select_one('.product-img img')
         alt = str(image.get('alt', '')).strip() if image else ''

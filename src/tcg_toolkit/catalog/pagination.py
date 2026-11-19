@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup, Tag
 from ..external.search_proxy import SearchProxyClient
 from .errors import SearchPaginationError, SearchParseError, SearchRequestError
 from .models import Game, SearchItem, SearchPage, SearchSource
+from .providers.rarity import fill_rarities
 
 
 def _text(node: Tag | None) -> str:
@@ -60,7 +61,8 @@ class PagedSearcher:
             params[self.page_param] = str(page)
         url = str(httpx.URL(self.base_url + self.search_path, params=params))
         html = self.fetch_html(url, keyword=keyword, page=page)
-        return self.parse_page(html, keyword=keyword, page=page, url=url)
+        result = self.parse_page(html, keyword=keyword, page=page, url=url)
+        return fill_rarities(result, self.game, self.timeout)
 
     def fetch_html(self, url: str, *, keyword: str, page: int) -> str:
         try:

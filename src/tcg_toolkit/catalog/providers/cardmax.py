@@ -92,8 +92,10 @@ class CardMaxSearcher(PagedSearcher):
             raise ValueError("Missing card name or number")
         series = (fields[1] or fields[2]).strip()
         name = fields[3].strip()
-        rarity_match = re.search(r"\(([^()]+)\)$", name)
-        rarity = _text(cells[3]) or (rarity_match[1] if rarity_match else None)
+        rarity_match = re.search(r"[（(]([A-Za-z0-9+★☆/-]+)[)）]$", name)
+        rarity = _text(cells[3])
+        if rarity in ('', '-', '－', '—'):
+            rarity = rarity_match[1] if rarity_match else None
         if rarity_match:
             name = name[:rarity_match.start()].strip()
         number = fields[4].strip().replace("ー", "-")
