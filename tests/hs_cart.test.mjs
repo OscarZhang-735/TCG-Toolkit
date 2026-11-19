@@ -9,7 +9,8 @@ const noticesModule = asModule(await read('notices.js'));
 const identityModule = asModule(await read('product-identity.js'));
 const cartModule = asModule((await read('cart.js'))
   .replace("'./notices.js'", JSON.stringify(noticesModule)).replace("'./product-identity.js'", JSON.stringify(identityModule)));
-const {hobbystationTarget, hobbystationCartErrorKey, createHobbystationCart} = await import(asModule((await read('hs-cart.js'))
+const {hobbystationTarget, hobbystationCartErrorKey, createHobbystationCart, hobbystationCartRows} = await import(asModule((await read('hs-cart.js'))
+  .replace("'./storefront-cart.js'", JSON.stringify(asModule(await read('storefront-cart.js'))))
   .replace("'./cart.js'", JSON.stringify(cartModule))));
 const {messageTier} = await import(noticesModule);
 
@@ -92,7 +93,6 @@ test('Hobby Station errors map to their own messages; credential problems are pa
 
 test('load replaces the cart with one read elsewhere', async () => {
   const cart = createHobbystationCart(fakeClient(), () => {});
-  const {hobbystationCartRows} = await import(asModule((await read('hs-cart.js')).replace("'./cart.js'", JSON.stringify(cartModule))));
   cart.load(hobbystationCartRows(cartOf([hsRow(4)])));
   assert.equal(cart.state.configured, true);
   assert.equal(cart.quantity(hobbystationTarget({product_url: URL_LO})), 4);

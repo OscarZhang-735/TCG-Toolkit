@@ -127,7 +127,7 @@ Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经�
 
 Card Max 使用服务器直连，例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014&stock=true`。默认只读取搜索列表，列表包含售罄单卡（如实测的 `GBF/S134-132S`），库存返回 `unknown` 和 `null`。可用 `stock=true`、CLI 的 `--stock` 或 Python 搜索器构造参数 `stock=True` 开启详情查询，每条单卡结果额外请求一次详情页。`残りあとN個` 返回具体数量，`売り切れ` 返回 `out_of_stock` 和 0。WS 可输入完整编号，如 `AMG/W121-019SP`。Card Max 的 WSR 分类目前仅有盒装商品。
 
-网页搜索可多选来源，前端 `static/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。各来源的结果都可直接收藏，收藏页可按来源筛选。WebUI 的订阅仅支持游游亭商品，其他来源不显示订阅操作，批量订阅时跳过。购物车数量控件支持游游亭和 Hobby Station 商品，Card Max 商品显示“—”。Hobby Station 收藏保存原站图片地址，而非本服务的图片转发地址。新增来源时需同步更新该文件。
+网页搜索可多选来源，前端 `static/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。各来源的结果都可直接收藏，收藏页可按来源筛选。WebUI 的订阅仅支持游游亭商品，其他来源不显示订阅操作，批量订阅时跳过。购物车数量控件支持游游亭、Hobby Station 和 Card Max，按来源操作相应购物车。Hobby Station 收藏保存原站图片地址，而非本服务的图片转发地址。新增来源时需同步更新该文件。
 
 命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee` 或 `tcg-search "BP22-014" --source cardmax --game sev`，同样支持 `--page` 和 `--all`。
 
@@ -814,6 +814,22 @@ Content-Type: application/json
 WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相同的数量控件。`static/hs-cart.js` 把该接口适配到 `cart.js` 的购物车状态：商品键为 `gid: 'hs'` 加商品 ID，购物车行的 `type` 为 `product_class_id`。加购回复自带核对后的购物车，因此不再重新查询。凭据错误、访问检查等账户级问题以页面提示显示。购物车页和导航计数仍只统计游游亭。
 
 用户中心的“Hobby Station 登录凭据”面板要求同时填写 `eccube` 和 `eccube_bot_check`，并附打码的 DevTools 截图（`static/hs-help-cookies.webp`）。前端 `static/hobbystation-client.js` 把两个值按当前账号存入本标签页的 `sessionStorage`（`tcg.hobbystation.credentials`），切换账号、退出登录或关闭标签页即清除；`static/hs-cart-settings.js` 保存后调用 `/query` 验证，页面重新加载时会再验证一次。
+
+## Card Max 销售购物车
+
+在用户中心填写 `tempid` 和 `login_id` 的值，再分别填写会员 Cookie 的名称（如 `123_key`）和值。保存并验证后，即可在搜索结果和收藏中使用加减按钮或输入目标数量。凭据保存在当前标签页的 sessionStorage，与本站登录账户绑定。独立购物车页仍展示游游亭。
+
+后端直连 `www.cardmax.jp`。所有接口要求本站 Bearer 登录、可信 Origin 和 JSON 请求体。每次请求都提交 `credentials`，其中 `tempid` 和 `login_id` 填 Cookie 值，`member_key` 填完整的 `<会员编号>_key=<值>`。后端仅发送这三项 Cookie，并核对购物车页的会话标识和会员登录状态。
+
+| 方法与路径 | 业务字段 | 返回结果 |
+| --- | --- | --- |
+| `POST /api/cardmax/cart/query` | 无 | 商品行、数量、日元小计及解析状态 |
+| `POST /api/cardmax/cart` | `product_url`、可选 `counter`（1–99） | 核对后的加购增量和购物车；支持 `Idempotency-Key` |
+| `PUT /api/cardmax/cart/quantity` | `brandcode`、`quantity`（0–99） | 目标数量及最新购物车，设为 0 移除该行 |
+| `DELETE /api/cardmax/cart` | `brandcode` | 移除指定行并回读核对 |
+| `DELETE /api/cardmax/cart/clear` | 无 | 清空并确认当前会话的购物车 |
+
+`brandcode` 是保留前导零的字符串，可从查询结果读取。商品页和购物车使用 EUC-JP 表单，修改时提交该行最新的原数量和选项。购物车行价格是整行小计，后端按数量还原单价。对于需要另选规格的商品或同编号匹配多行的购物车，请在 Card Max 页面操作。写入后的数量与预期不符时返回 409 和实际数量。
 
 ## 卡牌订阅后端
 

@@ -1,3 +1,4 @@
+import {storefrontCartClient} from './storefront-cart.js';
 // Hobby Station sales cart behind the same state machine as the YuYu-Tei cart (cart.js).
 // A product is keyed like a YuYu-Tei one (gid 'hs', ver = product id) and each cart row's
 // type is its product_class_id, so the shared stepper, ranges and messages work unchanged.
@@ -36,16 +37,8 @@ export function hobbystationCartErrorKey(error) {
     ?? (detail?.outcome === 'unknown' ? 'cart_unverified' : 'cart_failed');
 }
 
-// The client calls of cart.js, translated to the Hobby Station API.
 export function hobbystationCartClient(client) {
-  const withRows = result => ({...result, cart: hobbystationCartRows(result.cart)});
-  return {
-    hasCredentials: () => client.hasCredentials(),
-    query: async () => hobbystationCartRows(await client.query()),
-    add: async ({product_url, counter}, key) => withRows(await client.add({product_url, counter}, key)),
-    setQuantity: async (row, quantity) => withRows(await client.setQuantity(row.type, quantity)),
-    remove: async row => withRows(await client.remove(row.type)),
-  };
+  return storefrontCartClient(client, hobbystationCartRows);
 }
 
 export function createHobbystationCart(client, onView, newKey) {

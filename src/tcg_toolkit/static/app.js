@@ -17,6 +17,8 @@ import {yuyuteiClient} from './yuyutei-client.js';
 import {createCart} from './cart.js';
 import {cartTarget} from './product-identity.js';
 import {bindCartSettings} from './cart-settings.js';
+import {cardmaxClient} from './cardmax-client.js';
+import {bindCardmaxSettings, createCardmaxCart, cardmaxCartRows, cardmaxTarget} from './cardmax-cart.js';
 import {hobbystationClient} from './hobbystation-client.js';
 import {bindHobbystationSettings} from './hs-cart-settings.js';
 import {createHobbystationCart, hobbystationCartRows, hobbystationTarget} from './hs-cart.js';
@@ -88,22 +90,27 @@ let cartPage = null;
 const cartStock = createCartStock(() => cartPage?.render());
 const productDetails = createProductDetails(() => cartPage?.render());
 const cart = createCart(yuyuteiClient, () => {render(); renderFavorites(); renderCartSummary(); cartPage?.render(); renderNotice();});
-// Hobby Station cart quantities for its search results and favorites; there is no cart page for it yet.
-const hsCart = createHobbystationCart(hobbystationClient, () => {render(); renderFavorites(); renderNotice();});
+// These storefronts share search and favorite controls; each has its own cart state.
+const renderShopCart = () => {render(); renderFavorites(); renderNotice();};
+const hsCart = createHobbystationCart(hobbystationClient, renderShopCart);
+const cmCart = createCardmaxCart(cardmaxClient, renderShopCart);
 // Account-level problems (credentials, notification email) would hit every card the same way,
 // so they appear once, here, until dismissed or the next successful request.
 function renderNotice() {
-  const notice = cart.state.notice || hsCart.state.notice || subscriptions.state.notice;
+  const notice = cart.state.notice || hsCart.state.notice || cmCart.state.notice || subscriptions.state.notice;
   $('page-notice').hidden = !notice || location.hash === '#account';
   $('page-notice-text').textContent = notice ? t(notice) : '';
 }
-const dismissNotice = () => { cart.dismissNotice(); hsCart.dismissNotice(); subscriptions.dismissNotice(); };
+const dismissNotice = () => { cart.dismissNotice(); hsCart.dismissNotice(); cmCart.dismissNotice(); subscriptions.dismissNotice(); };
 $('page-notice-close').addEventListener('click', dismissNotice);
 $('page-notice-action').addEventListener('click', dismissNotice);
 const cartSettings = bindCartSettings(yuyuteiClient, cart);
 const yuyuteiCart = cart;
 const hobbystationSettings = bindHobbystationSettings(hobbystationClient,
   {onCart: value => value ? hsCart.load(hobbystationCartRows(value)) : hsCart.clear({syncCredentials: true})});
+const cardmaxSettings = bindCardmaxSettings(cardmaxClient,
+  {onCart: value => value ? cmCart.load(cardmaxCartRows(value)) : cmCart.clear({syncCredentials: true})});
+const shopCarts = {hobbystation: [hsCart, hobbystationTarget], cardmax: [cmCart, cardmaxTarget], yuyutei: [yuyuteiCart, cartTarget]};
 function renderCartSummary() {
   const state = cart.state, box = $('cart-summary');
   const content = [icon('bi-cart3')];
@@ -124,9 +131,10 @@ function renderCartSummary() {
 $('cart-refresh').addEventListener('click', () => cart.refresh());
 cartPage = createCartPage({cart, stock: cartStock, details: productDetails, amountDisplay, gameLabel, cardLink, currentView: () => view});
 document.addEventListener('viewchange', () => cartPage.render());
-// +1 / −1 against the merchant's real cart (YuYu-Tei or Hobby Station); the count shown is what the shop reported.
+// The displayed quantity comes from the corresponding merchant's cart.
 function cartControls(item) {
-  const [cart, target] = item.source === 'hobbystation' ? [hsCart, hobbystationTarget(item)] : [yuyuteiCart, cartTarget(item)];
+  const [cart, getTarget] = shopCarts[item.source] ?? shopCarts.yuyutei;
+  const target = getTarget(item);
   if (!target || !cart.state.configured) { const box = el('div', 'cart-controls'); box.append(el('span', 'muted', '—')); return box; }
   const quantity = cart.quantity(target);
   const soldOut = item.stock_status === 'out_of_stock' || (item.stock_quantity != null && quantity >= item.stock_quantity);
@@ -553,7 +561,7 @@ function renderSourceTips() {
 }
 function refreshLanguage() {
   applyLanguage(document); $('language').value = getLanguage(); renderSourceTips();
-  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); renderNotice(); hobbystationSettings.render();
+  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); renderNotice(); hobbystationSettings.render(); cardmaxSettings.render();
 }
 $('language').addEventListener('change', () => {setLanguage($('language').value); refreshLanguage();});
 $('detail-cancel').addEventListener('click', () => $('detail-dialog').close());
@@ -563,7 +571,7 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); hobbystationSettings.reset(); hobbystationSettings.render(); hsCart.clear(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); hobbystationSettings.reset(); cardmaxSettings.reset(); hobbystationSettings.render(); cardmaxSettings.render(); hsCart.clear(); cmCart.clear(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
   userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;
@@ -579,9 +587,11 @@ export function activateUser(id, request, email = null) {
   proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); activateGraded(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
   refreshLanguage();
   // Credentials kept in this tab across a reload are re-checked once, like the YuYu-Tei cart.
-  let hobbystationSaved = false;
-  try { hobbystationSaved = hobbystationClient.hasCredentials(); } catch { /* not activated */ }
-  if (hobbystationSaved) hobbystationSettings.verify();
+  for (const [shop, settings] of [[hobbystationClient, hobbystationSettings], [cardmaxClient, cardmaxSettings]]) {
+    let saved = false;
+    try { saved = shop.hasCredentials(); } catch { /* not activated */ }
+    if (saved) settings.verify();
+  }
 }
 // The account page reports the effective address after loading or changing it.
 export function setNotificationEmail(email) {

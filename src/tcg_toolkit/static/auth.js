@@ -2,6 +2,7 @@ import {apiRequest, getToken, setToken, TOKEN_KEY} from './api.js';
 import {t, applyLanguage, setLanguage, getLanguage} from './i18n.js';
 import {createAuthenticatedRequest} from './auth-client.js';
 import {yuyuteiClient} from './yuyutei-client.js';
+import {cardmaxClient} from './cardmax-client.js';
 import {hobbystationClient} from './hobbystation-client.js';
 import {bindNavMenus, syncNavMenus} from './nav-menu.js';
 import {createEmailChallenge, authError} from './email-code.js';
@@ -164,7 +165,7 @@ function signedOut(message = '', clearToken = true) {
   forgotten = false;
   subscriptionSettingsUI.reset();
   authGeneration++; resetEmails();
-  yuyuteiClient.deactivate({clear: clearToken}); hobbystationClient.deactivate({clear: clearToken});
+  yuyuteiClient.deactivate({clear: clearToken}); hobbystationClient.deactivate({clear: clearToken}); cardmaxClient.deactivate({clear: clearToken});
   if (clearToken) setToken(null);
   api.invalidate(); searchApp?.clearUser(); user = null;
   avatarBusy = false; avatarStatus = ''; avatarCropError = ''; $('avatar-crop-dialog').close();
@@ -179,7 +180,7 @@ async function signedIn(value) {
   searchApp ??= await import('./app.js');
   if (getToken() !== expectedToken) return;
   // The cart client must know the account before the search app reads its cart.
-  user = value; yuyuteiClient.activateUser(user.id, api.fetch); hobbystationClient.activateUser(user.id, api.fetch);
+  user = value; yuyuteiClient.activateUser(user.id, api.fetch); hobbystationClient.activateUser(user.id, api.fetch); cardmaxClient.activateUser(user.id, api.fetch);
   avatarBusy = false; avatarStatus = '';
   authGeneration++; resetEmails();
   searchApp.activateUser(user.id, api.fetch, user.email_verified ? user.email : null);
@@ -339,7 +340,7 @@ $('avatar-crop-form').addEventListener('submit', async event => {
 });
 $('logout').addEventListener('click', async () => {
   const token = getToken();
-  yuyuteiClient.clearCredentials(); hobbystationClient.clearCredentials();
+  yuyuteiClient.clearCredentials(); hobbystationClient.clearCredentials(); cardmaxClient.clearCredentials();
   $('logout').disabled = true;
   api.invalidate(); searchApp?.clearUser();
   try {
@@ -362,7 +363,7 @@ async function restoreSession() {
   const token = getToken();
   const destination = location.hash;
   signedOut('', false);
-  if (!token) { yuyuteiClient.deactivate(); hobbystationClient.deactivate(); $('auth-submit').disabled = false; return; }
+  if (!token) { yuyuteiClient.deactivate(); hobbystationClient.deactivate(); cardmaxClient.deactivate(); $('auth-submit').disabled = false; return; }
   $('auth-submit').disabled = true;
   try {
     const response = await apiRequest('/api/auth/me', {cache: 'no-store'});
@@ -376,7 +377,7 @@ async function restoreSession() {
 }
 window.addEventListener('storage', event => {
   if (event.key === TOKEN_KEY || event.key === null) {
-    yuyuteiClient.deactivate(); hobbystationClient.deactivate();
+    yuyuteiClient.deactivate(); hobbystationClient.deactivate(); cardmaxClient.deactivate();
     restoreSession();
   }
 });

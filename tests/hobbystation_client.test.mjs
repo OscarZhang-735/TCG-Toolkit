@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const clientURL = moduleURL((await readFile(new URL('hobbystation-client.js', base), 'utf8'))
+const sharedClient = moduleURL((await readFile(new URL('storefront-client.js', base), 'utf8'))
   .replace("import {apiRequest, getToken} from './api.js';", 'const apiRequest = null, getToken = () => null;'));
+const clientURL = moduleURL((await readFile(new URL('hobbystation-client.js', base), 'utf8'))
+  .replace("'./storefront-client.js'", JSON.stringify(sharedClient)));
+const sharedSettings = moduleURL((await readFile(new URL('storefront-settings.js', base), 'utf8'))
+  .replace("import {t, getLanguage} from './i18n.js';", "const t = key => key, getLanguage = () => 'en';"));
 const {createHobbystationClient, cookieValue, HOBBYSTATION_CREDENTIALS_KEY} = await import(clientURL);
 const {hobbystationErrorKey, bindHobbystationSettings} = await import(moduleURL(
   (await readFile(new URL('hs-cart-settings.js', base), 'utf8'))
-    .replace("import {t, getLanguage} from './i18n.js';", "const t = key => key, getLanguage = () => 'en';")
+    .replace("'./storefront-settings.js'", JSON.stringify(sharedSettings))
     .replace("'./hobbystation-client.js'", JSON.stringify(clientURL))));
 
 function memoryStorage() {

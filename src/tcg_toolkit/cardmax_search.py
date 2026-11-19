@@ -12,6 +12,22 @@ from .models import Game, SearchItem, SearchPage, SearchSource, StockStatus
 from .search_base import PagedSearcher, _text
 
 
+def read_stock(soup: BeautifulSoup) -> tuple[StockStatus, int | None, str]:
+    node = soup.select_one('span[class*="M_item-stock-"]')
+    label = _text(node)
+    count = re.fullmatch(r"残りあと\s*([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*個", label)
+    quantity = None
+    status = StockStatus.UNKNOWN
+    if node and "M_item-stock-soldout" in node.get("class", []):
+        status, quantity = StockStatus.OUT_OF_STOCK, 0
+    elif count:
+        quantity = int(count[1].replace(",", ""))
+        status = StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK
+    elif label in ("在庫あり", "在庫有り"):
+        status = StockStatus.IN_STOCK
+    return status, quantity, label
+
+
 class CardMaxSearcher(PagedSearcher):
     source = SearchSource.CARDMAX
     base_url = "https://www.cardmax.jp"
@@ -31,18 +47,7 @@ class CardMaxSearcher(PagedSearcher):
     def read_item_stock(self, item: SearchItem, *, keyword: str, page: int) -> SearchItem:
         html = self.fetch_html(item.product_url, keyword=keyword, page=page)
         soup = BeautifulSoup(html, "html.parser")
-        node = soup.select_one('span[class*="M_item-stock-"]')
-        label = _text(node)
-        count = re.fullmatch(r"残りあと\s*([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*個", label)
-        quantity = None
-        status = StockStatus.UNKNOWN
-        if node and "M_item-stock-soldout" in node.get("class", []):
-            status, quantity = StockStatus.OUT_OF_STOCK, 0
-        elif count:
-            quantity = int(count[1].replace(",", ""))
-            status = StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK
-        elif label in ("在庫あり", "在庫有り"):
-            status = StockStatus.IN_STOCK
+        status, quantity, label = read_stock(soup)
         return replace(item, stock_quantity=quantity, stock_status=status, stock_text=label)
 
     def response_html(self, response: httpx.Response) -> str:

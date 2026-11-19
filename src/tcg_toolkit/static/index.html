@@ -230,6 +230,29 @@
 </form>
 </div>
 </section>
+<section class="cart-settings" id="cm-cart-settings" aria-labelledby="cm-cart-title">
+<div class="cart-settings-head"><span class="account-icon"><img class="account-icon-image" src="./source-cardmax.png" alt="" aria-hidden="true"/></span><div class="cart-settings-text"><h3 id="cm-cart-title" data-i18n="cm_cart_title"></h3><p data-i18n="cm_cart_intro_lead"></p></div>
+<div class="cart-settings-meta"><span id="cm-cart-state" class="cart-state" role="status"><i id="cm-cart-state-icon" aria-hidden="true"></i><span id="cm-cart-state-label"></span></span><button type="button" id="cm-cart-toggle" class="icon-button cart-settings-toggle" aria-controls="cm-cart-body"><i id="cm-cart-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div></div>
+<div id="cm-cart-body" class="cart-settings-body">
+<form id="cm-cart-form" class="cart-settings-form" autocomplete="off" novalidate>
+<section class="cart-route recommended" aria-labelledby="cm-cart-route-title">
+<div class="cart-route-head"><h3 id="cm-cart-route-title" data-i18n="cm_cart_route"></h3></div>
+<p class="cart-route-desc" data-i18n="cm_cart_route_desc"></p>
+<div class="cart-settings-fields">
+<label class="field"><span>tempid</span><input id="cm-cart-tempid" type="password" autocomplete="off" spellcheck="false" maxlength="530" required/></label>
+<label class="field"><span>login_id</span><input id="cm-cart-login-id" type="password" autocomplete="off" spellcheck="false" maxlength="530" required/></label>
+<label class="field"><span data-i18n="cm_cart_member_name"></span><input id="cm-cart-member-name" type="text" autocomplete="off" spellcheck="false" maxlength="36" required data-i18n-placeholder="cm_cart_member_placeholder"/></label>
+<label class="field"><span data-i18n="cm_cart_member_value"></span><input id="cm-cart-member-value" type="password" autocomplete="off" spellcheck="false" maxlength="512" required/></label>
+</div>
+<div class="cart-route-actions"><button type="submit" id="cm-cart-save"><i class="bi bi-check-lg"></i><span data-i18n="cart_save"></span></button></div>
+</section>
+<div class="cart-settings-actions">
+<p id="cm-cart-status" class="cart-settings-status" role="status" aria-live="polite"></p>
+<button type="button" id="cm-cart-clear" class="secondary"><i class="bi bi-trash3"></i><span data-i18n="cart_clear"></span></button>
+</div>
+</form>
+</div>
+</section>
 </section>
 
 <footer class="account-footer">
