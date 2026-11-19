@@ -83,6 +83,29 @@ def test_hobbystation_search(game, path, monkeypatch):
                                  items=[], next_page=None, has_next=False)
 
 
+def test_hobbystation_result_image_loads(monkeypatch):
+    from pathlib import Path
+    from contextlib import contextmanager
+    html = (Path(__file__).parent / 'fixtures/hobbystation_lo.html').read_text(encoding='utf-8')
+    def get(self, url, *, timeout):
+        return httpx.Response(200, text=html, request=httpx.Request('GET', url))
+    monkeypatch.setattr('tcg_toolkit.external.search_proxy.SearchProxyClient.get', get)
+    result = client.get('/api/search', params={'source': 'hobbystation', 'game': 'lycee', 'keyword': 'LO-4899'})
+    image_url = result.json()['items'][0]['image_url']
+    assert image_url == 'http://testserver/api/images/hobbystation/lo/LO-LO-4899.jpg'
+    @contextmanager
+    def stream(self, method, url, *, headers):
+        assert url == 'https://www.hobbystation-single.jp/html/upload/save_image/lo/LO-LO-4899.jpg'
+        assert headers['Referer'] == 'https://www.hobbystation-single.jp/'
+        yield httpx.Response(200, headers={'content-type': 'image/jpeg'}, content=b'jpeg',
+                             request=httpx.Request(method, url))
+    monkeypatch.setattr(httpx.Client, 'stream', stream)
+    image = client.get(image_url)
+    assert image.status_code == 200 and image.content == b'jpeg'
+    assert image.headers['content-type'] == 'image/jpeg'
+    assert client.get('/api/images/hobbystation/lo/other.svg').status_code == 404
+
+
 @pytest.mark.parametrize('kind,status', [('request', 502), ('timeout', 504), ('parse', 502)])
 def test_errors(kind, status, monkeypatch):
     class Broken:

@@ -5,7 +5,7 @@ import {PRICE_MERCHANT, priceGame, rankOffers, pickOffer, fetchPriceMerchants, l
 import {createRateCache} from './currency.js';
 import {parseQuantity} from './quantity.js';
 import {t, getLanguage} from './i18n.js';
-import {rarityBadge, cardImage, markOrientation} from './card-view.js';
+import {rarityBadge, cardImage, cardImageUrl, markOrientation} from './card-view.js';
 import {numberButton} from './copy-number.js';
 import {setNavCount} from './nav-count.js';
 import {createCardTransfers} from './cards-transfer-ui.js';
@@ -563,7 +563,8 @@ function officialCard(item) {
     image.alt = item.name; image.loading = 'lazy'; image.decoding = 'async'; image.referrerPolicy = 'no-referrer';
     image.addEventListener('load', () => { fallback.hidden = true; markOrientation(image); });
     image.addEventListener('error', () => { image.hidden = true; fallback.hidden = false; }, {once: true});
-    image.src = item.image_url; frame.append(image);
+    const src = cardImageUrl(item.image_url);
+    if (src) { image.src = src; frame.append(image); }
   }
   if (chosen) frame.append(node('span', '', 'official-check bi bi-check-lg'));
   const meta = node('span', '', 'official-meta'), tags = node('span', '', 'official-tags');

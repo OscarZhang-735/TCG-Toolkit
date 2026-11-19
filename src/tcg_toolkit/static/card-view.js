@@ -4,6 +4,7 @@ import {t, getLanguage} from './i18n.js';
 import {largeImageUrl} from './logic.js';
 import {rarityTier, rarityDescription} from './rarities.js';
 import {bindCopy, relabel} from './copy-number.js';
+import {API_BASE_URL} from './api-config.js';
 const $ = id => document.getElementById(id);
 const el = (tag, className = '', text = '') => {const node = document.createElement(tag); node.className = className; node.textContent = text; return node;};
 // Some cards (e.g. WS Climax) are printed landscape. Flag them once loaded so CSS
@@ -20,6 +21,17 @@ export function rarityBadge(item) {
 const webUrl = value => {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : null; } catch { return null; }
 };
+// Older saved cards still contain the merchant's original image URL.
+export function cardImageUrl(value) {
+  const src = webUrl(value);
+  if (!src) return null;
+  const url = new URL(src);
+  const match = /^\/html\/upload\/save_image\/(lo|ws|wr)\/([^/]+\.(?:jpg|jpeg|png|webp|gif))$/i.exec(url.pathname);
+  if (url.origin === 'https://www.hobbystation-single.jp' && match) {
+    return new URL(`${API_BASE_URL}/api/images/hobbystation/${match[1]}/${match[2]}`, location.origin).href;
+  }
+  return src;
+}
 // `large` names the full-size image when it is not derivable from the thumbnail (graded
 // card originals); `fallback` replaces the "No image" placeholder text.
 // `tilt: false` keeps the picture still under the pointer (graded slabs).
@@ -28,7 +40,7 @@ export function cardImage(item, {noReferrer = false, large = null, fallback = nu
   const placeholder = el('span', 'image-fallback', fallback ?? t('no_image'));
   frame.append(placeholder);
   if (!item.image_url) return frame;
-  const src = webUrl(item.image_url);
+  const src = cardImageUrl(item.image_url);
   if (!src) return frame;
   const full = (large && webUrl(large)) || largeImageUrl(src);
   const image = document.createElement('img');
