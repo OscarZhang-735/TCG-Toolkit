@@ -1,6 +1,7 @@
 export function selectItems(items, filters) {
   const text = filters.text.trim().toLocaleLowerCase();
   const result = items.filter(item => filters.games.includes(item.game)
+    && (!filters.sources || filters.sources.includes(item.source ?? 'yuyutei'))
     && (!filters.stock || item.stock_status === filters.stock)
     && (!filters.rarity || (filters.rarity === '__unknown__' ? !item.rarity : item.rarity === filters.rarity))
     && (!filters.subscription || filters.isSubscribed(item) === (filters.subscription === 'subscribed'))

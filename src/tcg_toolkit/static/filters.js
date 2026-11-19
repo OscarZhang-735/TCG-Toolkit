@@ -3,16 +3,18 @@ import {selectItems, priceSteps, sliderIndex, sliderBound} from './logic.js';
 
 // Filter/sort panel shared by search results and favorites. Markup comes from
 // <template id="filter-panel">; each instance keeps its own state. Passing
-// isSubscribed adds the subscription filter (favorites only for now).
-export function createFilterPanel(placeholder, {onChange, formatPrice, isSubscribed = null}) {
+// isSubscribed adds the subscription filter and sources the merchant filter (favorites only for now).
+export function createFilterPanel(placeholder, {onChange, formatPrice, isSubscribed = null, sources = false}) {
   const root = document.getElementById('filter-panel').content.firstElementChild.cloneNode(true);
   placeholder.replaceWith(root);
   const part = role => root.querySelector(`[data-role="${role}"]`);
   const text = part('text'), stock = part('stock'), rarity = part('rarity'), sort = part('sort'), subscription = part('subscription');
   part('subscription-field').hidden = !isSubscribed;
   part('subscription-field').parentElement.classList.toggle('with-subscription', Boolean(isSubscribed));
+  part('source-chips').hidden = !sources;
   const lo = part('price-min'), hi = part('price-max'), fill = part('price-fill'), label = part('price-label'), range = part('price-range');
   const games = () => [...root.querySelectorAll('[data-role="game"]:checked')].map(input => input.value);
+  const chosenSources = () => [...root.querySelectorAll('[data-role="source"]:checked')].map(input => input.value);
   let steps = [], priceMin = null, priceMax = null;
 
   function syncSlider(items) {
@@ -40,13 +42,13 @@ export function createFilterPanel(placeholder, {onChange, formatPrice, isSubscri
   function apply(items) {
     syncRarity(items); syncSlider(items);
     return selectItems(items, {games: games(), stock: stock.value, rarity: rarity.value,
-      subscription: isSubscribed ? subscription.value : '', isSubscribed,
+      subscription: isSubscribed ? subscription.value : '', isSubscribed, sources: sources ? chosenSources() : null,
       min: priceMin, max: priceMax, text: text.value, sort: sort.value});
   }
   function reset() {
     text.value = ''; stock.value = ''; rarity.value = ''; subscription.value = ''; sort.value = 'original';
     priceMin = priceMax = null;
-    root.querySelectorAll('[data-role="game"]').forEach(input => { input.checked = true; });
+    root.querySelectorAll('[data-role="game"], [data-role="source"]').forEach(input => { input.checked = true; });
     onChange();
   }
 

@@ -45,7 +45,7 @@ function amountDisplay(amount) {
 const priceDisplay = item => amountDisplay(item.price);
 const money = price => formatPrice(price, displayCurrency, exchangeRate, getLanguage());
 const searchFilters = createFilterPanel($('search-filters'), {onChange: () => {limit = 100; render();}, formatPrice: money});
-const favoriteFilters = createFilterPanel($('favorites-filters'), {onChange: () => renderFavorites(), formatPrice: money,
+const favoriteFilters = createFilterPanel($('favorites-filters'), {onChange: () => renderFavorites(), formatPrice: money, sources: true,
   isSubscribed: item => Boolean(subscriptions.find(item))});
 function renderCurrencyStatus() { $('currency-status').hidden = !currencyStatus; $('currency-status').textContent = t('currency_fetched_at', {time: currencyStatus ? new Date(currencyStatus * 1000).toLocaleString(getLanguage()) : '—'}); }
 function renderCurrency() {
@@ -252,7 +252,8 @@ function subscriptionToggle(item) {
 // Refresh and subscribe act on saved cards, so they only appear on the favorites page.
 function favoritePageActions(item) {
   if (!favorites.find(item) || location.hash !== '#favorites') return [];
-  return [favoriteRefresh(item), ...(favorites.state.groups.length ? [favoriteMove(item)] : []), subscriptionToggle(item)];
+  // Subscriptions only watch YuYu-Tei products.
+  return [favoriteRefresh(item), ...(favorites.state.groups.length ? [favoriteMove(item)] : []), ...(isYuyutei(item) ? [subscriptionToggle(item)] : [])];
 }
 function favoriteMove(item) {
   const busy = favorites.state.busy.has(cardKey(item));
@@ -419,7 +420,7 @@ function tableRow(item, inFavorites = false) {
   cell(owned ? owned.toLocaleString(getLanguage()) : '—', `numeric owned-cell${owned ? '' : ' muted'}`);
   cell(cartControls(item), 'cart-col');
   if (inFavorites) cell(groupTag(item) ?? el('span', 'muted', '—'), 'group-col');
-  cell(isYuyutei(item) ? favoriteCell(item) : el('span', 'muted', '—'), 'action-col');
+  cell(favoriteCell(item), 'action-col');
   return row;
 }
 function gridCard(item, inFavorites = false) {
@@ -427,7 +428,7 @@ function gridCard(item, inFavorites = false) {
   const tags = el('div', 'card-tags'); tags.append(...gameTags(item), rarityBadge(item));
   const top = el('div', 'card-top'); top.append(tags, numberButton(item.card_number));
   const bottom = el('div', 'card-bottom'); bottom.append(priceDisplay(item), stockBadge(item));
-  const image = cardImage(item); if (isYuyutei(item)) image.append(favoriteToggle(item));
+  const image = cardImage(item); image.append(favoriteToggle(item));
   if (inFavorites && selection.state.active) {
     image.append(selectBox(item)); card.classList.toggle('selected', selection.state.keys.has(cardKey(item)));
   }

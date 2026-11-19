@@ -69,3 +69,11 @@ test('subscription filter uses the supplied predicate and combines with other fi
  assert.deepEqual(selectItems(items, {...base, subscription: 'subscribed', isSubscribed, text: 'other'}), [items[2]]);
  assert.deepEqual(selectItems(items, {...base, subscription: ''}), items);
 });
+
+test('source filter treats items without a source as YuYu-Tei', () => {
+  const mixed = [{...items[0], source: 'cardmax'}, items[2]];
+  assert.deepEqual(selectItems(mixed, {...base, sources: ['cardmax']}), [mixed[0]]);
+  assert.deepEqual(selectItems(mixed, {...base, sources: ['yuyutei', 'hobbystation']}), [items[2]]);
+  assert.equal(selectItems(mixed, {...base, sources: []}).length, 0);
+  assert.equal(selectItems(mixed, {...base, sources: null}).length, 2);
+});

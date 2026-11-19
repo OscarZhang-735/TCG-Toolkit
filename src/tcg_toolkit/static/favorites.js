@@ -1,5 +1,17 @@
 import {createMessages} from './notices.js';
-export const cardKey = item => JSON.stringify([item.game, item.product_url]);
+export const cardKey = item => JSON.stringify([item.game, item.product_url.replace(/\/$/, '')]);
+// Records name their merchant; copy it onto the item so shared card views can tag and filter it.
+const withSource = row => ({...row, item: {...row.item, source: row.source ?? 'yuyutei'}});
+// Hobby Station search images point at this server's image relay; save the shop's own URL so
+// the favorite does not depend on the host it was saved from (the server relays it on read).
+const HOBBY_RELAY = /\/api\/images\/hobbystation\/(lo|ws|wr)\/([^/?#]+)$/;
+export function savedImageUrl(item) {
+  if (item.source !== 'hobbystation' || !item.image_url) return item.image_url;
+  try {
+    const match = HOBBY_RELAY.exec(new URL(item.image_url, 'https://relay.invalid').pathname);
+    return match ? `https://www.hobbystation-single.jp/html/upload/save_image/${match[1]}/${match[2]}` : item.image_url;
+  } catch { return item.image_url; }
+}
 const errorKeys = {refresh_product_missing: 'favorite_missing', refresh_parse_error: 'favorite_parse',
   favorite_group_name_taken: 'favorite_group_name_taken', favorite_group_not_found: 'favorite_group_missing'};
 
@@ -40,7 +52,7 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     try {
       const [favorites, groups] = await Promise.all([call('/api/favorites', 'GET'), call('/api/favorites/groups', 'GET')]);
       if (current !== generation) return;
-      state.records = favorites.items; state.groups = groups.items; state.ready = true;
+      state.records = favorites.items.map(withSource); state.groups = groups.items; state.ready = true;
       if (!state.groups.some(group => group.id === state.group)) state.group = null;
     } catch (error) {if (current === generation && error.name !== 'AbortError') state.error = 'favorite_failed';}
     if (current === generation) onChange();
@@ -55,10 +67,10 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     let removedItem;
     try {
       const result = await call(saved ? `/api/favorites/${saved.id}${refresh ? '/refresh' : ''}` : '/api/favorites',
-        saved && !refresh ? 'DELETE' : 'POST', saved ? {} : groupId ? {...item, group_id: groupId} : item);
+        saved && !refresh ? 'DELETE' : 'POST', saved ? {} : {...item, image_url: savedImageUrl(item), ...(groupId ? {group_id: groupId} : {})});
       if (current !== generation) return;
-      if (!saved) state.records.unshift(result);
-      else if (refresh) {state.records = state.records.map(row => row.id === saved.id ? result : row); messages.set(key, 'favorite_updated');}
+      if (!saved) state.records.unshift(withSource(result));
+      else if (refresh) {state.records = state.records.map(row => row.id === saved.id ? withSource(result) : row); messages.set(key, 'favorite_updated');}
       else {
         state.records = state.records.filter(row => row.id !== saved.id);
         removedItem = saved.item;
@@ -94,7 +106,7 @@ export function createFavorites(onChange, pause = signal => new Promise(resolve 
     state.busy.add(key); messages.remove(key); onChange();
     try {
       const result = await call(`/api/favorites/${saved.id}/group`, 'PUT', {group_id: groupId});
-      if (current === generation) state.records = state.records.map(row => row.id === saved.id ? result : row);
+      if (current === generation) state.records = state.records.map(row => row.id === saved.id ? withSource(result) : row);
       return '';
     } catch (error) {
       return failure(error, current);
