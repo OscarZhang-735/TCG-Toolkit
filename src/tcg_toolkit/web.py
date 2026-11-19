@@ -28,6 +28,7 @@ from .cards import router as cards_router
 from .prices import router as prices_router
 from .official import router as official_router
 from .yuyutei_cart import router as yuyutei_router
+from .hobbystation_cart import router as hobbystation_cart_router
 from .product_details import router as product_router
 from .grading import router as grading_router
 from .graded_cards import router as graded_cards_router
@@ -78,6 +79,8 @@ app.add_middleware(BrowserCORS)
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request, exc):
+    if request.url.path.startswith('/api/hobbystation/cart'):
+        return JSONResponse({'detail': 'invalid_hobbystation_request'}, status_code=422)
     if request.url.path.startswith(('/api/auth/', '/api/subscriptions/notification-email')):
         return JSONResponse({'detail': 'validation_error'}, status_code=422)
     return await request_validation_exception_handler(request, exc)
@@ -89,6 +92,7 @@ app.include_router(cards_router)
 app.include_router(prices_router)
 app.include_router(official_router)
 app.include_router(yuyutei_router)
+app.include_router(hobbystation_cart_router)
 app.include_router(product_router)
 app.include_router(grading_router)
 app.include_router(graded_cards_router)
@@ -125,7 +129,8 @@ async def request_proxy_mode(request, call_next):
 async def browser_cache_policy(request, call_next):
     response = await call_next(request)
     if any(request.url.path == path or request.url.path.startswith(path + '/')
-           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/subscriptions', '/api/prices',
+           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/hobbystation/cart',
+                        '/api/subscriptions', '/api/prices',
                         '/api/grading', '/api/graded-cards')):
         response.headers['Cache-Control'] = 'no-store'
     elif not request.url.path.startswith('/api/'):

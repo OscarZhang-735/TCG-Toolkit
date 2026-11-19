@@ -102,15 +102,24 @@ button:disabled:hover { background: var(--color-primary); border-color: var(--co
 .checkbox-option:has(input:checked) { color: var(--color-text); }
 .info-tip { position: relative; display: inline-flex; }
 .info-tip .icon-button { width: 28px; height: 28px; font-size: 14px; }
-.info-tip .tip {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
+.info-tip .tip, .chip .tip {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; white-space: normal; text-align: left;
   width: max-content; max-width: min(320px, 80vw); padding: 8px 10px; border-radius: var(--radius-md);
   background: var(--color-text); color: var(--color-surface); font-size: 12px; line-height: 1.5; font-weight: 400;
   box-shadow: var(--shadow-sm); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .15s;
 }
-.info-tip:hover .tip, .info-tip:focus-within .tip { opacity: 1; visibility: visible; }
-.tag-stack { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; }
-.source-tag { display: inline-block; font-size: 10px; font-weight: 600; white-space: nowrap; color: var(--color-primary); border: 1px solid currentColor; border-radius: var(--radius-sm); padding: 0 5px; vertical-align: middle; }
+.info-tip:hover .tip, .info-tip:focus-within .tip, .chip:hover .tip, .chip:focus-within .tip { opacity: 1; visibility: visible; }
+.chip:has(.tip) { position: relative; }
+.chip .tip { right: auto; left: 0; }
+/* Same font size as .game-tag, so 1lh + 1px padding and border on each side is its exact height. */
+.badge.has-hint { cursor: help; }
+.tag-stack { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
+.source-tag {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; box-sizing: border-box;
+  font-size: 11px; width: calc(1lh + 4px); height: calc(1lh + 4px); border-radius: 50%; overflow: hidden;
+  border: 1px solid var(--color-border-strong); background: #fff; font-weight: 600; color: var(--color-text-secondary);
+}
+.source-tag img { display: block; width: 100%; height: 100%; object-fit: cover; }
 
 /* Results heading */
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 32px 0 14px; }

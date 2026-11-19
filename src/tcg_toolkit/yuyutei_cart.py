@@ -1,11 +1,9 @@
 """Request-scoped YuYu-Tei credentials and verified, single-attempt cart operations."""
 from datetime import datetime, timezone
 from contextlib import contextmanager
-from hashlib import sha256
 from hmac import compare_digest
 import json
 import re
-from threading import Lock
 from typing import Literal
 from urllib.parse import urljoin, urlsplit
 
@@ -18,32 +16,13 @@ from .auth.dependencies import current_user, write_guard
 from .cart_models import CartTarget
 from .product_identity import GAME_PATHS
 from . import cart_operations
+from .cart_operations import session_lock, _session_locks, cart_result
 from .external.search_proxy import YuYuTeiProxyTransport
 
 router = APIRouter(prefix='/api/yuyutei', dependencies=[Depends(current_user)])
 CART_URL = 'https://yuyu-tei.jp/api/cart_order_edit'
 CART_PAGE = 'https://yuyu-tei.jp/cart/sell'
 CART_SERVICE = 'https://yuyu-tei.jp/api/cart_service'
-_session_locks = {}
-_session_locks_guard = Lock()
-
-
-@contextmanager
-def session_lock(csrf_token):
-    # Laravel may re-encrypt its cookie without changing the session. The CSRF
-    # token stays stable within that session, including across local accounts.
-    key = sha256(csrf_token.encode()).digest()
-    with _session_locks_guard:
-        entry = _session_locks.setdefault(key, [Lock(), 0])
-        entry[1] += 1
-    try:
-        with entry[0]:
-            yield
-    finally:
-        with _session_locks_guard:
-            entry[1] -= 1
-            if entry[1] == 0:
-                del _session_locks[key]
 
 
 @contextmanager
@@ -172,23 +151,8 @@ def add_to_cart(body: CartInput, session_cookie: str, csrf_token: str):
 def add(request: Request, envelope=Depends(add_input), user=Depends(current_user)):
     body = CartInput.model_validate(envelope.model_dump(exclude={'credentials'}))
     credentials = envelope.credentials
-    key = request.headers.get('idempotency-key')
-    store = request.app.state.auth.store
-    if key is not None:
-        replay = cart_operations.reserve(store, user['id'], key, body.model_dump())
-        if replay is not None:
-            return replay
-    try:
-        result = add_to_cart(body, credentials.cookie, credentials.csrf_token)
-    except HTTPException as exc:
-        if key is not None:
-            cart_operations.finish(store, user['id'], key, exc.status_code, {'detail': exc.detail})
-        raise
-    # Unexpected failures leave a durable processing record rather than allowing
-    # a later caller to unknowingly repeat a POST that may already have succeeded.
-    if key is not None:
-        cart_operations.finish(store, user['id'], key, 200, result)
-    return result
+    return cart_operations.run_add(request, user['id'], body.model_dump(),
+                                   lambda: add_to_cart(body, credentials.cookie, credentials.csrf_token))
 
 
 def cart_error(kind='yuyutei_invalid_response', status=502):
@@ -286,14 +250,6 @@ def read_cart(client, csrf_token, *, strict=True, require_removal=False):
         return parse_cart(response.text, strict=strict, require_removal=require_removal)
     except ValueError:
         raise cart_error() from None
-
-
-def cart_result(snapshot):
-    items, complete = snapshot['items'], snapshot['complete']
-    return {'items': [{k: v for k, v in item.items() if k != '_cart_item_id'} for item in items],
-            'total_quantity': sum(item['quantity'] for item in items) if complete else None,
-            'subtotal': sum(item['quantity'] * item['unit_price'] for item in items) if complete else None,
-            'currency': 'JPY', 'complete': complete, 'warnings': snapshot['warnings']}
 
 
 def write_result(snapshot, **fields):

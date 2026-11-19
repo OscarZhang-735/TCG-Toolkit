@@ -218,6 +218,11 @@ function stockBadge(item) {
   const quantity = item.stock_quantity ?? null;
   badge.append(icon(stockIcons[item.stock_status]),
     t(stockKeys[item.stock_status]) + (quantity === null ? '' : ` (${quantity})`));
+  // "In stock" without a count: explain why (a native title, since table cells clip overlays).
+  if (item.stock_status === 'in_stock' && quantity === null) {
+    badge.title = t('stock_count_unknown') + (item.source === 'hobbystation' ? t('stock_count_unknown_hobbystation') : '');
+    badge.classList.add('has-hint');
+  }
   return badge;
 }
 function favoriteToggle(item) {
@@ -403,18 +408,28 @@ window.addEventListener('hashchange', () => {
   if (location.hash === '#cart' && userId) cart.refresh();
 });
 document.addEventListener('inventorychange', () => {render(); renderFavorites();});
+// Round badge with the merchant's site icon; the name is in the tooltip and accessible label.
+function sourceBadge(source) {
+  const badge = el('span', `source-tag source-${source}`), label = sourceLabel(source);
+  badge.title = label; badge.setAttribute('role', 'img'); badge.setAttribute('aria-label', label);
+  const iconUrl = SEARCH_SOURCES[source]?.icon;
+  if (iconUrl) { const image = el('img'); image.src = iconUrl; image.alt = ''; image.setAttribute('aria-hidden', 'true'); badge.append(image); }
+  else badge.textContent = label.slice(0, 1);
+  return badge;
+}
 // Search results carry their merchant; saved items (favorites) have none and show only the game.
 function gameTags(item) {
   const tags = [el('span', 'game-tag', gameLabel(item.game))];
-  if (item.source) tags.push(el('span', `source-tag source-${item.source}`, sourceLabel(item.source)));
+  if (item.source) tags.push(sourceBadge(item.source));
   return tags;
 }
+function tagStack(item) { const box = el('span', 'tag-stack'); box.append(...gameTags(item)); return box; }
 function tableRow(item, inFavorites = false) {
   const row = document.createElement('tr');
   const cell = (child, className = '') => {const td = el('td', className); td.append(child); row.append(td);};
   if (inFavorites) { cell(selectBox(item), 'select-col'); row.classList.toggle('selected', selection.state.keys.has(cardKey(item))); }
   const product = el('div', 'product-summary'); product.append(cardImage(item), cardLink(item));
-  const tagBox = el('span', 'tag-stack'); tagBox.append(...gameTags(item)); cell(tagBox); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
+  cell(tagStack(item)); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
   const owned = ownedQuantity(item);
   cell(priceDisplay(item), 'numeric'); cell(stockBadge(item));
   cell(owned ? owned.toLocaleString(getLanguage()) : '—', `numeric owned-cell${owned ? '' : ' muted'}`);
@@ -425,7 +440,7 @@ function tableRow(item, inFavorites = false) {
 }
 function gridCard(item, inFavorites = false) {
   const card = el('article', `card ${item.stock_status}`);
-  const tags = el('div', 'card-tags'); tags.append(...gameTags(item), rarityBadge(item));
+  const tags = el('div', 'card-tags'); tags.append(tagStack(item), rarityBadge(item));
   const top = el('div', 'card-top'); top.append(tags, numberButton(item.card_number));
   const bottom = el('div', 'card-bottom'); bottom.append(priceDisplay(item), stockBadge(item));
   const image = cardImage(item); image.append(favoriteToggle(item));
@@ -514,8 +529,22 @@ function renderErrors() {
     const p = el('p'); p.append(icon('bi-exclamation-triangle'), message); return p;
   }));
 }
+// Hovering or focusing a source chip lists the games that merchant sells.
+function renderSourceTips() {
+  const allGames = [...document.querySelectorAll('input[name="source"]')].map(input => input.value);
+  document.querySelectorAll('input[name="merchant"]').forEach(input => {
+    const chip = input.closest('.chip'), supported = SEARCH_SOURCES[input.value]?.games;
+    const games = allGames.filter(game => !supported || supported.includes(game));
+    let tip = chip.querySelector('.tip');
+    if (!tip) {
+      tip = el('span', 'tip'); tip.id = `source-tip-${input.value}`; tip.setAttribute('role', 'tooltip');
+      chip.append(tip); input.setAttribute('aria-describedby', tip.id);
+    }
+    tip.textContent = t('source_supports', {games: games.map(gameLabel).join(t('list_separator'))});
+  });
+}
 function refreshLanguage() {
-  applyLanguage(document); $('language').value = getLanguage();
+  applyLanguage(document); $('language').value = getLanguage(); renderSourceTips();
   setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); renderNotice();
 }
 $('language').addEventListener('change', () => {setLanguage($('language').value); refreshLanguage();});

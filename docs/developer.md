@@ -45,7 +45,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_TRUSTED_ORIGINS` | 允许登录的访问地址，多个用逗号分隔，不含路径 | 空（不允许登录） |
 | `TCG_PORT` | Docker 映射到本机的端口 | `8000` |
 | `RAPIDAPI_KEY` | 汇率接口密钥；不填时只能显示日元 | 空 |
-| `TCG_SEARCH_PROXY_URL` | Hobby Station 搜索及游游亭搜索、商品详情、凭据验证和购物车的加密转发接口；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
+| `TCG_SEARCH_PROXY_URL` | Hobby Station 搜索和购物车，以及游游亭搜索、商品详情、凭据验证和购物车的加密转发接口；显式设为空可直连 | `http://62.234.212.90:8080/encrypted-proxy` |
 | `ZYTE_API_KEY` | PSA 与 CGC 网页查询使用的 Zyte Extract API 密钥 | 空 |
 | `PROXY_GO_API` | 独立 `proxy-go` 客户端网关地址，支持基础 URL 或完整 `/v1/fetch` 地址 | 空 |
 | `PROXY_GO_API_KEY` | `proxy-go` 服务端 API 密钥，仅填写密钥本身 | 空 |
@@ -127,7 +127,7 @@ Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经�
 
 Card Max 使用服务器直连，例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014&stock=true`。默认只读取搜索列表，列表包含售罄单卡（如实测的 `GBF/S134-132S`），库存返回 `unknown` 和 `null`。可用 `stock=true`、CLI 的 `--stock` 或 Python 搜索器构造参数 `stock=True` 开启详情查询，每条单卡结果额外请求一次详情页。`残りあとN個` 返回具体数量，`売り切れ` 返回 `out_of_stock` 和 0。WS 可输入完整编号，如 `AMG/W121-019SP`。Card Max 的 WSR 分类目前仅有盒装商品。
 
-网页搜索可多选来源，前端 `static/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。各来源的结果都可直接收藏，收藏页可按来源筛选。购物车和订阅仅支持游游亭商品，其他来源不显示对应操作，批量订阅时跳过。Hobby Station 收藏保存原站图片地址，而非本服务的图片转发地址。新增来源时需同步更新该文件。
+网页搜索可多选来源，前端 `static/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。各来源的结果都可直接收藏，收藏页可按来源筛选。WebUI 的购物车和订阅仅支持游游亭商品，其他来源不显示对应操作，批量订阅时跳过。Hobby Station 收藏保存原站图片地址，而非本服务的图片转发地址。新增来源时需同步更新该文件。
 
 命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee` 或 `tcg-search "BP22-014" --source cardmax --game sev`，同样支持 `--page` 和 `--all`。
 
@@ -784,6 +784,30 @@ Content-Type: application/json
 
 购物车页在“刷新购物车”左侧提供“获取库存”，列表和网格中的每张卡牌也可单独获取。通过 `/api/yuyutei/product?gid=…&ver=…&cid=…&stock=true&kizu=0` 重新读取详情页隐藏库存字段，不使用编号/稀有度的长期缓存。批量查询按商品和品相去重，最多并发三项；失败可重试，无法识别品相对应库存时显示未知，不视为零库存。库存仅为查询时的快照，不修改购物车数量。
 
+
+## Hobby Station 销售购物车后端
+
+所有接口均需本站 Bearer 登录、受信任的 `Origin` 和 JSON 请求体。每次请求在 `credentials.eccube` 传入会话 Cookie 的值。加购需要读取商品详情页；若触发店铺访问检查，还需提供浏览器当前的 `credentials.eccube_bot_check`。后端只向商品详情页发送该 Cookie，并从同一会话的页面读取操作令牌。购物车沿用搜索的加密代理或直连配置。
+
+| 方法与路径 | 除 `credentials` 外的 JSON 字段 | 行为 |
+| --- | --- | --- |
+| `POST /api/hobbystation/cart/query` | 无 | 查询销售购物车，返回 `items`、`total_quantity`、`subtotal`、`currency`、`complete` 和 `warnings` |
+| `POST /api/hobbystation/cart` | `product_url`、可选 `counter`（1–99，默认 1） | 从搜索结果的商品详情链接读取规格和表单，增加指定张数，支持 `Idempotency-Key` |
+| `PUT /api/hobbystation/cart/quantity` | `product_class_id`、`quantity`（0–99） | 把已有行调到目标数量，逐次回读；0 移除整行 |
+| `DELETE /api/hobbystation/cart` | `product_class_id` | 移除指定行；行不存在时返回 404 |
+| `DELETE /api/hobbystation/cart/clear` | 无 | 清空当前会话的销售购物车；已经为空时直接返回成功 |
+
+加购请求示例使用占位凭据。
+
+```json
+{
+  "credentials": {"eccube": "<session-cookie>", "eccube_bot_check": "<browser-access-cookie>"},
+  "product_url": "https://www.hobbystation-single.jp/lo/product/detail/305273",
+  "counter": 1
+}
+```
+
+商品行同时返回字符串 `product_id` 和 `product_class_id`。修改或删除时使用后者。写接口成功时返回已核对的 `cart`。数量调整中途失败时，`last_verified_quantity` 表示最后一次已确认的数量，重新查询可获得当前状态。凭据限于本次请求；幂等记录保存业务参数摘要和结果。WebUI 购物车仍仅接入游游亭。
 
 ## 卡牌订阅后端
 

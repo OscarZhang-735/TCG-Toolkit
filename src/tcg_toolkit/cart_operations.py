@@ -1,5 +1,7 @@
 """Durable, user-scoped reservations for non-repeatable cart writes."""
+from contextlib import contextmanager
 from hashlib import sha256
+from threading import Lock
 import json
 import re
 import time
@@ -42,3 +44,51 @@ def finish(store, user_id, key, status_code, result):
         db.execute(update(CartOperation).where(
             CartOperation.user_id == user_id, CartOperation.operation_key == key
         ).values(state='complete', status_code=status_code, response_json=json.dumps(result), updated_at=int(time.time())))
+
+
+_session_locks = {}
+_session_locks_guard = Lock()
+
+
+@contextmanager
+def session_lock(session_identity):
+    key = sha256(session_identity.encode()).digest()
+    with _session_locks_guard:
+        entry = _session_locks.setdefault(key, [Lock(), 0])
+        entry[1] += 1
+    try:
+        with entry[0]:
+            yield
+    finally:
+        with _session_locks_guard:
+            entry[1] -= 1
+            if entry[1] == 0:
+                del _session_locks[key]
+
+
+def cart_result(snapshot):
+    items, complete = snapshot['items'], snapshot['complete']
+    return {'items': [{k: v for k, v in item.items() if k != '_cart_item_id'} for item in items],
+            'total_quantity': sum(item['quantity'] for item in items) if complete else None,
+            'subtotal': sum(item['quantity'] * item['unit_price'] for item in items) if complete else None,
+            'currency': 'JPY', 'complete': complete, 'warnings': snapshot['warnings']}
+
+
+def run_add(request, user_id, parameters, operation):
+    key = request.headers.get('idempotency-key')
+    store = request.app.state.auth.store
+    if key is not None:
+        replay = reserve(store, user_id, key, parameters)
+        if replay is not None:
+            return replay
+    try:
+        result = operation()
+    except HTTPException as exc:
+        if key is not None:
+            finish(store, user_id, key, exc.status_code, {'detail': exc.detail})
+        raise
+    # Unexpected failures leave a durable processing record rather than allowing
+    # a later caller to unknowingly repeat a POST that may already have succeeded.
+    if key is not None:
+        finish(store, user_id, key, 200, result)
+    return result

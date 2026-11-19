@@ -1,9 +1,9 @@
-// Merchants the search page can query and the games each supports. Mirrors
+// Merchants the search page can query, their site icons and the games each supports. Mirrors
 // SEARCH_SOURCES in search.py; null means every game.
 export const SEARCH_SOURCES = {
-  yuyutei: {label: 'source_yuyutei', games: null},
-  hobbystation: {label: 'source_hobbystation', games: ['lycee', 'ws', 'wsr']},
-  cardmax: {label: 'source_cardmax', games: ['ws', 'sev']},
+  yuyutei: {label: 'source_yuyutei', icon: './yuyutei-logo.webp', games: null},
+  hobbystation: {label: 'source_hobbystation', icon: './source-hobbystation.png', games: ['lycee', 'ws', 'wsr']},
+  cardmax: {label: 'source_cardmax', icon: './source-cardmax.png', games: ['ws', 'sev']},
 };
 export const DEFAULT_SOURCE = 'yuyutei';
 
