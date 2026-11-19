@@ -940,12 +940,12 @@ button.cart-step:disabled:hover { background: transparent; }
 .cart-overview { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 20px; margin-bottom: 24px; }
 .cart-tag { display: inline-flex; padding: 1px 7px; font-size: 11px; font-weight: 500; color: var(--color-text); background: var(--color-surface-muted); border: 1px solid var(--color-border-strong); border-radius: var(--radius-pill); }
 .cart-line-total { font-weight: 600; font-variant-numeric: tabular-nums; }
-#cart-table, #cart-grid { margin-top: 14px; }
-#cart-panel .card-cart { align-items: center; }
-#cart-panel .card .cart-line-total { font-size: 12px; color: var(--color-text-secondary); }
+#cart-table, #cart-grid, #shop-cart-table, #shop-cart-grid { margin-top: 14px; }
+#cart-panel .card-cart, #shop-cart-panel .card-cart { align-items: center; }
+#cart-panel .card .cart-line-total, #shop-cart-panel .card .cart-line-total { font-size: 12px; color: var(--color-text-secondary); }
 .cart-warning { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; padding: 10px 14px; font-size: 13px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-strong); border-left: 3px solid var(--color-primary); border-radius: var(--radius-md); }
-#cart-empty-action { margin: 12px 0 0; }
-#cart-empty-action:empty { display: none; }
+#cart-empty-action, #shop-cart-empty-action { margin: 12px 0 0; }
+#cart-empty-action:empty, #shop-cart-empty-action:empty { display: none; }
 .cart-empty-link { font-size: 13px; font-weight: 500; color: var(--color-text); }
 @media (max-width: 700px) {
   .cart-overview .stat-tiles { width: 100%; }
@@ -953,12 +953,12 @@ button.cart-step:disabled:hover { background: transparent; }
 }
 #app-nav a[aria-current=page] .nav-count { color: var(--color-primary); background: var(--color-on-primary); }
 .cart-tag { white-space: nowrap; }
-#cart-table .card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+#cart-table .card-tags, #shop-cart-table .card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 /* Cart prices reuse .converted-price; right-align the yen reference under totals. */
-#cart-panel td.numeric .converted-price, #cart-panel .cart-line-total .converted-price { align-items: flex-end; }
-#cart-panel .card .cart-line-total { display: inline-flex; align-items: flex-start; gap: 6px; }
+#cart-panel td.numeric .converted-price, #cart-panel .cart-line-total .converted-price, #shop-cart-panel td.numeric .converted-price, #shop-cart-panel .cart-line-total .converted-price { align-items: flex-end; }
+#cart-panel .card .cart-line-total, #shop-cart-panel .card .cart-line-total { display: inline-flex; align-items: flex-start; gap: 6px; }
 .cart-line-label { font-size: 12px; font-weight: 400; color: var(--color-text-muted); }
-#cart-subtotal .original-price { display: block; margin-top: 2px; font-size: 12px; letter-spacing: 0; }
+#cart-subtotal .original-price, #shop-cart-subtotal .original-price { display: block; margin-top: 2px; font-size: 12px; letter-spacing: 0; }
 
 /* Credential routes: recommended Cookie + CSRF first, cURL import as the alternative */
 .cart-settings-body[hidden] { display: none; }
@@ -1137,8 +1137,8 @@ button.switch:hover .switch-track { filter: brightness(.95); }
 .cart-overview { padding: 14px 16px; }
 .cart-overview .stat-tile { justify-content: center; gap: 2px; padding: 10px 14px; }
 .cart-overview .stat-value { font-size: 22px; line-height: 1.25; }
-#cart-subtotal .converted-price { flex-direction: row; align-items: baseline; gap: 8px; }
-#cart-subtotal .original-price { display: inline; margin-top: 0; font-size: 12px; font-weight: 500; }
+#cart-subtotal .converted-price, #shop-cart-subtotal .converted-price { flex-direction: row; align-items: baseline; gap: 8px; }
+#cart-subtotal .original-price, #shop-cart-subtotal .original-price { display: inline; margin-top: 0; font-size: 12px; font-weight: 500; }
 .cart-overview .stat-note { margin-top: 2px; }
 
 
@@ -1449,3 +1449,47 @@ button.graded-image-menu-item:hover, button.graded-image-menu-item:focus-visible
   .graded-detail-images .card-image { height: 260px; }
 }
 .account-icon-image { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
+
+/* Sidebar cart menu: an expandable "Cart" entry with one page per shop (nav-menu.js). */
+.nav-submenu { display: flex; flex-direction: column; gap: 4px; }
+button.nav-submenu-toggle {
+  justify-content: flex-start; gap: 10px; width: 100%; height: auto; padding: 10px 12px;
+  font-weight: 500; color: var(--color-text-secondary); background: transparent; border: 0; border-radius: var(--radius-md);
+}
+button.nav-submenu-toggle:hover { background: var(--color-hover); border: 0; }
+.nav-submenu.has-current .nav-submenu-toggle { color: var(--color-text); font-weight: 600; }
+.nav-submenu-chevron { margin-left: auto; font-size: 12px; transition: transform .15s; }
+.nav-submenu-toggle .nav-count:not([hidden]) + .nav-submenu-chevron { margin-left: 6px; }
+.nav-submenu.open .nav-submenu-chevron { transform: rotate(180deg); }
+/* The menu's total is only needed while the per-shop counts are folded away. */
+.nav-submenu.open .nav-submenu-toggle .nav-count { display: none; }
+.nav-submenu.open .nav-submenu-toggle .nav-submenu-chevron { margin-left: auto; }
+.nav-submenu-items { display: flex; flex-direction: column; gap: 4px; }
+.nav-submenu:not(.open) .nav-submenu-items { display: none; }
+.nav-submenu-items a { padding: 8px 12px 8px 40px; font-size: 14px; white-space: nowrap; }
+/* Counts keep their full width; a squeezed bubble pushes its digits off-centre. */
+#app-nav .nav-count { flex: none; }
+/* One row of links: the shop list drops down under the cart entry. */
+@media (max-width: 700px) {
+  .nav-submenu { position: relative; }
+  button.nav-submenu-toggle { white-space: nowrap; }
+  .nav-submenu-items a { padding: 8px 12px; }
+  .nav-submenu.has-current .nav-submenu-toggle { color: var(--color-on-primary); background: var(--color-primary); }
+  .nav-submenu-items {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 190px; gap: 2px; padding: 6px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+  }
+}
+@media (max-width: 480px) {
+  button.nav-submenu-toggle { position: relative; flex-direction: column; justify-content: center; gap: 3px; padding: 7px 4px; font-size: 12px; }
+  .nav-submenu-chevron { display: none; }
+  .nav-submenu-toggle .nav-count { position: absolute; top: 3px; left: calc(50% + 3px); margin: 0; min-width: 16px; padding: 0 4px; font-size: 10px; line-height: 15px; }
+}
+/* Portrait phones: the group is already a dropdown, so the shop carts are listed in it directly. */
+@media (max-width: 700px) and (orientation: portrait) {
+  .nav-submenu { display: contents; }
+  button.nav-submenu-toggle { display: none; }
+  .nav-submenu .nav-submenu-items, .nav-submenu:not(.open) .nav-submenu-items {
+    display: contents; position: static; min-width: 0; padding: 0; background: none; border: 0; box-shadow: none;
+  }
+}

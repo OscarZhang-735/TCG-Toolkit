@@ -811,7 +811,9 @@ Content-Type: application/json
 
 加购响应中的 `done: false` 如果附有库存不足或单次限购提示，接口返回 HTTP 409 和 `hobbystation_stock_exceeded`。商品旁的气泡按 `detail.reason` 显示原因：`stock` 表示购买数量超过可用库存，`purchase_limit` 表示超过单次限购上限。旧响应缺少原因时显示“已达到库存或购买上限”。其他业务拒绝仍返回 `hobbystation_cart_rejected`。
 
-WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相同的数量控件。`static/hs-cart.js` 把该接口适配到 `cart.js` 的购物车状态：商品键为 `gid: 'hs'` 加商品 ID，购物车行的 `type` 为 `product_class_id`。加购回复自带核对后的购物车，因此不再重新查询。凭据错误、访问检查等账户级问题以页面提示显示。购物车页和导航计数仍只统计游游亭。
+WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相同的数量控件。`static/hs-cart.js` 把该接口适配到 `cart.js` 的购物车状态：商品键为 `gid: 'hs'` 加商品 ID，购物车行的 `type` 为 `product_class_id`。加购回复自带核对后的购物车，因此不再重新查询。凭据错误、访问检查等账户级问题以页面提示显示。
+
+侧边栏的“购物车”是可展开菜单，每个来源对应一个页面：`#cart`（游游亭，`cart-page.js`）、`#cart-hobbystation` 和 `#cart-cardmax`。后两者共用 `static/shop-cart-page.js` 和同一个 `#shop-cart-panel`。每次进入页面都会重新读取该店的购物车。页面提供数量调整、移除确认和跳转到该店官网购物车结算的链接。Hobby Station 商品图片通过 `/api/images/hobbystation/…` 转发显示。菜单上的数字为三家购物车数量之和，展开后显示各店数量。竖屏手机上，三个购物车直接列在分组下拉中。
 
 用户中心的“Hobby Station 登录凭据”面板要求同时填写 `eccube` 和 `eccube_bot_check`，并附打码的 DevTools 截图（`static/hs-help-cookies.webp`）。前端 `static/hobbystation-client.js` 把两个值按当前账号存入本标签页的 `sessionStorage`（`tcg.hobbystation.credentials`），切换账号、退出登录或关闭标签页即清除；`static/hs-cart-settings.js` 保存后调用 `/query` 验证，页面重新加载时会再验证一次。
 
