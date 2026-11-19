@@ -896,10 +896,14 @@ button.cart-step:disabled:hover { background: transparent; }
 .card-cart { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .card-cart .cart-controls { align-items: flex-end; min-width: 0; }
 .card-cart-label { flex: none; font-size: 12px; line-height: 30px; color: var(--color-text-muted); }
-.cart-settings { display: flex; flex-direction: column; gap: 16px; padding: 20px; margin-bottom: 16px; }
+.cart-credentials { padding: 20px; margin-bottom: 16px; }
+.cart-credentials-head { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 18px; }
+.cart-settings { display: flex; flex-direction: column; gap: 16px; padding: 18px 0; border-top: 1px solid var(--color-border); }
+.cart-settings:last-child { padding-bottom: 0; }
 .cart-settings-head { display: flex; align-items: flex-start; gap: 14px; }
 .cart-settings-text { flex: 1; min-width: 0; }
 .cart-settings-text h2 { font-size: 15px; }
+.cart-settings-text h3 { font-size: 14px; }
 .cart-settings-text p { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-text-muted); }
 .cart-settings-meta { display: flex; flex: none; align-items: center; gap: 10px; }
 .cart-state, .email-state { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 10px; font-size: 12px; font-weight: 500; color: var(--color-text-muted); background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
@@ -912,12 +916,12 @@ button.cart-step:disabled:hover { background: transparent; }
 .cart-help[open] summary { margin-bottom: 12px; }
 .cart-help ol { display: grid; gap: 18px; margin: 0; padding-left: 22px; line-height: 1.65; }
 .cart-settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-#cart-settings-status { flex: 1; margin: 0; font-size: 13px; color: var(--color-text-muted); }
-#cart-settings-status.error { color: var(--color-text); font-weight: 500; }
+#cart-settings-status, .cart-settings-status { flex: 1; margin: 0; font-size: 13px; color: var(--color-text-muted); }
+#cart-settings-status.error, .cart-settings-status.error { color: var(--color-text); font-weight: 500; }
 @media (max-width: 700px) {
   .cart-settings-fields { grid-template-columns: 1fr; }
   .cart-settings-actions { flex-wrap: wrap; }
-  #cart-settings-status { flex-basis: 100%; }
+  #cart-settings-status, .cart-settings-status { flex-basis: 100%; }
 }
 /* One rhythm inside each step: text, command, screenshot, notes. */
 .cart-help li > * + * { margin-top: 10px; }
@@ -958,7 +962,7 @@ button.cart-step:disabled:hover { background: transparent; }
 
 /* Credential routes: recommended Cookie + CSRF first, cURL import as the alternative */
 .cart-settings-body[hidden] { display: none; }
-#cart-settings-form { display: flex; flex-direction: column; gap: 16px; }
+#cart-settings-form, .cart-settings-form { display: flex; flex-direction: column; gap: 16px; }
 .cart-route { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
 .cart-route.recommended { border-color: var(--color-border-strong); box-shadow: var(--shadow-sm); }
 .cart-route-head { display: flex; align-items: center; gap: 8px; }
@@ -979,7 +983,7 @@ button.cart-step:disabled:hover { background: transparent; }
 button.cart-settings-toggle, button.panel-toggle { flex: none; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; }
 button.cart-settings-toggle:hover, button.panel-toggle:hover { background: var(--color-hover); }
 /* No icon for neutral states: drop the empty element so the gap does not offset the text. */
-#cart-settings-state-icon:not([class~="bi"]) { display: none; }
+#cart-settings-state-icon:not([class~="bi"]), #hs-cart-state-icon:not([class~="bi"]) { display: none; }
 
 /* Narrow screens and high zoom: headings wrap instead of squeezing their actions. */
 @media (max-width: 700px) {
@@ -1444,3 +1448,4 @@ button.graded-image-menu-item:hover, button.graded-image-menu-item:focus-visible
   .graded-side .card-image { height: 160px; }
   .graded-detail-images .card-image { height: 260px; }
 }
+.account-icon-image { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }

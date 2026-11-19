@@ -152,8 +152,10 @@
 <div class="proxy-text"><h2 id="proxy-title" data-i18n="proxy_title"></h2><p id="proxy-help" data-i18n="proxy_help"></p></div>
 <button type="button" id="proxy-enabled" class="switch" role="switch" aria-checked="true" aria-describedby="proxy-help"><span class="switch-label" data-i18n="proxy_enabled"></span><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></button>
 </section>
-<section class="panel cart-settings" id="cart-settings" aria-labelledby="cart-settings-title">
-<div class="cart-settings-head"><span class="account-icon"><i class="bi bi-cart3"></i></span><div class="cart-settings-text"><h2 id="cart-settings-title" data-i18n="cart_settings_title"></h2><p><strong data-i18n="cart_settings_intro_lead"></strong> <span data-i18n="cart_settings_intro"></span></p></div>
+<section class="panel cart-credentials" aria-labelledby="cart-credentials-title">
+<div class="cart-credentials-head"><span class="account-icon"><i class="bi bi-key"></i></span><div class="cart-settings-text"><h2 id="cart-credentials-title" data-i18n="cart_credentials_title"></h2><p data-i18n="cart_settings_intro"></p></div></div>
+<section class="cart-settings" id="cart-settings" aria-labelledby="cart-settings-title">
+<div class="cart-settings-head"><span class="account-icon"><img class="account-icon-image" src="./yuyutei-logo.webp" alt="" aria-hidden="true"/></span><div class="cart-settings-text"><h3 id="cart-settings-title" data-i18n="cart_settings_title"></h3><p data-i18n="cart_settings_intro_lead"></p></div>
 <div class="cart-settings-meta"><span id="cart-settings-state" class="cart-state" role="status"><i id="cart-settings-state-icon" aria-hidden="true"></i><span id="cart-settings-state-label"></span></span><button type="button" id="cart-settings-toggle" class="icon-button cart-settings-toggle" aria-controls="cart-settings-body" hidden><i id="cart-settings-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div></div>
 <div id="cart-settings-body" class="cart-settings-body">
 <form id="cart-settings-form" autocomplete="off" novalidate>
@@ -198,6 +200,36 @@
 </div>
 </form>
 </div>
+</section>
+<section class="cart-settings" id="hs-cart-settings" aria-labelledby="hs-cart-title">
+<div class="cart-settings-head"><span class="account-icon"><img class="account-icon-image" src="./source-hobbystation.png" alt="" aria-hidden="true"/></span><div class="cart-settings-text"><h3 id="hs-cart-title" data-i18n="hs_cart_title"></h3><p data-i18n="hs_cart_intro_lead"></p></div>
+<div class="cart-settings-meta"><span id="hs-cart-state" class="cart-state" role="status"><i id="hs-cart-state-icon" aria-hidden="true"></i><span id="hs-cart-state-label"></span></span><button type="button" id="hs-cart-toggle" class="icon-button cart-settings-toggle" aria-controls="hs-cart-body"><i id="hs-cart-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div></div>
+<div id="hs-cart-body" class="cart-settings-body">
+<form id="hs-cart-form" class="cart-settings-form" autocomplete="off" novalidate>
+<section class="cart-route recommended" aria-labelledby="hs-cart-route-title">
+<div class="cart-route-head"><h3 id="hs-cart-route-title" data-i18n="hs_cart_route"></h3></div>
+<p class="cart-route-desc" data-i18n="hs_cart_route_desc"></p>
+<div class="cart-settings-fields">
+<label class="field"><span>eccube</span><input id="hs-cart-eccube" type="password" autocomplete="off" spellcheck="false" maxlength="600" required data-i18n-placeholder="hs_cart_eccube_placeholder"/></label>
+<label class="field"><span>eccube_bot_check</span><input id="hs-cart-bot-check" type="password" autocomplete="off" spellcheck="false" maxlength="600" required data-i18n-placeholder="hs_cart_bot_check_placeholder"/></label>
+</div>
+<details class="cart-help"><summary data-i18n="cart_help_title"></summary>
+<ol>
+<li data-i18n="hs_cart_help_1"></li>
+<li><span data-i18n="hs_cart_help_2"></span>
+<figure class="cart-help-figure"><a href="./hs-help-cookies.webp" target="_blank" rel="noopener"><img src="./hs-help-cookies.webp" width="2000" height="1243" loading="lazy" decoding="async" data-i18n-alt="hs_cart_figure_alt"/></a><figcaption data-i18n="hs_cart_figure"></figcaption></figure>
+<span class="cart-help-note" data-i18n="hs_cart_help_2_note"></span></li>
+<li data-i18n="hs_cart_help_3"></li>
+</ol></details>
+<div class="cart-route-actions"><button type="submit" id="hs-cart-save"><i class="bi bi-check-lg"></i><span data-i18n="cart_save"></span></button></div>
+</section>
+<div class="cart-settings-actions">
+<p id="hs-cart-status" class="cart-settings-status" role="status" aria-live="polite"></p>
+<button type="button" id="hs-cart-clear" class="secondary"><i class="bi bi-trash3"></i><span data-i18n="cart_clear"></span></button>
+</div>
+</form>
+</div>
+</section>
 </section>
 
 <footer class="account-footer">

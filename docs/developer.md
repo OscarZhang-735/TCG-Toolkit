@@ -809,6 +809,8 @@ Content-Type: application/json
 
 商品行同时返回字符串 `product_id` 和 `product_class_id`。修改或删除时使用后者。写接口成功时返回已核对的 `cart`。数量调整中途失败时，`last_verified_quantity` 表示最后一次已确认的数量，重新查询可获得当前状态。凭据限于本次请求；幂等记录保存业务参数摘要和结果。WebUI 购物车仍仅接入游游亭。
 
+用户中心的“Hobby Station 登录凭据”面板要求同时填写 `eccube` 和 `eccube_bot_check`，并附打码的 DevTools 截图（`static/hs-help-cookies.webp`）。前端 `static/hobbystation-client.js` 把两个值按当前账号存入本标签页的 `sessionStorage`（`tcg.hobbystation.credentials`），切换账号、退出登录或关闭标签页即清除；`static/hs-cart-settings.js` 保存后调用 `/query` 验证，页面重新加载时会再验证一次。
+
 ## 卡牌订阅后端
 
 ### 邮件样式与本地预览

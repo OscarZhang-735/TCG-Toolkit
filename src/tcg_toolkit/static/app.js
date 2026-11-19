@@ -17,6 +17,8 @@ import {yuyuteiClient} from './yuyutei-client.js';
 import {createCart} from './cart.js';
 import {cartTarget} from './product-identity.js';
 import {bindCartSettings} from './cart-settings.js';
+import {hobbystationClient} from './hobbystation-client.js';
+import {bindHobbystationSettings} from './hs-cart-settings.js';
 import {cartStepper, createCartPage} from './cart-page.js';
 import {createProductDetails} from './product-details.js';
 import {showFeedback, markDot} from './feedback.js';
@@ -96,6 +98,7 @@ const dismissNotice = () => { cart.dismissNotice(); subscriptions.dismissNotice(
 $('page-notice-close').addEventListener('click', dismissNotice);
 $('page-notice-action').addEventListener('click', dismissNotice);
 const cartSettings = bindCartSettings(yuyuteiClient, cart);
+const hobbystationSettings = bindHobbystationSettings(hobbystationClient);
 function renderCartSummary() {
   const state = cart.state, box = $('cart-summary');
   const content = [icon('bi-cart3')];
@@ -545,7 +548,7 @@ function renderSourceTips() {
 }
 function refreshLanguage() {
   applyLanguage(document); $('language').value = getLanguage(); renderSourceTips();
-  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); renderNotice();
+  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); renderNotice(); hobbystationSettings.render();
 }
 $('language').addEventListener('change', () => {setLanguage($('language').value); refreshLanguage();});
 $('detail-cancel').addEventListener('click', () => $('detail-dialog').close());
@@ -555,7 +558,7 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); hobbystationSettings.reset(); hobbystationSettings.render(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
   userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;
@@ -570,6 +573,10 @@ export function activateUser(id, request, email = null) {
   history = readHistory(localStorage, userId); $('search').inert = false;
   proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); activateGraded(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
   refreshLanguage();
+  // Credentials kept in this tab across a reload are re-checked once, like the YuYu-Tei cart.
+  let hobbystationSaved = false;
+  try { hobbystationSaved = hobbystationClient.hasCredentials(); } catch { /* not activated */ }
+  if (hobbystationSaved) hobbystationSettings.verify();
 }
 // The account page reports the effective address after loading or changing it.
 export function setNotificationEmail(email) {
