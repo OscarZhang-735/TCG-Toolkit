@@ -1,3 +1,4 @@
+from tcg_toolkit.cart import operations
 from sqlalchemy import inspect
 from auth_helpers import persisted_data
 from auth_helpers import register_user
@@ -9,9 +10,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from tcg_toolkit.auth.store import UserStore
+from tcg_toolkit.persistence.runtime import open_database
 from tcg_toolkit.web import app
-from tcg_toolkit.yuyutei_cart import CART_URL
+from tcg_toolkit.cart.yuyutei import CART_URL
 
 ORIGIN = 'https://testserver'
 BASE = '/api/yuyutei'
@@ -79,9 +80,9 @@ def test_credentials_are_request_scoped_and_never_stored(client, upstream):
     calls = len(upstream[0])
     assert client.post(BASE + '/cart', json=CARD).status_code == 422
     assert len(upstream[0]) == calls
-    with UserStore(app.state.auth.store.conninfo).session() as db:
+    with open_database(app.state.database.conninfo).session() as db:
         assert not inspect(db.connection()).has_table('yuyutei_credentials')
-    raw = persisted_data(app.state.auth.store)
+    raw = persisted_data(app.state.database)
     for secret in SECRETS.values():
         assert secret.encode() not in raw
 
@@ -207,7 +208,7 @@ EMPTY_CART = CART_META + '<div id="cart_all"><div id="cart_empty_meg">Empty</div
 
 
 def cart_html(index=5, quantity=3, kizu=0, kind='normal', gid=56, ver='OS01', cid='10044'):
-    from tcg_toolkit.yuyutei_cart import GAME_PATHS
+    from tcg_toolkit.catalog.identity import GAME_PATHS
     game = GAME_PATHS[gid]
     prefix = 'itemReservedInfo' if kind == 'reserved' else 'itemInfo'
     return CART_META + f'''<div id="cart_all"><div id="cart_empty_meg" style="display:none">Empty</div>
@@ -342,7 +343,7 @@ def test_same_upstream_session_serializes_entire_remove_across_users(client, mon
     from concurrent.futures import ThreadPoolExecutor
     from contextlib import contextmanager
     from threading import Event, Lock
-    import tcg_toolkit.yuyutei_cart as module
+    import tcg_toolkit.cart.yuyutei as module
     alice = client.headers['Authorization']
     login(client, 'bob')
     # The same Laravel session may have differently encrypted cookie strings.
@@ -391,13 +392,13 @@ def test_same_upstream_session_serializes_entire_remove_across_users(client, mon
         assert second.result(timeout=5).status_code == expected
     assert [r.method for r in calls[:3]] == ['GET', 'POST', 'GET']
     assert sum(str(r.url).endswith('/cart_service') for r in calls) == 1
-    assert module._session_locks == {}
+    assert operations._session_locks == {}
 
 
 def test_session_lock_does_not_block_other_sessions_and_releases_on_error():
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
-    from tcg_toolkit.yuyutei_cart import session_lock, _session_locks
+    from tcg_toolkit.cart.operations import session_lock, _session_locks
     entered = Event()
     def other():
         with session_lock('different-session'):

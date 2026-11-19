@@ -5,8 +5,8 @@ import uuid
 from sqlalchemy.schema import CreateSchema, DropSchema
 import pytest
 
-from tcg_toolkit.database import Database, connection_info
-from tcg_toolkit.schema import migrate
+from tcg_toolkit.persistence.database import Database, connection_info
+from tcg_toolkit.persistence.schema import migrate
 
 
 @pytest.fixture(autouse=True)
@@ -29,9 +29,11 @@ def postgres_schema(monkeypatch):
 
     monkeypatch.setattr(Database, "__init__", track)
     # Some existing API tests use TestClient without a lifespan context.
+    from tcg_toolkit.persistence.runtime import open_database
     from tcg_toolkit.auth.runtime import initialize_auth
     from tcg_toolkit.web import app
-    initialize_auth(app)
+    app.state.database = open_database()
+    initialize_auth(app, app.state.database)
     try:
         yield schema
     finally:

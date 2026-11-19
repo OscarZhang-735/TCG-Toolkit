@@ -1,0 +1,121 @@
+"""Hobby Station keyword search."""
+import re
+import unicodedata
+from dataclasses import replace
+from urllib.parse import parse_qs, urljoin, urlsplit
+
+import httpx
+from bs4 import Tag
+
+from ...external.search_proxy import SearchProxyClient
+from ..identity import HOBBY_GAME_DIRS
+from ..models import Game, SearchItem, SearchSource, StockStatus
+from ..pagination import PagedSearcher, _text
+from .official import LYCEE_SEARCH, parse_lycee
+
+
+class HobbyStationClient(SearchProxyClient):
+    relay_host = 'www.hobbystation-single.jp'
+
+    def get(self, url, *, timeout):
+        response = super().get(url, timeout=timeout)
+        if (response.status_code == 200 and response.url.host == self.relay_host
+                and '<title>安全な接続を確認中...</title>' in response.text):
+            # The storefront issues a session cookie in its landing page, then reloads.
+            cookie = re.search(r'document\.cookie\s*=\s*"eccube_bot_check=([\w-]+);', response.text)
+            if cookie:
+                self.client.cookies.set('eccube_bot_check', cookie[1], domain=self.relay_host, path='/')
+                return super().get(url, timeout=timeout)
+        return response
+
+
+class HobbyStationSearcher(PagedSearcher):
+    source = SearchSource.HOBBYSTATION
+    base_url = f"https://{HobbyStationClient.relay_host}"
+    cards_selector = "section.result .searchRsultList > li"
+    page_param = "pageno"
+    fixed_params = {"match_type": "1"}
+    client_type = HobbyStationClient
+
+    def is_empty(self, main: Tag) -> bool:
+        return _text(main.select_one('.ec-searchnavRole__counter')) == 'お探しの商品は見つかりませんでした'
+
+    def parse_item(self, card: Tag, *, url: str) -> SearchItem:
+        link = card.select_one('.list_product_Name_pc a[href]')
+        name = _text(link)
+        number = _text(card.find('div', recursive=False))
+        detail = card.select_one('.packageDetail')
+        price = re.match(r'([0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)\s*円', _text(detail))
+        if not name or not number or not price or not link.get('href'):
+            raise ValueError("Missing or invalid name, card number, price or product URL")
+        if self.game == Game.LYCEE:
+            number = re.sub(r'^LO-(?:D-)?(?=LO-)', '', number)
+        if detail.select_one('img[alt="SOLD OUT"]'):
+            stock_text, status, quantity = 'SOLD OUT', StockStatus.OUT_OF_STOCK, 0
+        else:
+            stock_text = _text(detail.select_one('.stock'))
+            value = re.sub(r'^在庫数\s*[:：]\s*', '', stock_text)
+            quantity = int(value) if re.fullmatch(r'[0-9]+', value) else None
+            if quantity is not None:
+                status = StockStatus.IN_STOCK if quantity else StockStatus.OUT_OF_STOCK
+            elif value in ('◎', '○', '◯', '△'):
+                status = StockStatus.IN_STOCK
+            else:
+                status = StockStatus.UNKNOWN
+        label = unicodedata.normalize('NFKC', name)
+        rarity = re.search(r'\(\s*([A-Z][A-Z0-9+★☆]*)\s*\)(?:\s*\([^()]*[ぁ-龯][^()]*\))*$', label)
+        image = card.select_one('figure img[src]')
+        return SearchItem(
+            game=self.game, name=name, card_number=number,
+            price=int(price[1].replace(',', '')), currency='JPY',
+            stock_status=status, stock_quantity=quantity, stock_text=stock_text,
+            product_url=urljoin(url, link['href']),
+            image_url=urljoin(url, image['src']) if image and image['src'] else None,
+            rarity=rarity[1] if rarity else None,
+        )
+
+    def parse_pagination(self, main: Tag, *, page: int) -> int | None:
+        pager = main.select_one('.ec-pager')
+        if pager is None:
+            if page != 1:
+                raise ValueError("No pagination confirms the requested page")
+            return None
+        if _text(pager.select_one('.ec-pager__item--active')) != str(page):
+            raise ValueError("Active page does not match the requested page")
+        for link in pager.select('a'):
+            if _text(link) == '次へ':
+                values = parse_qs(urlsplit(link.get('href', '')).query).get('pageno')
+                if values != [str(page + 1)]:
+                    raise ValueError("Invalid next page")
+                return page + 1
+        return None
+
+
+class HobbyStationLyceeSearcher(HobbyStationSearcher):
+    game = Game.LYCEE
+    search_path = f"/{HOBBY_GAME_DIRS[game]}/product/list"
+
+    def search_page(self, keyword: str, *, page: int = 1):
+        result = super().search_page(keyword, page=page)
+        if all(item.rarity for item in result.items):
+            return result
+        # Some printings share a shop title. Match the full official number, including its suffix.
+        try:
+            response = httpx.get(LYCEE_SEARCH, params={'word': result.keyword}, follow_redirects=True,
+                                 timeout=min(self.timeout, 5))
+            response.raise_for_status()
+            rarities = {card['card_number']: card['rarity'] for card in parse_lycee(response.text)}
+        except (httpx.HTTPError, ValueError):
+            return result
+        return replace(result, items=[replace(item, rarity=item.rarity or rarities.get(item.card_number))
+                                      for item in result.items])
+
+
+class HobbyStationWSSearcher(HobbyStationSearcher):
+    game = Game.WS
+    search_path = f"/{HOBBY_GAME_DIRS[game]}/product/list"
+
+
+class HobbyStationWSRSearcher(HobbyStationSearcher):
+    game = Game.WSR
+    search_path = f"/{HOBBY_GAME_DIRS[game]}/product/list"

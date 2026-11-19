@@ -3,12 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const noticesModule = asModule(await readFile(new URL('notices.js', base), 'utf8'));
-const favoritesSource = (await readFile(new URL('favorites.js', base), 'utf8')).replace("'./notices.js'", JSON.stringify(noticesModule));
-const sourcesModule = asModule(await readFile(new URL('search-sources.js', base), 'utf8'));
-const source = (await readFile(new URL('favorite-selection.js', base), 'utf8'))
+const noticesModule = asModule(await readFile(new URL('shared/notices.js', base), 'utf8'));
+const favoritesSource = (await readFile(new URL('collection/favorites.js', base), 'utf8')).replace("'../shared/notices.js'", JSON.stringify(noticesModule));
+const sourcesModule = asModule(await readFile(new URL('catalog/search-sources.js', base), 'utf8'));
+const source = (await readFile(new URL('collection/favorite-selection.js', base), 'utf8'))
   .replace("'./favorites.js'", JSON.stringify(asModule(favoritesSource)))
-  .replace("'./search-sources.js'", JSON.stringify(sourcesModule));
+  .replace("'../catalog/search-sources.js'", JSON.stringify(sourcesModule));
 const {createSelection} = await import(asModule(source));
 const {cardKey} = await import(asModule(favoritesSource));
 

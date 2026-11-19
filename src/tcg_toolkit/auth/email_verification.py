@@ -9,9 +9,9 @@ import time
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
-from ..database import email_lock
-from ..db_models import EmailChallenge, User
-from ..notifications import SMTPMailer
+from ..persistence.database import email_lock
+from ..persistence.models import EmailChallenge, User
+from ..mail.delivery import SMTPMailer
 from email_validator import validate_email
 from fastapi import HTTPException
 

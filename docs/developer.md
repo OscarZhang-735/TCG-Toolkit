@@ -94,20 +94,21 @@ with ProxyGoClient() as client:
 
 ### 模块边界与扩展
 
-`web.py` 负责组装路由、浏览器中间件和后台任务生命周期。功能模块直接依赖公共模型、服务或数据源，不从 Web 入口获取依赖，也不通过调用其他路由复用业务逻辑。
+Python 源码位于 `src/tcg_toolkit/`。`web.py` 在启动时打开并检查数据库，将同一个连接池交给认证、订阅任务和图片清理任务，并组装各领域的 HTTP 路由。业务路由通过 `request.app.state.database` 获取数据库。命令行入口为 `tcg-search` 和 `tcg-db`，Python 搜索调用继续从 `tcg_toolkit` 导入。
 
-| 职责 | 模块与依赖方向 |
+| 领域 | 职责与依赖 |
 | --- | --- |
-| 认证 | `auth/schemas.py` 定义请求模型；`auth/dependencies.py` 提供访问控制；`auth/runtime.py` 初始化服务和限流；`auth/routes.py` 处理端点 |
-| 搜索与商品 | Web 搜索和 CLI 使用 `search.py` 的 `SEARCH_SOURCES` 按商家和游戏选择搜索器。游游亭的游戏注册表 `SEARCHERS` 也供收藏和报价使用。`product_identity.py` 定义商品身份，`cart_models.py` 定义购物车目标模型 |
-| 商品详情数据源 | `external/yuyutei_products.py` 管理抓取、解析及缓存，抛出 `ProductSourceError`；`product_details.py` 等 HTTP 调用方负责转换为接口响应，后台任务直接记录数据源错误 |
-| 收藏与订阅 | `subscription_schedule.py` 提供 API 和后台共用的时间计算；`subscription_service.py` 原子提交订阅、收藏和邮件待发记录；`subscription_worker.py` 负责扫描、运行状态和投递重试 |
-| 通知 | `notifications.py` 提供 SMTP 发送、收件地址选择和订阅消息组装；认证验证码、通知设置路由及后台任务直接使用该模块 |
-| 卡牌库 | `card_schemas.py` 定义输入和序列化；`card_transfer.py` 负责 JSON/XLSX 导入导出和导入事务；`cards.py` 保留卡牌及分组路由 |
-| 数据库 | `schema.py` 负责版本检查和迁移；`db_cli.py` 只解析命令行参数，运行期模块直接依赖 `schema.py` |
-| 前端 | `cards-ui.js` 组合库存界面，`cards-transfer-ui.js` 管理导入导出交互；`card-prices.js`、`card-money.js`、`product-identity.js` 和 `quantity.js` 分别提供报价、金额、商品身份和数量处理 |
+| `catalog/` | `search.py` 根据来源和游戏选择 `providers/` 下的商户搜索器。`identity.py` 定义商品身份，`games.py` 提供库存与报价共用的游戏名称。`prices.py` 按 `MERCHANTS` 登记报价来源。 |
+| `cart/` | 三家商户分别处理各自的购物车协议，共用 `operations.py` 的写入预占、重放及会话锁。 |
+| `collection/` | `cards.py`、`graded_cards.py` 和 `favorites.py` 管理普通卡、评级卡及收藏。三类藏品复用 `groups.py` 的分组规则，保留各自的表、权限范围和错误码。`transfer.py` 管理普通卡的 JSON/XLSX 导入导出。 |
+| `grading/` | `adapters.py` 读取各机构的证书，`lookup.py` 维护机构注册表并提供查询服务，`concurrency.py` 管理并发和取消。证书查询接口与评级卡库调用同一查询服务。 |
+| `subscriptions/` | `service.py` 管理订阅与检查间隔，`checks.py` 在同一事务内更新订阅、收藏和待发通知。`schedule.py` 计算时间，`worker.py` 扫描到期任务并重试投递。 |
+| `auth/`、`mail/`、`media/` | 认证模块管理账户、会话和验证码。认证和订阅共用邮件模板与 SMTP 投递。头像和评级卡照片共用 COS 对象存储和清理队列。 |
+| `currency/`、`external/` | 汇率客户端与兑换接口归入 `currency/`。`external/` 提供商品和证书适配器使用的外部 HTTP 传输客户端。 |
+| `persistence/`、`migrations/` | 前者提供连接、事务、ORM 映射与 schema 校验。Alembic 从原迁移目录读取已有版本，`tcg-db` 和应用启动检查使用同一套版本规则。 |
+| `static/` | `auth.js` 和 `app.js` 组装浏览器界面。功能模块归入 `account/`、`cart/`、`catalog/`、`collection/`、`subscriptions/`，跨功能组件归入 `shared/`。Pages 构建保留这些目录并为模块引用添加版本号。 |
 
-新增搜索游戏时，在对应商家的游戏注册表中登记搜索器。新增报价商家使用 `prices.py` 的 `MERCHANTS` 注册表。
+新增搜索游戏时，在对应商家的注册表中登记搜索器，并更新前端 `static/catalog/search-sources.js` 中的来源与游戏对应表。
 
 ### 按商家搜索
 
@@ -127,7 +128,7 @@ Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经�
 
 Card Max 使用服务器直连，例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014&stock=true`。默认只读取搜索列表，列表包含售罄单卡（如实测的 `GBF/S134-132S`），库存返回 `unknown` 和 `null`。可用 `stock=true`、CLI 的 `--stock` 或 Python 搜索器构造参数 `stock=True` 开启详情查询，每条单卡结果额外请求一次详情页。`残りあとN個` 返回具体数量，`売り切れ` 返回 `out_of_stock` 和 0。WS 可输入完整编号，如 `AMG/W121-019SP`。Card Max 的 WSR 分类目前仅有盒装商品。
 
-网页搜索可多选来源，前端 `static/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。各来源的结果都可直接收藏，收藏页可按来源筛选。WebUI 的订阅仅支持游游亭商品，其他来源不显示订阅操作，批量订阅时跳过。购物车数量控件支持游游亭、Hobby Station 和 Card Max，按来源操作相应购物车。Hobby Station 收藏保存原站图片地址，而非本服务的图片转发地址。新增来源时需同步更新该文件。
+网页搜索可多选来源，前端 `static/catalog/search-sources.js` 维护与 `SEARCH_SOURCES` 一致的来源与游戏对应表，只对受支持的游戏和来源组合发请求，不支持的组合静默跳过。选中 Card Max 时显示“解析 Card Max 库存”选项，开启后仅对 Card Max 请求附带 `stock=true`。各来源的结果都可直接收藏，收藏页可按来源筛选。WebUI 的订阅仅支持游游亭商品，其他来源不显示订阅操作，批量订阅时跳过。购物车数量控件支持游游亭、Hobby Station 和 Card Max，按来源操作相应购物车。Hobby Station 收藏保存原站图片地址，而非本服务的图片转发地址。新增来源时需同步更新该文件。
 
 命令行可使用 `tcg-search "LO-4899" --source hobbystation --game lycee` 或 `tcg-search "BP22-014" --source cardmax --game sev`，同样支持 `--page` 和 `--all`。
 
@@ -151,7 +152,7 @@ GitHub Actions 在现有 test job 内启动 PostgreSQL service，不增加数据
 
 ### ORM 与事务
 
-持久化实体统一定义在 `src/tcg_toolkit/db_models.py`，与搜索结果及 API 输入模型分开。
+持久化实体统一定义在 `src/tcg_toolkit/persistence/models.py`，与搜索结果及 API 输入模型分开。
 业务代码使用 SQLAlchemy 2 的 `select()`、实体属性和 PostgreSQL upsert 表达式，不拼接 SQL，也不使用 `text()` 接收用户输入。
 
 `Database.session()` 为每次操作创建独立 Session：正常退出提交，异常退出回滚并释放连接。Session 不跨线程共享。
@@ -159,7 +160,7 @@ GitHub Actions 在现有 test job 内启动 PostgreSQL service，不增加数据
 
 ```python
 from sqlalchemy import select
-from tcg_toolkit.db_models import OwnedCard
+from tcg_toolkit.persistence.models import OwnedCard
 
 with store.session() as session:
     card = session.scalar(select(OwnedCard).where(
@@ -272,11 +273,11 @@ WebUI 收藏页顶部为分组栏：“全部”及各分组（附数量），�
 
 **上传与扫描卡牌图片。** 详情页点击正面或反面图片打开选项：查看大图（有图片时）、上传图片、扫描卡牌（`capture=environment` 调用摄像头拍照）、移除上传的图片（已上传时）。浏览器先把照片缩到长边 ≤ 2400 像素并重新编码为 JPEG（同时应用 EXIF 方向），再调用 `detect-card`；截取对话框 `graded-crop.js` 在照片上叠加 SVG 四角框，预置识别结果（识别失败则为整张照片稍向内缩），可用鼠标、触摸拖动或方向键（Shift 加速）调整，“整张图片”“自动识别”可重置。保存时把同一张 JPEG 与四角坐标发给 `PUT …/images/{side}`，服务端透视校正截取。记录的 `images` 统一为正面、反面两项 `{url, alt, side, thumbnail_url, uploaded}`：上传图片优先；机构未标注正反面的图片（如 PCG-CN）按页面顺序依次作为正面、反面。
 
-边框识别位于 `card_detect.py`（依赖 `opencv-python-headless`，Pillow 先解码并应用 EXIF 方向）：在长边 900 像素的副本上，用多组 Canny 边缘及 Otsu 阈值图找轮廓，取凸包拟合四边形（圆角卡砖退化为外接旋转矩形），筛选面积占照片 8%–98.5%、短长边比 0.45–0.92、填充度 ≥ 0.8、两个以上角不贴照片边缘的候选，再按面积 × 矩形度 × 四边梯度支撑度评分取最高者。除轮廓外还用 Hough 直线组合四边形：反光和保护袋常使卡砖外框断开、无法形成闭合轮廓，但四条边仍是长直线。候选还需四角在 72°–108° 之间、对边长度比 ≥ 0.72（排除由卡砖上边与卡牌下边拼成的形状）；边缘支撑度取四边中最弱一边的平均梯度强度与强边缘覆盖率之和。选出最高分后，若有包住它、得分不低于 80% 且支撑度不低于 70% 的更大四边形则取之，因此卡砖照片优先截取整块卡砖（不被内部卡牌边框截短，也不被保护袋上较弱的折边拉长），裸卡截取卡牌。测试用 `tests/card_photos.py` 合成不同背景、旋转和透视的照片验证角点误差（≤ 4%），实物照片的效果仍需在设备上确认，失败时可手动调整。
+边框识别位于 `collection/card_detect.py`（依赖 `opencv-python-headless`，Pillow 先解码并应用 EXIF 方向）：在长边 900 像素的副本上，用多组 Canny 边缘及 Otsu 阈值图找轮廓，取凸包拟合四边形（圆角卡砖退化为外接旋转矩形），筛选面积占照片 8%–98.5%、短长边比 0.45–0.92、填充度 ≥ 0.8、两个以上角不贴照片边缘的候选，再按面积 × 矩形度 × 四边梯度支撑度评分取最高者。除轮廓外还用 Hough 直线组合四边形：反光和保护袋常使卡砖外框断开、无法形成闭合轮廓，但四条边仍是长直线。候选还需四角在 72°–108° 之间、对边长度比 ≥ 0.72（排除由卡砖上边与卡牌下边拼成的形状）；边缘支撑度取四边中最弱一边的平均梯度强度与强边缘覆盖率之和。选出最高分后，若有包住它、得分不低于 80% 且支撑度不低于 70% 的更大四边形则取之，因此卡砖照片优先截取整块卡砖（不被内部卡牌边框截短，也不被保护袋上较弱的折边拉长），裸卡截取卡牌。测试用 `tests/card_photos.py` 合成不同背景、旋转和透视的照片验证角点误差（≤ 4%），实物照片的效果仍需在设备上确认，失败时可手动调整。
 
-**亮度校准（可选）。** 截取对话框的“亮度校准”按钮把当前照片发给 `calibrate-image`，用返回的同尺寸 JPEG 替换预览和待上传图片，四角坐标不变；按钮随即变为“撤销亮度校准”，原图和校准图都保留在浏览器内存中，撤销与再次应用无需重新请求。处理位于 `card_enhance.py`：① 高光区检测——同时满足较亮（HSV 明度 > 165 起计）、低饱和，并且比所在表面更亮（比文字闭运算后的局部表面亮，或比排除饱和高光后的大范围“漫反射白”参考亮），以免把白色卡面、白色衣服误判为反光；② 在高光区内用局部暗通道先验去除白色反光“薄雾”，按反光外较暗表面（墨色、画面）的暗通道估计遮罩强度，上限 0.6；③ 局部光照归一化——以局部亮包络估计光照，把较暗区域提升到光照充足水平（增益 0.9–1.25）；④ CLAHE 轻度增强对比度。大尺度模糊在缩小副本上计算，2400 像素照片约 0.5–1 秒。测试用合成的“画面上覆盖反光”场景验证反光下画面变暗、对比度提高、未受影响区域基本不变及白色卡面不被误判。
+**亮度校准（可选）。** 截取对话框的“亮度校准”按钮把当前照片发给 `calibrate-image`，用返回的同尺寸 JPEG 替换预览和待上传图片，四角坐标不变；按钮随即变为“撤销亮度校准”，原图和校准图都保留在浏览器内存中，撤销与再次应用无需重新请求。处理位于 `collection/card_enhance.py`：① 高光区检测——同时满足较亮（HSV 明度 > 165 起计）、低饱和，并且比所在表面更亮（比文字闭运算后的局部表面亮，或比排除饱和高光后的大范围“漫反射白”参考亮），以免把白色卡面、白色衣服误判为反光；② 在高光区内用局部暗通道先验去除白色反光“薄雾”，按反光外较暗表面（墨色、画面）的暗通道估计遮罩强度，上限 0.6；③ 局部光照归一化——以局部亮包络估计光照，把较暗区域提升到光照充足水平（增益 0.9–1.25）；④ CLAHE 轻度增强对比度。大尺度模糊在缩小副本上计算，2400 像素照片约 0.5–1 秒。测试用合成的“画面上覆盖反光”场景验证反光下画面变暗、对比度提高、未受影响区域基本不变及白色卡面不被误判。
 
-上传图片沿用头像的 COS 存储桶 `TCG_AVATAR_COS_URL`，对象为 `/tcgtoolkit/graded/<随机32位十六进制>.webp`；替换、移除和删除卡片时旧对象进入头像共用的 `avatar_cleanup` 删除队列（后台任务重试）。未配置存储桶时上传返回 503 `graded_image_storage_failed`。识别与上传每账号每分钟共 30 次。错误代码：415/422 `graded_image_invalid`、413 `graded_image_too_large`、422 `graded_image_dimensions`（每边 > 6000 像素）、422 `graded_image_crop`（坐标无效或截取过小）、404 `graded_card_not_found`／`graded_image_side`、429 `rate_limited`。筛选区在没有卡片时也保留（卡牌库与收藏页同样在加载完成后始终显示筛选区）。评级卡页面的“多选”与卡牌库一致：可勾选或全选当前筛选后显示的卡片，选择栏提供批量“重新查询”（逐张交给前端查询队列，同时最多两项，已在查询中的卡片跳过）和“删除”（确认后逐张调用 `DELETE /api/graded-cards/{id}`，完成的取消选中，失败的保持选中）；存在分组时选择栏还提供“移动到分组”（逐张调用 `PUT /api/graded-cards/{id}/group`）；游游亭批量查价不适用于评级卡。记录的 `display_name` 为用户设置的可选显示名称：设置后网格、列表、详情标题、删除确认和图片说明都显示该名称（鼠标悬停标题可看到证书卡名，详情页另显示“证书卡名”），搜索同时匹配显示名称和证书卡名，“卡名”排序按显示名称。详情页的价格与显示名称编辑位于正反面图片下方，两行按“标签 | 输入 | 保存”对齐，各自保存。评级卡分组与卡牌库分组相互独立（`graded_card_groups` 表，记录的 `group_id` 字段），界面复用 `group-ui.js` 的分组栏和对话框：选中分组后统计、筛选项、计数和列表只显示该组，“添加评级卡”默认放入当前分组；存在分组时列表显示“分组”列，网格卡片右下角和详情显示所在分组。评级卡图片为静态图片，不使用其他页面的鼠标跟随倾斜效果，点击仍可放大预览。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
+上传图片沿用头像的 COS 存储桶 `TCG_AVATAR_COS_URL`，对象为 `/tcgtoolkit/graded/<随机32位十六进制>.webp`；替换、移除和删除卡片时旧对象进入头像共用的 `avatar_cleanup` 删除队列（后台任务重试）。未配置存储桶时上传返回 503 `graded_image_storage_failed`。识别与上传每账号每分钟共 30 次。错误代码：415/422 `graded_image_invalid`、413 `graded_image_too_large`、422 `graded_image_dimensions`（每边 > 6000 像素）、422 `graded_image_crop`（坐标无效或截取过小）、404 `graded_card_not_found`／`graded_image_side`、429 `rate_limited`。筛选区在没有卡片时也保留（卡牌库与收藏页同样在加载完成后始终显示筛选区）。评级卡页面的“多选”与卡牌库一致：可勾选或全选当前筛选后显示的卡片，选择栏提供批量“重新查询”（逐张交给前端查询队列，同时最多两项，已在查询中的卡片跳过）和“删除”（确认后逐张调用 `DELETE /api/graded-cards/{id}`，完成的取消选中，失败的保持选中）；存在分组时选择栏还提供“移动到分组”（逐张调用 `PUT /api/graded-cards/{id}/group`）；游游亭批量查价不适用于评级卡。记录的 `display_name` 为用户设置的可选显示名称：设置后网格、列表、详情标题、删除确认和图片说明都显示该名称（鼠标悬停标题可看到证书卡名，详情页另显示“证书卡名”），搜索同时匹配显示名称和证书卡名，“卡名”排序按显示名称。详情页的价格与显示名称编辑位于正反面图片下方，两行按“标签 | 输入 | 保存”对齐，各自保存。评级卡分组与卡牌库分组相互独立（`graded_card_groups` 表，记录的 `group_id` 字段），界面复用 `group-ui.js` 的分组栏和对话框：选中分组后统计、筛选项、计数和列表只显示该组，“添加评级卡”默认放入当前分组；存在分组时列表显示“分组”列，网格卡片右下角和详情显示所在分组。评级卡图片为静态图片，不使用其他页面的鼠标跟随倾斜效果，点击仍可放大预览。`grading-scan.js` 在浏览器本地解码照片和摄像头帧，优先使用支持 QR 的 `BarcodeDetector`，否则按需加载自带的 Apache-2.0 `jsQR 1.4.0`（许可及来源位于 `static/collection/jsqr.js` 文件头）。不上传照片或扫码得到的 URL；只提交机构 ID 与编号。摄像头需 HTTPS/localhost 和权限，关闭弹窗或退出登录会释放视频轨道。
 
 ### 评级卡验收
 
@@ -321,7 +322,7 @@ PCG-CN 使用机构 ID `pcgcn`，通过 `GET /api/grading/pcgcn/certificates/{ce
 
 验收编号 `10198854`：SHIKIBE MAYU、CHAOS JPN. RIDDLE JOKER 1.0、YZ-411、2018，两张图片。离线用例见 `tests/test_pcgcn.py`，页面集成见 `tests/test_graded_webui.py`。
 
-`GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa`、`cgc`、`ars` 和 `pcgcn`，实现统一位于 `grading.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
+`GET /api/grading/{provider}/certificates/{cert_number}` 使用本站 Bearer 登录验证，响应为 `Cache-Control: no-store`。机构支持小写 `psa`、`cgc`、`ars` 和 `pcgcn`，实现统一位于 `grading/adapters.py`，通过适配器映射选择机构。证书编号作为字符串处理，去除首尾空白，接受 1–32 位 ASCII 数字，保留前导零。
 
 配置服务端 `ZYTE_API_KEY`。PSA 查询通过 Zyte Extract API 抓取 `https://www.psacard.com/en-CA/cert/{cert_number}/psa`，请求 HTTP 响应正文并跟随目标重定向。密钥优先读取进程环境，再读取当前工作目录的 `.env`；显式空值报告配置错误。请求超时 220 秒、连接超时 5 秒，不自动重试，忽略系统代理环境变量。三份 Compose 均传入 `ZYTE_API_KEY`，修改配置后重新创建 Web 容器。
 
@@ -606,7 +607,7 @@ with SEVSearcher() as searcher:
 
 ### 浏览器端凭据
 
-默认使用 `sessionStorage`，由 `static/yuyutei-client.js` 提供独立客户端模块。
+默认使用 `sessionStorage`，由 `static/cart/yuyutei-client.js` 提供独立客户端模块。
 已有登录生命周期负责激活用户、退出/会话过期时清除、切换账户时清除旧凭据并取消或忽略旧请求；
 同一账户刷新页面可继续使用当前标签页中的凭据。不写入 `localStorage`，不提供持久化回退。
 浏览器禁用 sessionStorage 时保存操作会明确失败。sessionStorage 可被本站 JavaScript 读取，不是加密保险箱。
@@ -811,11 +812,11 @@ Content-Type: application/json
 
 加购响应中的 `done: false` 如果附有库存不足或单次限购提示，接口返回 HTTP 409 和 `hobbystation_stock_exceeded`。商品旁的气泡按 `detail.reason` 显示原因：`stock` 表示购买数量超过可用库存，`purchase_limit` 表示超过单次限购上限。旧响应缺少原因时显示“已达到库存或购买上限”。其他业务拒绝仍返回 `hobbystation_cart_rejected`。
 
-WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相同的数量控件。`static/hs-cart.js` 把该接口适配到 `cart.js` 的购物车状态：商品键为 `gid: 'hs'` 加商品 ID，购物车行的 `type` 为 `product_class_id`。加购回复自带核对后的购物车，因此不再重新查询。凭据错误、访问检查等账户级问题以页面提示显示。
+WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相同的数量控件。`static/cart/hs-cart.js` 把该接口适配到 `cart.js` 的购物车状态：商品键为 `gid: 'hs'` 加商品 ID，购物车行的 `type` 为 `product_class_id`。加购回复自带核对后的购物车，因此不再重新查询。凭据错误、访问检查等账户级问题以页面提示显示。
 
-侧边栏的“购物车”是可展开菜单，每个来源对应一个页面：`#cart`（游游亭，`cart-page.js`）、`#cart-hobbystation` 和 `#cart-cardmax`。后两者共用 `static/shop-cart-page.js` 和同一个 `#shop-cart-panel`。每次进入页面都会重新读取该店的购物车。页面提供数量调整、移除确认和跳转到该店官网购物车结算的链接。Hobby Station 商品图片通过 `/api/images/hobbystation/…` 转发显示。菜单上的数字为三家购物车数量之和，展开后显示各店数量。竖屏手机上，三个购物车直接列在分组下拉中。
+侧边栏的“购物车”是可展开菜单，每个来源对应一个页面：`#cart`（游游亭，`cart-page.js`）、`#cart-hobbystation` 和 `#cart-cardmax`。后两者共用 `static/cart/shop-cart-page.js` 和同一个 `#shop-cart-panel`。每次进入页面都会重新读取该店的购物车。页面提供数量调整、移除确认和跳转到该店官网购物车结算的链接。Hobby Station 商品图片通过 `/api/images/hobbystation/…` 转发显示。菜单上的数字为三家购物车数量之和，展开后显示各店数量。竖屏手机上，三个购物车直接列在分组下拉中。
 
-用户中心的“Hobby Station 登录凭据”面板要求同时填写 `eccube` 和 `eccube_bot_check`，并附打码的 DevTools 截图（`static/hs-help-cookies.webp`）。前端 `static/hobbystation-client.js` 把两个值按当前账号存入本标签页的 `sessionStorage`（`tcg.hobbystation.credentials`），切换账号、退出登录或关闭标签页即清除；`static/hs-cart-settings.js` 保存后调用 `/query` 验证，页面重新加载时会再验证一次。
+用户中心的“Hobby Station 登录凭据”面板要求同时填写 `eccube` 和 `eccube_bot_check`，并附打码的 DevTools 截图（`static/hs-help-cookies.webp`）。前端 `static/cart/hobbystation-client.js` 把两个值按当前账号存入本标签页的 `sessionStorage`（`tcg.hobbystation.credentials`），切换账号、退出登录或关闭标签页即清除；`static/cart/hs-cart-settings.js` 保存后调用 `/query` 验证，页面重新加载时会再验证一次。
 
 ## Card Max 销售购物车
 
@@ -837,7 +838,7 @@ WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相
 
 ### 邮件样式与本地预览
 
-邮件分为验证码和订阅通知两类（`email_templates.py`），共用品牌行、页脚及适配窄屏的表格布局，配色沿用网页的中性灰，使用内联样式，无外部字体、图片或脚本依赖。两类邮件的主题、HTML 与纯文本均为中英双语，中文在前、英文在后；验证码申请中的 `language` 参数仍被接受，但不再影响邮件语言。五种验证码用途共用验证码模板，正文只说明用途、有效期和验证码。订阅通知标题下只显示本批最近一次检查时间；每张卡显示名称（链接到详情页）、稀有度标签、编号及价格／库存的前后对比：变好为绿色、变差为琥珀色，未变化项只显示当前值；邮件底部（HTML 与纯文本）提供前往本站收藏夹的链接，地址由 `TCG_SITE_URL` 决定。两类邮件均发送 `multipart/alternative`，同时保留纯文本正文。
+邮件分为验证码和订阅通知两类（`mail/templates.py`），共用品牌行、页脚及适配窄屏的表格布局，配色沿用网页的中性灰，使用内联样式，无外部字体、图片或脚本依赖。两类邮件的主题、HTML 与纯文本均为中英双语，中文在前、英文在后；验证码申请中的 `language` 参数仍被接受，但不再影响邮件语言。五种验证码用途共用验证码模板，正文只说明用途、有效期和验证码。订阅通知标题下只显示本批最近一次检查时间；每张卡显示名称（链接到详情页）、稀有度标签、编号及价格／库存的前后对比：变好为绿色、变差为琥珀色，未变化项只显示当前值；邮件底部（HTML 与纯文本）提供前往本站收藏夹的链接，地址由 `TCG_SITE_URL` 决定。两类邮件均发送 `multipart/alternative`，同时保留纯文本正文。
 
 运行 `python scripts/preview_emails.py` 生成示例预览（不会发送邮件），再运行 `python -m http.server 18765 --bind 127.0.0.1 --directory data/email-preview`，访问 `http://127.0.0.1:18765`。预览使用与实际邮件相同的模板；浏览器预览不等同于所有邮箱客户端的最终显示效果。
 
@@ -860,12 +861,12 @@ WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相
 
 尚未发送或等待重试的汇总在实际投递时使用最新有效地址；已完成投递的邮件不会重发。
 
-网页入口位于用户中心的“订阅通知邮箱”卡片（`static/notification-email-ui.js`）：显示当前生效地址及来源（账户邮箱／自定义／未设置），展开后输入新地址、发送验证码并确认；使用自定义邮箱时可一键改用账户邮箱。登录、绑定账户邮箱或修改设置后，收藏夹的订阅按钮和提示按当前生效地址更新，无需重新登录。迁移 `0003` 将两个新字段初始化为空，现有用户继续使用注册邮箱。部署此版本前执行 `tcg-db migrate`，本次代码变更本身不修改运行中的 Docker 数据库。
+网页入口位于用户中心的“订阅通知邮箱”卡片（`static/account/notification-email-ui.js`）：显示当前生效地址及来源（账户邮箱／自定义／未设置），展开后输入新地址、发送验证码并确认；使用自定义邮箱时可一键改用账户邮箱。登录、绑定账户邮箱或修改设置后，收藏夹的订阅按钮和提示按当前生效地址更新，无需重新登录。迁移 `0003` 将两个新字段初始化为空，现有用户继续使用注册邮箱。部署此版本前执行 `tcg-db migrate`，本次代码变更本身不修改运行中的 Docker 数据库。
 
 
 订阅独立于收藏夹，监控普通品相 `kizu=0`。所有接口需要 Bearer 登录；写入沿用可信 `Origin` 和 `Content-Type: application/json` 检查，响应均为 `Cache-Control: no-store`。
 
-网页目前只在收藏夹页面提供入口：每张已收藏卡牌的刷新按钮旁有铃铛按钮，前端状态由 `static/subscriptions.js` 管理，按游戏和去掉尾部 `/` 的链接与收藏匹配。没有有效通知邮箱时铃铛禁用，并在页面上提示前往用户中心；有效时提示中显示收件地址。绑定邮箱或设置通知邮箱后无需重新登录。已订阅卡牌显示最近检查时间，`last_error` 非空时提示上次检查失败。收藏夹筛选面板额外提供“订阅”筛选（全部／已订阅／未订阅）；共享筛选面板仅在传入 `isSubscribed` 时显示该项，搜索页不受影响。取消收藏接口在同一个数据库事务中删除收藏和当前用户对应的订阅。匹配使用游戏和去掉尾部 `/` 的链接。任一步失败都会回滚。
+网页目前只在收藏夹页面提供入口：每张已收藏卡牌的刷新按钮旁有铃铛按钮，前端状态由 `static/subscriptions/subscriptions.js` 管理，按游戏和去掉尾部 `/` 的链接与收藏匹配。没有有效通知邮箱时铃铛禁用，并在页面上提示前往用户中心；有效时提示中显示收件地址。绑定邮箱或设置通知邮箱后无需重新登录。已订阅卡牌显示最近检查时间，`last_error` 非空时提示上次检查失败。收藏夹筛选面板额外提供“订阅”筛选（全部／已订阅／未订阅）；共享筛选面板仅在传入 `isSubscribed` 时显示该项，搜索页不受影响。取消收藏接口在同一个数据库事务中删除收藏和当前用户对应的订阅。匹配使用游戏和去掉尾部 `/` 的链接。任一步失败都会回滚。
 
 | 接口 | 请求与响应 |
 | --- | --- |

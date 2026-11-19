@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const source = (await readFile(new URL('../src/tcg_toolkit/static/product-details.js', import.meta.url), 'utf8'))
+const source = (await readFile(new URL('../src/tcg_toolkit/static/catalog/product-details.js', import.meta.url), 'utf8'))
   .replace("import {productKey} from './product-identity.js';", 'const productKey = t => JSON.stringify([t.gid, t.ver, t.cid, t.kizu]);');
 const {createProductDetails} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const target = (cid, kizu = 0) => ({gid: 56, ver: 'OS01', cid, kizu});

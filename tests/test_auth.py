@@ -1,5 +1,5 @@
 from sqlalchemy import select, func, update
-from tcg_toolkit.db_models import AvatarCleanup, FavoriteGroup, LoginSession, SchemaMigration, User
+from tcg_toolkit.persistence.models import AvatarCleanup, FavoriteGroup, LoginSession, SchemaMigration, User
 from auth_helpers import registration_body, register_user
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -10,9 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 from tcg_toolkit.web import app
 from tcg_toolkit.auth.service import AuthService, DuplicateUsername, token_hash
-from tcg_toolkit.auth.avatar import cleanup_avatar
-from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.schema import SCHEMA_VERSION
+from tcg_toolkit.media.objects import cleanup_image
+from tcg_toolkit.persistence.runtime import open_database
+from tcg_toolkit.persistence.schema import SCHEMA_VERSION
 
 ORIGIN = "https://testserver"
 BODY = {"username": "Alice", "password": "a long password!"}
@@ -38,7 +38,7 @@ def test_register_session_logout_login(client):
     token = response.json()["token"]
     client.headers["Authorization"] = "Bearer " + token
     assert client.get("/api/auth/me").json() == user
-    store = app.state.auth.store
+    store = app.state.database
     with store.session() as db:
         encoded = db.scalar(select(User.password_hash))
         digest = db.scalar(select(LoginSession.token_hash))
@@ -46,7 +46,7 @@ def test_register_session_logout_login(client):
         assert digest == token_hash(token) and token != digest
         assert db.scalar(select(func.max(SchemaMigration.version))) == SCHEMA_VERSION
         assert db.scalars(select(FavoriteGroup).where(FavoriteGroup.user_id == user['id'])).all() == []
-    assert AuthService(UserStore(store.conninfo)).current_user(token) == user
+    assert AuthService(open_database(store.conninfo)).current_user(token) == user
     assert client.post("/api/auth/logout", json={}).status_code == 204
     assert app.state.auth.current_user(token) is None
     assert client.get("/api/auth/me").status_code == 401
@@ -69,7 +69,7 @@ def test_new_login_replaces_other_device_and_stale_logout_is_harmless(client, id
     assert client.post("/api/auth/logout", json={}, headers={"Authorization": "Bearer " + first}).status_code == 204
     assert client.get("/api/auth/me", headers={"Authorization": "Bearer " + latest}).status_code == 200
     assert app.state.auth.current_user(other)
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.scalar(select(func.count()).select_from(LoginSession).where(
             LoginSession.user_id == response.json()["user"]["id"])) == 1
 
@@ -88,7 +88,7 @@ def test_concurrent_logins_leave_one_active_session(client):
 
     def login():
         # Separate stores exercise database locking across application instances.
-        with UserStore(app.state.auth.store.conninfo) as store:
+        with open_database(app.state.database.conninfo) as store:
             start.wait(timeout=5)
             return AuthService(store).login(BODY["username"], BODY["password"])[1]
 
@@ -97,7 +97,7 @@ def test_concurrent_logins_leave_one_active_session(client):
     assert len(set(tokens)) == 2
     assert app.state.auth.current_user(original["token"]) is None
     assert sum(app.state.auth.current_user(token) is not None for token in tokens) == 1
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.scalar(select(func.count()).select_from(LoginSession).where(
             LoginSession.user_id == original["user"]["id"])) == 1
 
@@ -123,7 +123,7 @@ def test_browser_assets_revalidate_after_upgrade(client):
 
 
 def test_anonymous_cannot_call_upstream(client, monkeypatch):
-    from tcg_toolkit.search import SEARCHERS
+    from tcg_toolkit.catalog.search import SEARCHERS
     from tcg_toolkit.external import CurrencyClient
     def forbidden(*args, **kwargs):
         pytest.fail("anonymous request reached upstream")
@@ -261,8 +261,8 @@ def test_avatar_upload_persists_and_failed_replacement_preserves_it(client, monk
         uploaded.append(url)
         return httpx.Response(200 if len(uploaded) == 1 else 403, request=httpx.Request('PUT', url))
 
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', put)
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.delete', lambda *args, **kwargs: pytest.fail('Avatar was deleted'))
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.put', put)
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.delete', lambda *args, **kwargs: pytest.fail('Avatar was deleted'))
     headers = {'Content-Type': 'image/png'}
     response = client.put('/api/auth/avatar', content=image.getvalue(), headers=headers)
     assert response.status_code == 200
@@ -287,7 +287,7 @@ def test_avatar_replacement_cleans_up_after_commit(client, monkeypatch, first_de
     client.headers['Authorization'] = 'Bearer ' + registered['token']
     image = BytesIO()
     Image.new('RGB', (32, 32), 'red').save(image, format='PNG')
-    store = app.state.auth.store
+    store = app.state.database
     uploads, deletes = [], []
 
     def put(url, **kwargs):
@@ -301,8 +301,8 @@ def test_avatar_replacement_cleans_up_after_commit(client, monkeypatch, first_de
         return httpx.Response(first_delete_status if len(deletes) == 1 else 404,
                               request=httpx.Request('DELETE', url))
 
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', put)
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.delete', delete)
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.put', put)
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.delete', delete)
     for _ in range(2):
         response = client.put('/api/auth/avatar', content=image.getvalue(), headers={'Content-Type': 'image/png'})
         assert response.status_code == 200
@@ -311,8 +311,8 @@ def test_avatar_replacement_cleans_up_after_commit(client, monkeypatch, first_de
     if first_delete_status == 503:
         with store.session() as db:
             db.get(AvatarCleanup, uploads[0]).next_attempt_at = 0
-        with UserStore(store.conninfo) as restarted_store:
-            assert cleanup_avatar(restarted_store)
+        with open_database(store.conninfo) as restarted_store:
+            assert cleanup_image(restarted_store)
         assert deletes == [uploads[0], uploads[0]]
     with store.session() as db:
         assert db.scalars(select(AvatarCleanup)).all() == []
@@ -324,7 +324,7 @@ def test_avatar_rejects_untrusted_or_invalid_uploads_before_cos(client, monkeypa
     def unexpected_upload(*args, **kwargs):
         pytest.fail('Invalid or unauthorized upload reached COS')
 
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', unexpected_upload)
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.put', unexpected_upload)
     path = '/api/auth/avatar'
     headers = {'Content-Type': 'image/png'}
     assert client.put(path, content=b'invalid', headers=headers).status_code == 401

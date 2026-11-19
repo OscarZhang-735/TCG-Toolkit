@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const source = await readFile(new URL('../src/tcg_toolkit/static/rarities.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/catalog/rarities.js', import.meta.url), 'utf8');
 const {raritiesForGame, findRarity} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('WS keeps plus variants distinct and independent from WSR', () => {

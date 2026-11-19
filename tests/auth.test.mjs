@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const moduleURL = async name => `data:text/javascript;base64,${Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/'+name, import.meta.url))).toString('base64')}`;
 const {createAuthenticatedRequest} = await import(await moduleURL('auth-client.js'));
-const {loadResults} = await import(await moduleURL('logic.js'));
-const {readHistory, saveHistory} = await import(await moduleURL('history.js'));
+const {loadResults} = await import(await moduleURL('catalog/logic.js'));
+const {readHistory, saveHistory} = await import(await moduleURL('catalog/history.js'));
 test('401 aborts all subsequent search pages', async () => {
   const controller = new AbortController(); let calls = 0, expired = 0;
   const api = createAuthenticatedRequest(() => {expired++; controller.abort();}, async () => {calls++; return {status: 401};});

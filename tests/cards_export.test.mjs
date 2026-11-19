@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const source = await readFile(new URL('../src/tcg_toolkit/static/cards-export.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/collection/cards-export.js', import.meta.url), 'utf8');
 const {fetchCardExport, downloadCardExport, exportQuery, EXPORT_FIELDS, loadExportSettings} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('export preferences use the current field selection without historical field expansion', () => {

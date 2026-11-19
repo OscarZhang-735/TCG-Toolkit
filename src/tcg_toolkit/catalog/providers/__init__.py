@@ -1,0 +1,1 @@
+"""Marketplace-specific catalog adapters."""

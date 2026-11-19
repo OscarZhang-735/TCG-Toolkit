@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 
-from tcg_toolkit import subscriptions as api
-from tcg_toolkit.db_models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
+from tcg_toolkit.subscriptions import service as api
+from tcg_toolkit.persistence.models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
 from tcg_toolkit.web import app
 from test_subscriptions import client, add, favorite, worker, emails, snapshot, login, NOW, URL, ORIGIN
 
@@ -67,7 +67,7 @@ def test_update_guards_and_cors(client):
 def test_database_rejects_zero_interval(client):
     saved = add(client)
     with pytest.raises(IntegrityError):
-        with app.state.auth.store.session() as db:
+        with app.state.database.session() as db:
             row = db.get(Subscription, saved['id'])
             db.get(User, row.user_id).subscription_interval_hours = 0
 
@@ -110,7 +110,7 @@ def test_account_setting_and_schedules_roll_back_together(client):
     def fail_update(conn, cursor, statement, parameters, context, executemany):
         if statement.startswith('UPDATE subscriptions SET'):
             raise RuntimeError('schedule update failed')
-    engine = app.state.auth.store.engine
+    engine = app.state.database.engine
     event.listen(engine, 'before_cursor_execute', fail_update)
     try:
         with pytest.raises(RuntimeError, match='schedule update failed'):
@@ -136,7 +136,7 @@ def test_mixed_intervals_and_same_day_digests(client, monkeypatch):
     service = worker(fetch, now=now)
     service.tick()
     assert not calls
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.scalar(select(func.count()).select_from(SubscriptionRun)) == 0
     for hour in range(1, 25):
         now[0] = start + hour * 3600
@@ -165,7 +165,7 @@ def test_shared_product_leaves_not_due_subscription_untouched(client, monkeypatc
     assert calls == [URL]
     assert client.get('/api/subscriptions').json()['items'] == [future]
     assert client.get('/api/favorites').json()['items'] == [future_favorite]
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         for saved in favorites:
             row = db.get(Favorite, saved['id'])
             assert json.loads(row.snapshot) == snapshot(price=200)
@@ -219,7 +219,7 @@ def test_slow_fetch_keeps_next_hour_and_failure_interval(client, monkeypatch):
     refreshed_favorite = {**saved_favorite, 'item': snapshot(price=200), 'refreshed_at': start}
     assert client.get('/api/favorites').json()['items'] == [refreshed_favorite]
     assert service.deadline == start + 3600
-    from tcg_toolkit.errors import ProductSourceError
+    from tcg_toolkit.catalog.errors import ProductSourceError
     def failed(*args):
         raise ProductSourceError('product_timeout')
     service.fetcher = failed
@@ -266,7 +266,7 @@ def test_partial_user_commit_recovers_remaining_due_rows(client):
     service.tick()
     assert len(calls) == 1 and len(emails()) == 2
     assert len({email.user_id for email in emails()}) == 2
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert {run.state for run in db.scalars(select(SubscriptionRun))} == {'failed', 'complete'}
 
 

@@ -4,8 +4,8 @@ import json
 
 from alembic import command
 
-from .database import Database
-from . import schema
+from .persistence.database import Database
+from .persistence import schema
 
 
 def main(argv=None):

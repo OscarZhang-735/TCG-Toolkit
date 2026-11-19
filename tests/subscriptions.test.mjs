@@ -1,8 +1,8 @@
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const noticesModule = 'data:text/javascript;base64,' + Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/notices.js', import.meta.url), 'utf8')).toString('base64');
-const source = Buffer.from((await readFile(new URL('../src/tcg_toolkit/static/subscriptions.js', import.meta.url), 'utf8')).replace("'./notices.js'", JSON.stringify(noticesModule)));
+const noticesModule = 'data:text/javascript;base64,' + Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/shared/notices.js', import.meta.url), 'utf8')).toString('base64');
+const source = Buffer.from((await readFile(new URL('../src/tcg_toolkit/static/subscriptions/subscriptions.js', import.meta.url), 'utf8')).replace("'../shared/notices.js'", JSON.stringify(noticesModule)));
 const {createSubscriptions, subscriptionKey} = await import(`data:text/javascript;base64,${source.toString('base64')}`);
 const item = {game: 'wsr', product_url: 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240/', name: 'Card'};
 const row = {id: 'one', item: {...item, product_url: 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240'}, checked_at: 1, last_error: null};

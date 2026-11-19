@@ -4,7 +4,8 @@ import pytest
 
 from tcg_toolkit import Game, SearchPage, SearchRequestError
 from tcg_toolkit import cli
-from tcg_toolkit.search import SEARCHERS, HobbyStationLyceeSearcher
+from tcg_toolkit.catalog.search import SEARCHERS
+from tcg_toolkit.catalog.providers.hobbystation import HobbyStationLyceeSearcher
 
 
 @pytest.fixture

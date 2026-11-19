@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from auth_helpers import register_user
-from tcg_toolkit import grading as ars
+from tcg_toolkit.grading import adapters as ars
 from tcg_toolkit.web import app
 
 NUMBER = '047088950114'

@@ -1,8 +1,8 @@
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const source = (await readFile(new URL('../src/tcg_toolkit/static/cart-stock.js', import.meta.url), 'utf8'))
-  .replace("import {productKey} from './product-identity.js';", 'const productKey = t => JSON.stringify([t.gid, t.ver, t.cid, t.kizu]);');
+const source = (await readFile(new URL('../src/tcg_toolkit/static/cart/cart-stock.js', import.meta.url), 'utf8'))
+  .replace("import {productKey} from '../catalog/product-identity.js';", 'const productKey = t => JSON.stringify([t.gid, t.ver, t.cid, t.kizu]);');
 const {createCartStock} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const target = (cid, kizu = 0) => ({gid: 8, ver: 'yuzu5.0', cid, kizu});
 const tick = () => new Promise(r => setTimeout(r, 0));
@@ -49,10 +49,15 @@ test('cart page exposes bulk and per-card stock actions in both views', async ()
       querySelector() {return node();}, close() {}, showModal() {}};
   }
   globalThis.document = {createElement: node, getElementById(id) {if (!elements.has(id)) elements.set(id, node()); return elements.get(id);}};
-  let source = await read(new URL('../src/tcg_toolkit/static/cart-page.js', import.meta.url), 'utf8');
-  source = source.replace(/^import .*;$/gm, '');
-  source = "const t=(key)=>key, getLanguage=()=> 'en', cardImage=()=>document.createElement('img'), rarityBadge=()=>document.createElement('span'), numberButton=()=>document.createElement('button'), productKey=t=>JSON.stringify([t.gid,t.ver,t.cid,t.kizu]), parseQuantity=Number, showBubble=()=>{};\n" + source;
-  const {createCartPage} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  const cartDir = new URL('../src/tcg_toolkit/static/cart/', import.meta.url);
+  const moduleSource = async name => (await read(new URL(name, cartDir), 'utf8')).replace(/^import .*;$/gm, '');
+  const moduleURL = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
+  const helpers = "const t=key=>key, getLanguage=()=> 'en', productKey=t=>JSON.stringify([t.gid,t.ver,t.cid,t.kizu]);\n";
+  const stepper = moduleURL(helpers + "const parseQuantity=Number, showFeedback=()=>{};\n" + await moduleSource('cart-stepper.js'));
+  const source = helpers + `import {cartStepper} from '${stepper}';\n` +
+    "const cardImage=()=>document.createElement('img'), rarityBadge=()=>document.createElement('span'), numberButton=()=>document.createElement('button');\n" +
+    await moduleSource('cart-page.js');
+  const {createCartPage} = await import(moduleURL(source));
   const row = {...target('1'), type:'normal', quantity:2, unit_price:30, game:'chaos', name:'Card', removable:true};
   const cart = {state:{rows:[row],configured:true,complete:true,totalQuantity:2,subtotal:60},
     range:()=>({min:0,max:99}), isBusy:()=>false, message:()=>null};

@@ -5,12 +5,12 @@ import {readFile} from 'node:fs/promises';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const read = name => readFile(new URL(name, base), 'utf8');
-const noticesModule = asModule(await read('notices.js'));
-const identityModule = asModule(await read('product-identity.js'));
-const cartModule = asModule((await read('cart.js'))
-  .replace("'./notices.js'", JSON.stringify(noticesModule)).replace("'./product-identity.js'", JSON.stringify(identityModule)));
-const {hobbystationTarget, hobbystationCartErrorKey, createHobbystationCart, hobbystationCartRows} = await import(asModule((await read('hs-cart.js'))
-  .replace("'./storefront-cart.js'", JSON.stringify(asModule(await read('storefront-cart.js'))))
+const noticesModule = asModule(await read('shared/notices.js'));
+const identityModule = asModule(await read('catalog/product-identity.js'));
+const cartModule = asModule((await read('cart/cart.js'))
+  .replace("'../shared/notices.js'", JSON.stringify(noticesModule)).replace("'../catalog/product-identity.js'", JSON.stringify(identityModule)));
+const {hobbystationTarget, hobbystationCartErrorKey, createHobbystationCart, hobbystationCartRows} = await import(asModule((await read('cart/hs-cart.js'))
+  .replace("'./storefront-cart.js'", JSON.stringify(asModule(await read('cart/storefront-cart.js'))))
   .replace("'./cart.js'", JSON.stringify(cartModule))));
 const {messageTier} = await import(noticesModule);
 

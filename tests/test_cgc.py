@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from auth_helpers import register_user
-from tcg_toolkit import grading as module
+from tcg_toolkit.grading import adapters as module
 from tcg_toolkit.web import app
 
 

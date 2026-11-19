@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 import pytest
 
-from tcg_toolkit.email_templates import (BETTER, VERIFICATION_SUBJECT, WORSE, digest_html, favorites_url,
+from tcg_toolkit.mail.templates import (BETTER, VERIFICATION_SUBJECT, WORSE, digest_html, favorites_url,
                                          verification_html, verification_text)
 
 

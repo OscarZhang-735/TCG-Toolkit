@@ -5,10 +5,10 @@ import httpx
 import pytest
 from bs4 import BeautifulSoup
 
-from tcg_toolkit import prices
-from tcg_toolkit.errors import ProductSourceError, SearchParseError, SearchRequestError
-from tcg_toolkit.models import Game, SearchItem, SearchPage, StockStatus
-from tcg_toolkit.search import SEARCHERS
+from tcg_toolkit.catalog import prices
+from tcg_toolkit.catalog.errors import ProductSourceError, SearchParseError, SearchRequestError
+from tcg_toolkit.catalog.models import Game, SearchItem, SearchPage, StockStatus
+from tcg_toolkit.catalog.search import SEARCHERS
 from test_cards import client
 from test_product_details import FIXTURE, offer_html
 
@@ -136,7 +136,7 @@ def test_unknown_condition_fetches_normal_detail(client, monkeypatch, mismatch):
     def get(self, requested, *, timeout):
         calls.append(requested)
         return httpx.Response(200, text=html, request=httpx.Request('GET', requested))
-    monkeypatch.setattr('tcg_toolkit.external.yuyutei_products.SearchProxyClient.get', get)
+    monkeypatch.setattr('tcg_toolkit.catalog.providers.yuyutei_products.SearchProxyClient.get', get)
     response = client.get('/api/prices', params={**PARAMS, 'game': 'wsr', 'card_number': number})
     assert calls == [url]
     if mismatch:

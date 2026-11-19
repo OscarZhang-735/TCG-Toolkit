@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from tcg_toolkit.email_templates import verification_html, digest_html
+from tcg_toolkit.mail.templates import verification_html, digest_html
 
 
 def main():

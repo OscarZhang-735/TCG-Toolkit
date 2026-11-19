@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const i18n = `export const getLanguage = () => 'en';
 export const t = (key, values = {}) => Object.keys(values).length ? key + JSON.stringify(values) : key;`;
-const source = (await readFile(new URL('../src/tcg_toolkit/static/subscription-settings-ui.js', import.meta.url), 'utf8'))
-  .replace("'./i18n.js'", JSON.stringify(asModule(i18n)));
+const source = (await readFile(new URL('../src/tcg_toolkit/static/subscriptions/subscription-settings-ui.js', import.meta.url), 'utf8'))
+  .replace("'../i18n.js'", JSON.stringify(asModule(i18n)));
 const {createSubscriptionSettingsUI, formatInterval, formatNextCheck, intervalSummary, utcOffset, INTERVAL_PRESETS} = await import(asModule(source));
 const reply = (status, body) => ({status, ok: status < 300, json: async () => body});
 const NOW = new Date(2026, 10, 11, 21, 39).getTime();

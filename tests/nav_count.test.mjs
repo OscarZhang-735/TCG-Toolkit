@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-const source = (await readFile(new URL('../src/tcg_toolkit/static/nav-count.js', import.meta.url), 'utf8'))
-  .replace("import {getLanguage} from './i18n.js';", "const getLanguage = () => 'en';");
+const source = (await readFile(new URL('../src/tcg_toolkit/static/shared/nav-count.js', import.meta.url), 'utf8'))
+  .replace("import {getLanguage} from '../i18n.js';", "const getLanguage = () => 'en';");
 const {navCountText, setNavCount} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('counts up to 9999 are shown in full, larger ones as 9999+', () => {

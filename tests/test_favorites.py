@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select, delete, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from tcg_toolkit.db_models import Favorite, FavoriteGroup, Subscription
+from tcg_toolkit.persistence.models import Favorite, FavoriteGroup, Subscription
 from auth_helpers import register_user
 import json
 from dataclasses import replace
@@ -16,11 +16,13 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.cardmax_search import CardMaxSEVSearcher
-from tcg_toolkit.models import Game, SearchItem, SearchPage, StockStatus
-from tcg_toolkit.errors import SearchRequestError, SearchParseError
-from tcg_toolkit.search import SEARCHERS, HobbyStationLyceeSearcher
+from tcg_toolkit.persistence.runtime import open_database
+from tcg_toolkit.catalog.providers.cardmax import CardMaxSEVSearcher
+from tcg_toolkit.catalog.models import Game, SearchItem, SearchPage, StockStatus
+from tcg_toolkit.catalog.errors import SearchRequestError, SearchParseError
+from tcg_toolkit.catalog.pagination import PagedSearcher
+from tcg_toolkit.catalog.search import SEARCHERS
+from tcg_toolkit.catalog.providers.hobbystation import HobbyStationLyceeSearcher
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -58,7 +60,7 @@ def test_persistence_idempotency_and_isolation(client):
     assert saved['source'] == 'yuyutei'
     assert add(client, replace(card(), price=999)) == saved
     assert client.get('/api/favorites').json()['items'] == [saved]
-    reopened = UserStore(app.state.auth.store.conninfo)
+    reopened = open_database(app.state.database.conninfo)
     with reopened.session() as db:
         assert json.loads(db.scalar(select(Favorite.snapshot)))['price'] == 100
     login(client, 'bob')
@@ -89,7 +91,7 @@ def test_refresh_exact_match_across_pages(client, monkeypatch, game):
     item = card(game)
     saved = add(client, item)
     updated = replace(item, price=250, stock_quantity=0, stock_status=StockStatus.OUT_OF_STOCK)
-    class Fake:
+    class Fake(PagedSearcher):
         def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
@@ -111,7 +113,7 @@ def test_favorite_preserves_cart_condition_on_save_and_refresh(client, monkeypat
     saved = add(client, damaged)
     assert saved['item']['cart'] == damaged.cart
 
-    class Fake:
+    class Fake(PagedSearcher):
         def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
@@ -127,13 +129,13 @@ def test_favorite_preserves_cart_condition_on_save_and_refresh(client, monkeypat
 @pytest.mark.parametrize('failure,status', [('missing', 404), ('request', 502), ('parse', 502), ('timeout', 504), ('removed', 404)])
 def test_refresh_failures_preserve_snapshot(client, monkeypatch, failure, status):
     saved = add(client)
-    class Fake:
+    class Fake(PagedSearcher):
         def __init__(self, *, stock): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def iter_pages(self, keyword):
             if failure == 'removed':
-                with app.state.auth.store.session() as db:
+                with app.state.database.session() as db:
                     db.execute(delete(Favorite).where(Favorite.id == saved['id']))
                 yield SearchPage([card()], keyword, 1, None)
             elif failure == 'missing':
@@ -250,8 +252,8 @@ def test_cardmax_refresh_reads_only_saved_detail_and_preserves_snapshot_on_failu
 def test_group_lifecycle_and_name_rules(client, monkeypatch, created_at):
     # Exercise UUID tie-breaking without depending on request speed or random IDs.
     timestamps, ids = iter(created_at), iter([3, 2, 1])
-    monkeypatch.setattr('tcg_toolkit.favorites.time', SimpleNamespace(time=lambda: next(timestamps)))
-    monkeypatch.setattr('tcg_toolkit.favorites.uuid', SimpleNamespace(uuid4=lambda: UUID(int=next(ids))))
+    monkeypatch.setattr('tcg_toolkit.collection.groups.time', SimpleNamespace(time=lambda: next(timestamps)))
+    monkeypatch.setattr('tcg_toolkit.collection.groups.uuid', SimpleNamespace(uuid4=lambda: UUID(int=next(ids))))
     assert groups(client) == []
     for name in ['', ' \t\n', 'x' * 101, None, 42]:
         assert client.post('/api/favorites/groups', json={'name': name}).status_code == 422
@@ -297,13 +299,13 @@ def test_membership_filter_move_and_delete_preserve_records(client):
     assert client.put(path, json={'group_id': custom['id']}).json() == moved
     assert client.put(path, json={'group_id': None}).json() == saved
     moved = client.put(path, json={'group_id': custom['id']}).json()
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         row = db.get(Favorite, saved['id'])
         db.add(Subscription(id='sub', user_id=row.user_id, game=row.game, product_url=row.product_url,
                             snapshot=row.snapshot, created_at=1, checked_at=1, next_check_at=86401))
     assert client.request('DELETE', f"/api/favorites/groups/{custom['id']}", json={}).status_code == 204
     assert client.get('/api/favorites').json()['items'] == [{**other, 'group_id': None}, saved]
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.get(Subscription, 'sub').snapshot == json.dumps(saved['item'], separators=(',', ':'))
     assert client.request('DELETE', f"/api/favorites/groups/{custom['id']}", json={}).status_code == 404
 
@@ -331,7 +333,7 @@ def test_groups_are_owned_and_database_rejects_cross_account_membership(client):
         assert response.status_code == 404
         assert response.json()['detail'] == 'favorite_not_found'
     with pytest.raises(IntegrityError):
-        with app.state.auth.store.session() as db:
+        with app.state.database.session() as db:
             db.execute(update(Favorite).where(Favorite.id == saved['id']).values(group_id=bob_group['id']))
 
 

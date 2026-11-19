@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const source = await readFile(new URL('../src/tcg_toolkit/static/currency.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/shared/currency.js', import.meta.url), 'utf8');
 const {fetchRate, formatPrice} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 test('JPY makes no request; foreign currency requests one unit', async () => {
   assert.equal(await fetchRate('JPY',()=>assert.fail()),1);

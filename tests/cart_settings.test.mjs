@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const parserURL = moduleURL(await readFile(new URL('curl-credentials.js', base), 'utf8'));
-const {bindCartSettings} = await import(moduleURL((await readFile(new URL('cart-settings.js', base), 'utf8'))
-  .replace("import {t, getLanguage} from './i18n.js';", "const t = key => key, getLanguage = () => 'en';")
+const parserURL = moduleURL(await readFile(new URL('cart/curl-credentials.js', base), 'utf8'));
+const {bindCartSettings} = await import(moduleURL((await readFile(new URL('cart/cart-settings.js', base), 'utf8'))
+  .replace("import {t, getLanguage} from '../i18n.js';", "const t = key => key, getLanguage = () => 'en';")
   .replace("'./curl-credentials.js'", JSON.stringify(parserURL))));
 
 function setup() {

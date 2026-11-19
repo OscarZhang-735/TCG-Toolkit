@@ -5,9 +5,9 @@ import json
 import sys
 import unicodedata
 
-from .errors import SearchError
-from .models import Game, SearchSource
-from .search import create_searcher, get_searcher_type
+from .catalog.errors import SearchError
+from .catalog.models import Game, SearchSource
+from .catalog.search import create_searcher, get_searcher_type
 
 
 def _width(text: str) -> int:

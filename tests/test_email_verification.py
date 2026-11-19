@@ -1,5 +1,5 @@
 from sqlalchemy import select, func, update
-from tcg_toolkit.db_models import EmailChallenge, LoginSession, User
+from tcg_toolkit.persistence.models import EmailChallenge, LoginSession, User
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import smtplib
@@ -10,10 +10,10 @@ from fastapi.testclient import TestClient
 from auth_helpers import (Mailbox, TEST_SECRET, install_mailbox,
                           registration_body, register_user)
 from tcg_toolkit.auth.email_verification import AuthError, EmailVerification, normalize_email
-from tcg_toolkit.notifications import SMTPMailer
+from tcg_toolkit.mail.delivery import SMTPMailer
 from tcg_toolkit.auth.passwords import hasher
 from tcg_toolkit.auth.service import AuthService, token_hash
-from tcg_toolkit.auth.store import UserStore
+from tcg_toolkit.persistence.runtime import open_database
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -28,7 +28,7 @@ def client(tmp_path, monkeypatch):
 
 
 def legacy_user(username='legacy'):
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         db.add(User(id=username, username=username, password_hash=hasher.hash('password123'), created_at=1))
     return app.state.auth.login(username, 'password123')[1]
 
@@ -49,7 +49,7 @@ def advance(monkeypatch, seconds):
 
 def test_verified_registration_normalizes_email_and_both_logins(client):
     body = registration_body(client, email=' Alice+Cards@EXAMPLE.COM ')
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.scalar(select(func.count()).select_from(User)) == 0
         row = db.scalar(select(EmailChallenge))
         assert len(row.code_hash) == 64 and row.code_hash != body['code']
@@ -73,7 +73,7 @@ def test_bad_attempts_are_persisted_and_exhaustion_blocks_correct_code(client):
         response = client.post('/api/auth/register', json={**body, 'code': wrong})
         assert response.json()['detail'] == ('code_attempts_exhausted' if i == 4 else 'invalid_code')
     assert client.post('/api/auth/register', json=body).json()['detail'] == 'code_attempts_exhausted'
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.scalar(select(EmailChallenge.attempts)) == 5
         assert db.scalar(select(func.count()).select_from(User)) == 0
 
@@ -93,8 +93,8 @@ def test_email_cooldown_hourly_quota_and_restart(client, monkeypatch):
     response = client.post('/api/auth/register/email-code', json={'email': body['email']})
     assert response.status_code == 429 and int(response.headers['Retry-After']) == 60
     verification = app.state.auth.verification
-    app.state.auth = AuthService(UserStore(app.state.auth.store.conninfo),
-                                EmailVerification(app.state.auth.store, verification.mailer, TEST_SECRET))
+    app.state.auth = AuthService(open_database(app.state.database.conninfo),
+                                EmailVerification(app.state.database, verification.mailer, TEST_SECRET))
     with pytest.raises(AuthError) as failure:
         app.state.auth.verification.send(body['email'])
     assert failure.value.status_code == 429
@@ -111,8 +111,8 @@ def test_email_cooldown_hourly_quota_and_restart(client, monkeypatch):
 
 def test_code_survives_service_restart(client):
     body = registration_body(client)
-    app.state.auth = AuthService(UserStore(app.state.auth.store.conninfo),
-                                EmailVerification(app.state.auth.store, Mailbox(), TEST_SECRET))
+    app.state.auth = AuthService(open_database(app.state.database.conninfo),
+                                EmailVerification(app.state.database, Mailbox(), TEST_SECRET))
     assert client.post('/api/auth/register', json=body).status_code == 201
 
 
@@ -147,7 +147,7 @@ def test_concurrent_verification_consumes_once(client):
         results = list(pool.map(lambda _: register(), range(2)))
     assert sum(isinstance(result, tuple) for result in results) == 1
     assert 'invalid_code' in results
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.scalar(select(func.count()).select_from(LoginSession)) == 1
 
 
@@ -203,13 +203,13 @@ def test_email_conflict_between_binding_and_registration_keeps_code(client):
     body = registration_body(client)
     client.headers['Authorization'] = 'Bearer ' + legacy_user()
     # Separate purposes can compete for the same address after the shared cooldown.
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         db.execute(update(EmailChallenge).values(created_at=EmailChallenge.created_at-60))
     binding = binding_body(client, body['email'])
     assert client.post('/api/auth/email/bind', json=binding).status_code == 200
     response = client.post('/api/auth/register', json=body)
     assert response.status_code == 409 and response.json()['detail'] == 'email_taken'
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.get(EmailChallenge, body['challenge_id']).state == 'active'
 
 
@@ -228,7 +228,7 @@ def test_guards_no_cache_and_no_sensitive_validation_echo(client, path):
 
 def test_configuration_missing_only_disables_email(client):
     token = legacy_user()
-    app.state.auth.verification = EmailVerification(app.state.auth.store, Mailbox(), '')
+    app.state.auth.verification = EmailVerification(app.state.database, Mailbox(), '')
     assert client.post('/api/auth/register/email-code', json={'email': 'alice@example.com'}).json()['detail'] == 'email_unavailable'
     assert client.get('/api/auth/me', headers={'Authorization': 'Bearer ' + token}).status_code == 200
     login = client.post('/api/auth/login', json={'username': 'legacy', 'password': 'password123'})

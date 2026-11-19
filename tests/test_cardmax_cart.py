@@ -5,7 +5,7 @@ from urllib.parse import parse_qsl
 import httpx
 import pytest
 
-from tcg_toolkit.cardmax_cart import BASKET, BASE
+from tcg_toolkit.cart.cardmax import BASKET, BASE
 from test_yuyutei_cart import client, upstream
 
 

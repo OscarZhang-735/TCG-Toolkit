@@ -5,9 +5,9 @@ import pytest
 from openpyxl import load_workbook
 from sqlalchemy.exc import IntegrityError
 
-from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.card_transfer import XLSX_MEDIA_TYPE
-from tcg_toolkit.db_models import OwnedCard
+from tcg_toolkit.persistence.runtime import open_database
+from tcg_toolkit.collection.transfer import XLSX_MEDIA_TYPE
+from tcg_toolkit.persistence.models import OwnedCard
 from tcg_toolkit.web import app
 from test_cards import CARD, client, login
 
@@ -19,7 +19,7 @@ def test_price_persistence_and_listing(client, price):
     saved = response.json()
     assert saved['price'] == (float(price) if price is not None else None)
     assert client.get('/api/cards').json()['items'] == [saved]
-    with UserStore(app.state.auth.store.conninfo) as store, store.session() as db:
+    with open_database(app.state.database.conninfo) as store, store.session() as db:
         assert db.get(OwnedCard, saved['id']).price == (Decimal(str(price)) if price is not None else None)
 
 
@@ -56,7 +56,7 @@ def test_price_survives_group_moves_and_duplicate_conflicts(client):
     assert client.request('DELETE', f"/api/cards/groups/{group['id']}", json={}).status_code == 204
     assert client.get('/api/cards').json()['items'] == [{**saved, 'group_id': None}]
     with pytest.raises(IntegrityError):
-        with app.state.auth.store.session() as db:
+        with app.state.database.session() as db:
             db.get(OwnedCard, saved['id']).price = Decimal('-0.01')
 
 

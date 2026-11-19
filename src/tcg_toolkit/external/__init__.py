@@ -1,8 +1,24 @@
-"""Clients for external service APIs."""
+"""Public clients for external services, loaded independently."""
+from importlib import import_module
 
-from .currency import CurrencyClient, CurrencyConfigError, CurrencyRequestError, TargetCurrency
-from .proxy_go import ProxyGoClient, ProxyGoConfigError, ProxyGoGatewayError
-from .search_proxy import SearchProxyClient
+_CLIENTS = {
+    "CurrencyClient": "..currency.client",
+    "CurrencyConfigError": "..currency.client",
+    "CurrencyRequestError": "..currency.client",
+    "TargetCurrency": "..currency.client",
+    "SearchProxyClient": ".search_proxy",
+    "ProxyGoClient": ".proxy_go",
+    "ProxyGoConfigError": ".proxy_go",
+    "ProxyGoGatewayError": ".proxy_go",
+}
+__all__ = list(_CLIENTS)
 
-__all__ = ["CurrencyClient", "CurrencyConfigError", "CurrencyRequestError", "TargetCurrency", "SearchProxyClient",
-           "ProxyGoClient", "ProxyGoConfigError", "ProxyGoGatewayError"]
+
+def __getattr__(name):
+    if name not in _CLIENTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(import_module(_CLIENTS[name], __name__), name)
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

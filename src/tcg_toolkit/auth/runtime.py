@@ -7,7 +7,6 @@ import time
 from fastapi import HTTPException
 
 from .service import AuthService
-from .store import UserStore
 
 
 class RateLimiter:
@@ -30,8 +29,8 @@ class RateLimiter:
             queue.append(now)
 
 
-def initialize_auth(app):
-    app.state.auth = AuthService(UserStore())
+def initialize_auth(app, database):
+    app.state.auth = AuthService(database)
     app.state.auth_limiter = RateLimiter()
     app.state.auth_origins = {value.strip().rstrip("/") for value in
                               os.getenv("TCG_TRUSTED_ORIGINS", "").split(",") if value.strip()}

@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi import HTTPException
-from tcg_toolkit import grading
+from tcg_toolkit.grading import adapters as grading
 
 PAYLOAD = json.loads((Path(__file__).parent / 'fixtures/pcgcn_certificate.json').read_text(encoding='utf-8'))
 

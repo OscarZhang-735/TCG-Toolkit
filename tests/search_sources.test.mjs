@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const source = await readFile(new URL('../src/tcg_toolkit/static/search-sources.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/catalog/search-sources.js', import.meta.url), 'utf8');
 const {searchTargets, searchParams, isYuyutei, supports} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('unsupported game and source pairs are skipped silently', () => {

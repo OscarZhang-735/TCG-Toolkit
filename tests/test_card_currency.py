@@ -4,8 +4,8 @@ import pytest
 from openpyxl import load_workbook
 from sqlalchemy.exc import IntegrityError
 
-from tcg_toolkit.card_transfer import XLSX_MEDIA_TYPE
-from tcg_toolkit.db_models import OwnedCard
+from tcg_toolkit.collection.transfer import XLSX_MEDIA_TYPE
+from tcg_toolkit.persistence.models import OwnedCard
 from tcg_toolkit.web import app
 from test_cards import CARD, client, login
 
@@ -33,7 +33,7 @@ def test_currency_update_omission_and_validation(client):
     group = client.post('/api/cards/groups', json={'name': 'Deck'}).json()
     assert client.put(f'{path}/group', json={'group_id': group['id']}).json()['currency'] == 'CAD'
     with pytest.raises(IntegrityError):
-        with app.state.auth.store.session() as db:
+        with app.state.database.session() as db:
             db.get(OwnedCard, saved['id']).currency = 'USD'
 
 

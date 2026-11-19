@@ -4,9 +4,9 @@ import time
 import pytest
 from sqlalchemy import select
 
-from tcg_toolkit.db_models import User, EmailChallenge
+from tcg_toolkit.persistence.models import User, EmailChallenge
 from tcg_toolkit.web import app
-from tcg_toolkit.notifications import SMTPMailer
+from tcg_toolkit.mail.delivery import SMTPMailer
 from test_subscriptions import client, add, worker, emails, snapshot, NOW, login
 
 PATH = '/api/subscriptions/notification-email'
@@ -57,13 +57,13 @@ def test_wrong_expired_and_cross_account_codes(client):
     code = request_code(client)
     wrong = {**code, 'code': '000000' if code['code'] != '000000' else '111111'}
     assert client.put(PATH, json=wrong).json()['detail'] == 'invalid_code'
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.get(EmailChallenge, code['challenge_id']).attempts == 1
     token = client.headers['Authorization']
     login(client, 'bob')
     assert client.put(PATH, json=code).json()['detail'] == 'invalid_code'
     client.headers['Authorization'] = token
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         db.get(EmailChallenge, code['challenge_id']).expires_at = int(time.time()) - 1
     assert client.put(PATH, json=code).json()['detail'] == 'code_expired'
     assert client.get(PATH).json()['email'] == 'alice@example.com'
@@ -91,14 +91,14 @@ def test_delivery_failure_keeps_previous_address_and_rate_limits(client):
 
 def test_notification_proof_cannot_be_used_for_password_change(client):
     code = request_code(client)
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         account = db.scalar(select(User).where(User.username == 'alice'))
         challenge, error = app.state.auth.verification.check(db, **code, purpose='password_change', user_id=account.id)
         assert error.detail == 'invalid_code'
 
 
 def test_verified_custom_address_allows_legacy_account_to_subscribe(client):
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         account = db.scalar(select(User).where(User.username == 'alice'))
         account.email = account.email_verified_at = None
     assert client.get(PATH).json()['email'] is None
@@ -117,7 +117,7 @@ def test_reset_during_smtp_does_not_reactivate_challenge(client, monkeypatch):
     response = client.post(PATH + '/code', json={'email': 'alerts@example.com'})
     assert response.status_code == 503
     assert client.get(PATH).json()['using_registration_email'] is True
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         challenge = db.scalar(select(EmailChallenge).where(EmailChallenge.purpose == 'notification_email'))
         assert challenge.state != 'active'
 

@@ -3,7 +3,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from tcg_toolkit.hobbystation_cart import BASE, HOST
+from tcg_toolkit.cart.hobbystation import BASE, HOST
 from test_yuyutei_cart import client, upstream
 
 

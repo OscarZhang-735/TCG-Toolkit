@@ -7,8 +7,8 @@ import uuid
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from ..database import email_lock, is_unique_violation
-from ..db_models import EmailChallenge, LoginSession, User
+from ..persistence.database import email_lock, is_unique_violation
+from ..persistence.models import EmailChallenge, LoginSession, User
 from .passwords import hasher, verify_password
 from .email_verification import AuthError, EmailVerification, normalize_email
 

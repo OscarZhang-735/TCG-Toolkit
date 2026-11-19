@@ -3,7 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tcg_toolkit import Game, SearchPage, SearchParseError, SearchRequestError
-from tcg_toolkit.search import SEARCHERS
+from tcg_toolkit.catalog.search import SEARCHERS
 from tcg_toolkit.web import app
 
 client = TestClient(app)
@@ -55,7 +55,7 @@ def test_validation(params):
 @pytest.mark.parametrize(('game', 'category'), [('ws', 'ct1847'), ('sev', 'ct1740')])
 def test_cardmax_search(game, category, monkeypatch):
     from pathlib import Path
-    from tcg_toolkit.cardmax_search import CardMaxSearcher
+    from tcg_toolkit.catalog.providers.cardmax import CardMaxSearcher
     def respond(request):
         assert dict(request.url.params) == {'search': 'test', 'category': category}
         html = (Path(__file__).parent / 'fixtures' / f'cardmax_{game}.html').read_text(encoding='utf-8')

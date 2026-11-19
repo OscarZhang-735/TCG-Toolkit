@@ -3,10 +3,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const code = asModule(await readFile(new URL('email-code.js', base), 'utf8'));
+const code = asModule(await readFile(new URL('account/email-code.js', base), 'utf8'));
 const i18n = asModule(`export const t = (key, p = {}) => p.email ? key + ':' + p.email : key; export const getLanguage = () => 'zh-CN';`);
-const source = (await readFile(new URL('notification-email-ui.js', base), 'utf8'))
-  .replace("'./email-code.js'", JSON.stringify(code)).replace("'./i18n.js'", JSON.stringify(i18n));
+const source = (await readFile(new URL('account/notification-email-ui.js', base), 'utf8'))
+  .replace("'./email-code.js'", JSON.stringify(code)).replace("'../i18n.js'", JSON.stringify(i18n));
 const {createNotificationEmailUI} = await import(asModule(source));
 const reply = (status, body) => ({status, ok: status < 300, headers: {get: () => null}, json: async () => body});
 const registration = {email: 'alice@example.com', custom_email: null, using_registration_email: true};

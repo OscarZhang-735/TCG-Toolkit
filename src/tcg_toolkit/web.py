@@ -8,7 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from sqlalchemy.exc import SQLAlchemyError
-from .schema import require_schema
+from .persistence.schema import require_schema
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -21,42 +21,45 @@ mimetypes.add_type('image/webp', '.webp')
 
 from .auth.routes import router as auth_router
 from .auth.dependencies import current_user
+from .persistence.runtime import open_database
 from .auth.runtime import initialize_auth
-from .auth.avatar import avatar_bucket, retry_avatar_cleanup
-from .favorites import router as favorites_router
-from .cards import router as cards_router
-from .prices import router as prices_router
-from .official import router as official_router
-from .yuyutei_cart import router as yuyutei_router
-from .hobbystation_cart import router as hobbystation_cart_router
-from .cardmax_cart import router as cardmax_cart_router
-from .product_details import router as product_router
-from .grading import router as grading_router
-from .graded_cards import router as graded_cards_router
-from .subscriptions import router as subscriptions_router
-from .notification_email import router as notification_email_router
-from .subscription_worker import SubscriptionWorker
-from .search_routes import router as search_router
-from .currency_routes import router as currency_router
+from .media.objects import image_bucket, retry_image_cleanup
+from .collection.favorites import router as favorites_router
+from .collection.cards import router as cards_router
+from .catalog.prices import router as prices_router
+from .catalog.official import router as official_router
+from .cart.yuyutei import router as yuyutei_router
+from .cart.hobbystation import router as hobbystation_cart_router
+from .cart.cardmax import router as cardmax_cart_router
+from .catalog.product_details import router as product_router
+from .grading.routes import router as grading_router
+from .collection.graded_cards import router as graded_cards_router
+from .subscriptions.routes import router as subscriptions_router
+from .subscriptions.recipient_routes import router as notification_email_router
+from .subscriptions.worker import SubscriptionWorker
+from .catalog.search_routes import router as search_router
+from .currency.routes import router as currency_router
 
 
 @asynccontextmanager
 async def lifespan(app):
-    initialize_auth(app)
-    store = app.state.auth.store
+    store = open_database()
+    app.state.database = store
     worker = None
-    stop_avatar_cleanup = asyncio.Event()
-    avatar_worker = (asyncio.create_task(retry_avatar_cleanup(store, stop_avatar_cleanup))
-                     if avatar_bucket() else None)
+    stop_image_cleanup = asyncio.Event()
+    image_worker = None
     try:
+        initialize_auth(app, store)
+        if image_bucket():
+            image_worker = asyncio.create_task(retry_image_cleanup(store, stop_image_cleanup))
         if os.getenv('TCG_SUBSCRIPTIONS_ENABLED', '').lower() == 'true':
             worker = SubscriptionWorker(store)
             worker.start()
         yield
     finally:
-        if avatar_worker is not None:
-            stop_avatar_cleanup.set()
-            await avatar_worker
+        if image_worker is not None:
+            stop_image_cleanup.set()
+            await image_worker
         if worker is not None:
             await asyncio.to_thread(worker.stop)
         store.close()
@@ -151,7 +154,7 @@ def version():
 @app.get("/api/health")
 def health(request: Request):
     try:
-        with request.app.state.auth.store.connect() as db:
+        with request.app.state.database.connect() as db:
             require_schema(db)
     except (SQLAlchemyError, RuntimeError):
         raise HTTPException(503, detail="database_unavailable") from None

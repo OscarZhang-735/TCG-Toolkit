@@ -7,16 +7,16 @@ import time
 from threading import Event
 from types import SimpleNamespace
 
-from tcg_toolkit.errors import ProductSourceError
+from tcg_toolkit.catalog.errors import ProductSourceError
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import event, func, select
 
 from auth_helpers import register_user
-from tcg_toolkit.db_models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
-from tcg_toolkit import subscriptions as api
-from tcg_toolkit.subscription_worker import SubscriptionWorker
-from tcg_toolkit.subscription_schedule import next_hour
+from tcg_toolkit.persistence.models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
+from tcg_toolkit.subscriptions import service as api
+from tcg_toolkit.subscriptions.worker import SubscriptionWorker
+from tcg_toolkit.subscriptions.schedule import next_hour
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -74,12 +74,12 @@ def favorite(client, item=None, group_id=None):
 
 
 def emails():
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         return db.scalars(select(SubscriptionEmail).order_by(SubscriptionEmail.created_at)).all()
 
 
 def worker(fetcher=None, mailer=None, now=None):
-    return SubscriptionWorker(app.state.auth.store, fetcher=fetcher or (lambda game, url: snapshot(url)),
+    return SubscriptionWorker(app.state.database, fetcher=fetcher or (lambda game, url: snapshot(url)),
                               mailer=mailer or Mailer(), clock=lambda: now[0] if now else NOW)
 
 
@@ -126,7 +126,7 @@ def test_unfavorite_removes_only_the_matching_users_subscription(client):
 def test_unfavorite_rolls_back_subscription_if_favorite_delete_fails(client):
     favorite = client.post('/api/favorites', json=snapshot()).json()
     subscription = add(client)
-    engine = app.state.auth.store.engine
+    engine = app.state.database.engine
 
     def fail_favorite_delete(conn, cursor, statement, parameters, context, executemany):
         if statement.startswith('DELETE FROM favorites '):
@@ -157,7 +157,7 @@ def test_guards_and_verified_email_required(client):
     body = dict(game='wsr', product_url=URL)
     assert client.post('/api/subscriptions', json=body, headers={'Origin': 'https://evil.example'}).status_code == 403
     assert client.post('/api/subscriptions', content='{}', headers={'Content-Type': 'text/plain'}).status_code == 415
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         db.scalar(select(User).where(User.username == 'alice')).email_verified_at = None
     assert client.post('/api/subscriptions', json=body).json()['detail'] == 'verified_email_required'
     client.headers.pop('Authorization')
@@ -202,7 +202,7 @@ def test_unchanged_is_silent_and_restock_is_not(client):
     service.check_due()
     service.deliver_due()
     assert emails() == [] and service.mailer.messages == []
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         db.get(Subscription, saved['id']).snapshot = json.dumps(snapshot(quantity=0))
     service.clock = lambda: NOW + 86400
     service.check_due()
@@ -264,7 +264,7 @@ def test_many_cards_one_digest_per_user_and_shared_fetch(client):
     assert sorted(calls) == [URL, URL + '1']
     assert sorted(len(json.loads(row.changes)) for row in emails()) == [1, 2]
     assert {message['To'] for message in service.mailer.messages} == {'alice@example.com', 'bob@example.com'}
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         for saved in favorites:
             row = db.get(Favorite, saved['id'])
             assert json.loads(row.snapshot) == snapshot(saved['item']['product_url'], price=200)
@@ -285,7 +285,7 @@ def test_source_failure_preserves_baseline_and_other_cards_continue(client, fail
         raise ProductSourceError(failure)
     service = worker(fetch)
     service.check_due()
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         row = db.get(Subscription, saved['id'])
         assert row.snapshot == json.dumps(saved['item'])
         assert row.last_error and row.checked_at == NOW
@@ -298,7 +298,7 @@ def test_source_failure_preserves_baseline_and_other_cards_continue(client, fail
     service.clock = lambda: NOW + 86400
     service.check_due()
     assert len(emails()) == 2
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.get(Subscription, saved['id']).last_error is None
         refreshed = db.get(Favorite, failed_favorite['id'])
         assert json.loads(refreshed.snapshot) == snapshot(price=200)
@@ -372,7 +372,7 @@ def test_atomic_snapshot_and_outbox_on_database_failure(client):
             service.check_due()
     finally:
         event.remove(SubscriptionEmail, 'before_insert', fail_insert)
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert json.loads(db.get(Subscription, saved['id']).snapshot)['price'] == 100
         assert db.scalar(select(SubscriptionRun)).state == 'failed'
         assert db.scalar(select(func.count()).select_from(SubscriptionEmail)) == 0
@@ -385,7 +385,7 @@ def test_atomic_snapshot_and_outbox_on_database_failure(client):
 
 
 def test_concurrent_unfavorite_and_check_do_not_deadlock(client, monkeypatch):
-    from tcg_toolkit import favorites as favorite_api
+    from tcg_toolkit.collection import favorites as favorite_api
 
     saved = favorite(client)
     add(client)
@@ -406,7 +406,7 @@ def test_concurrent_unfavorite_and_check_do_not_deadlock(client, monkeypatch):
             worker_locking.set()
 
     monkeypatch.setattr(favorite_api, 'owned', pause_after_favorite_lock)
-    engine = app.state.auth.store.engine
+    engine = app.state.database.engine
     service = worker(lambda game, url: snapshot(url, price=200))
     with ThreadPoolExecutor(max_workers=2) as pool:
         deletion = pool.submit(client.request, 'DELETE', '/api/favorites/' + saved['id'], json={})
