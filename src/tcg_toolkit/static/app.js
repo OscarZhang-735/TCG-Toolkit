@@ -448,15 +448,26 @@ function gameTags(item) {
   return tags;
 }
 function tagStack(item) { const box = el('span', 'tag-stack'); box.append(...gameTags(item)); return box; }
+function ownedIndicator(item, inFavorites, badge = false) {
+  const quantity = ownedQuantity(item);
+  const hsSearch = !inFavorites && item.source === 'hobbystation';
+  if (quantity === undefined || (!quantity && !hsSearch)) return null;
+  const count = (quantity ?? 0).toLocaleString(getLanguage());
+  const value = el('span', badge ? 'owned-badge' : '');
+  if (badge) value.append(icon('bi-collection'), t('cards_owned_badge', {quantity: count}));
+  else value.textContent = count;
+  if (quantity === null) value.title = t('hs_owned_unmatched');
+  return value;
+}
 function tableRow(item, inFavorites = false) {
   const row = document.createElement('tr');
   const cell = (child, className = '') => {const td = el('td', className); td.append(child); row.append(td);};
   if (inFavorites) { cell(selectBox(item), 'select-col'); row.classList.toggle('selected', selection.state.keys.has(cardKey(item))); }
   const product = el('div', 'product-summary'); product.append(cardImage(item), cardLink(item));
   cell(tagStack(item)); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
-  const owned = ownedQuantity(item);
+  const owned = ownedIndicator(item, inFavorites);
   cell(priceDisplay(item), 'numeric'); cell(stockBadge(item));
-  cell(owned ? owned.toLocaleString(getLanguage()) : '—', `numeric owned-cell${owned ? '' : ' muted'}`);
+  cell(owned ?? '—', `numeric owned-cell${owned ? '' : ' muted'}`);
   cell(cartControls(item), 'cart-col');
   if (inFavorites) cell(groupTag(item) ?? el('span', 'muted', '—'), 'group-col');
   cell(favoriteCell(item), 'action-col');
@@ -471,8 +482,8 @@ function gridCard(item, inFavorites = false) {
   if (inFavorites && selection.state.active) {
     image.append(selectBox(item)); card.classList.toggle('selected', selection.state.keys.has(cardKey(item)));
   }
-  const owned = ownedQuantity(item);
-  if (owned) { const badge = el('span', 'owned-badge'); badge.append(icon('bi-collection'), t('cards_owned_badge', {quantity: owned.toLocaleString(getLanguage())})); image.append(badge); }
+  const owned = ownedIndicator(item, inFavorites, true);
+  if (owned) image.append(owned);
   card.append(top, image, cardLink(item, 'card-name'), bottom);
   const cartRow = el('div', 'card-cart');
   cartRow.append(el('span', 'card-cart-label', t('cart_column')), cartControls(item));

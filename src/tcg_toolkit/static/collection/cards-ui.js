@@ -341,10 +341,11 @@ function openEditor(id = '') {
 // the inventory uses display names (WSR, ChaosTCG); both reduce to one key.
 const gameKey = game => ({chaos: 'chaostcg', sev_en: 'sev en', ws_en: 'ws en'})[game.trim().toLowerCase()] ?? game.trim().toLowerCase();
 const fold = value => (value ?? '').trim().toLowerCase();
-let ownedExact = new Map(), ownedByNumber = new Map(), ownedSignature = '';
-function indexOwned(records) {
+let ownedExact = new Map(), ownedByNumber = new Map(), ownedSignature = '', ownedReady = false;
+function indexOwned(records, ready) {
   const signature = records.map(row => `${row.id}:${row.quantity}:${row.game}:${row.card_number}:${row.rarity}`).join('|');
-  if (signature === ownedSignature) return;
+  if (signature === ownedSignature && ready === ownedReady) return;
+  ownedReady = ready;
   ownedSignature = signature; ownedExact = new Map(); ownedByNumber = new Map();
   for (const row of records) {
     const base = `${gameKey(row.game)}|${fold(row.card_number)}`, exact = `${base}|${fold(row.rarity)}`;
@@ -353,15 +354,16 @@ function indexOwned(records) {
   }
   document.dispatchEvent(new CustomEvent('inventorychange'));
 }
-// Quantity of this card in My cards: by game, number and rarity, or by game and number when rarity is unknown.
+// Undefined until the library loads, null for no matching record, otherwise its quantity (including zero).
 export function ownedQuantity(item) {
+  if (!ownedReady) return undefined;
   const base = `${gameKey(item.game)}|${fold(item.card_number)}`;
-  return item.rarity ? ownedExact.get(`${base}|${fold(item.rarity)}`) ?? 0 : ownedByNumber.get(base) ?? 0;
+  return (item.rarity ? ownedExact.get(`${base}|${fold(item.rarity)}`) : ownedByNumber.get(base)) ?? null;
 }
 function render() {
   const state = inventory.state, open = editorOpen();
   transfers.render();
-  indexOwned(state.records);
+  indexOwned(state.records, state.ready);
   // Editor dialog
   gameOptions();
   for (const field of fields) {

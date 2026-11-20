@@ -885,6 +885,9 @@ td.owned-cell.muted { font-weight: 400; color: var(--color-text-subtle); }
   border-radius: var(--radius-pill); pointer-events: none;
 }
 
+.owned-cell > [title] { display: block; cursor: help; }
+.owned-badge[title] { pointer-events: auto; cursor: help; }
+
 /* Game logos in search and filter chips; a light backing keeps silver logos visible on checked (dark) chips. */
 .chip-logo { height: 16px; width: auto; margin-left: 2px; padding: 1px 3px; background: var(--color-surface); border-radius: var(--radius-sm); }
 
