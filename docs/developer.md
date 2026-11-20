@@ -57,7 +57,8 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_PROXY_IPS` | 受信任的反向代理来源 IP，不要设为 `*` | `127.0.0.1` |
 | `TCG_SUBNET` | Docker 网络子网，与本地网络冲突时修改 | `10.203.0.0/24` |
 | `TCG_SUBSCRIPTIONS_ENABLED` | 启动卡牌订阅每小时到期扫描及邮件重试线程 | 直接运行关闭；Compose 开启 |
-| `TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT` | 为 `true` 时，后台定时任务直连 Hobby Station 商品页面。手动订阅使用当前网页选择的连接方式 | 本地 Compose 开启；其他部署默认沿用服务端代理配置 |
+| `TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT` | 为 `true` 时，后台定时任务直连 Hobby Station 商品页面。手动订阅使用当前网页选择的连接方式 | 本地和生产 Compose 均默认开启 |
+| `TCG_HOBBYSTATION_WEB_SEARCH_DIRECT` | 为 `true` 时，服务端直连 HS 处理 `GET /api/search?source=hobbystation` | 生产 Compose 默认开启，本地沿用网页代理开关 |
 | `TCG_SITE_URL` | 订阅邮件底部“前往 TCG Toolkit 查看”链接使用的网页地址（自动追加 `#favorites`）；须为 http(s) 地址，未设置或无效时使用公开站点 | `https://oscarzhang-735.github.io/TCG-Toolkit/` |
 | `TZ` | 根目录 Compose 必填，设为宿主机 IANA 时区，例如 `America/Toronto`；Linux 生产部署使用挂载的宿主机 `/etc/localtime` | `.env.example` 示例为 `America/Toronto` |
 
@@ -125,7 +126,7 @@ with create_searcher("cardmax", "sev", stock=True) as searcher:
 
 登录后可调用 `GET /api/search?source=hobbystation&game=lycee&keyword=LO-4899&page=1`。省略 `source` 时默认使用 `yuyutei`。Hobby Station 支持 `lycee`、`ws` 和 `wsr`，Card Max 支持 `ws` 和 `sev`。不支持的来源或游戏组合返回 422。各来源使用相同的商品字段和分页结构，调用方可按 `next_page` 继续查询至其为 `null`。
 
-Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`），经现有加密代理访问，代理的 `allowed_hosts` 需包含 `www.hobbystation-single.jp`。库存符号如 ◎ 表示有货，`stock_quantity` 为 `null`。页面标记售罄时数量为 0。Lycee 商品编号如 `LO-LO-4899` 返回印刷编号 `LO-4899`，同名异版保留各自的编号和商品链接。Hobby Station 的 `cart` 字段为 `null`。
+Hobby Station 搜索使用站点的部分匹配模式（`match_type=1`）。生产网页搜索由后端直连；通过加密代理访问 HS 时，代理的 `allowed_hosts` 需包含 `www.hobbystation-single.jp`。库存符号如 ◎ 表示有货，`stock_quantity` 为 `null`。页面标记售罄时数量为 0。Lycee 商品编号如 `LO-LO-4899` 返回印刷编号 `LO-4899`，同名异版保留各自的编号和商品链接。Hobby Station 的 `cart` 字段为 `null`。
 
 Card Max 使用服务器直连，例如 `GET /api/search?source=cardmax&game=sev&keyword=BP22-014&stock=true`。默认只读取搜索列表，列表包含售罄单卡（如实测的 `GBF/S134-132S`），库存返回 `unknown` 和 `null`。可用 `stock=true`、CLI 的 `--stock` 或 Python 搜索器构造参数 `stock=True` 开启详情查询，每条单卡结果额外请求一次详情页。`残りあとN個` 返回具体数量，`売り切れ` 返回 `out_of_stock` 和 0。WS 可输入完整编号，如 `AMG/W121-019SP`。Card Max 的 WSR 分类目前仅有盒装商品。
 

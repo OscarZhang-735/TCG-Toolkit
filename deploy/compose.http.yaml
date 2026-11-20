@@ -28,6 +28,8 @@ services:
       ZYTE_API_KEY: "${ZYTE_API_KEY:-}"
       TCG_PROXY_KEY_FILE: /run/secrets/search-proxy.key
       TCG_SEARCH_PROXY_URL: "${TCG_SEARCH_PROXY_URL-http://62.234.212.90:8080/encrypted-proxy}"
+      TCG_HOBBYSTATION_WEB_SEARCH_DIRECT: "${TCG_HOBBYSTATION_WEB_SEARCH_DIRECT:-true}"
+      TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT: "${TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT:-true}"
       TCG_TRUSTED_ORIGINS: http://15.175.5.88:18080,https://oscarzhang-735.github.io
       FORWARDED_ALLOW_IPS: ""
     volumes:

@@ -1,5 +1,20 @@
 from test_product_details import client, FakeClient
 from tcg_toolkit.external.search_proxy import direct_search
+from tcg_toolkit.catalog.pagination import PagedSearcher
+from tcg_toolkit.catalog.models import SearchPage
+
+
+def test_production_direct_route_only_for_hobby_search(client, monkeypatch):
+    observed = []
+    def page(searcher, keyword, *, page):
+        observed.append(direct_search.get())
+        return SearchPage([], keyword, page, None, searcher.source)
+    monkeypatch.setattr(PagedSearcher, 'search_page', page)
+    params = {'game': 'ws', 'keyword': '立希'}
+    for setting, source in [('true', 'hobbystation'), ('true', 'yuyutei'), ('false', 'hobbystation')]:
+        monkeypatch.setenv('TCG_HOBBYSTATION_WEB_SEARCH_DIRECT', setting)
+        assert client.get('/api/search', params={**params, 'source': source}).status_code == 200
+    assert observed == [True, False, False]
 
 
 def test_online_hidden_and_direct_rejected(client, monkeypatch):

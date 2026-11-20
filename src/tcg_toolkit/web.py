@@ -125,7 +125,10 @@ async def request_proxy_mode(request, call_next):
         from fastapi.responses import JSONResponse
         return JSONResponse({'detail': 'proxy_switch_disabled'}, status_code=403,
                             headers={'Cache-Control': 'no-store'})
-    token = direct_search.set(direct)
+    hs_web_search = (request.method == 'GET' and request.url.path == '/api/search'
+                     and request.query_params.get('source') == 'hobbystation'
+                     and os.getenv('TCG_HOBBYSTATION_WEB_SEARCH_DIRECT', '').lower() == 'true')
+    token = direct_search.set(direct or hs_web_search)
     try:
         return await call_next(request)
     finally:
