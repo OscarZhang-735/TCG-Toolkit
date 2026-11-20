@@ -75,6 +75,7 @@ class HobbyStationSearcher(PagedSearcher):
             product_url=urljoin(url, link['href']),
             image_url=urljoin(url, image['src']) if image and image['src'] else None,
             rarity=hobby_rarity(name),
+            condition='damaged' if re.search(r'(?:キズ|傷)(?:あり|有)', name) or number.startswith(('LO-D-', 'WS-D-', 'WR-D-')) else 'normal',
         )
 
     def parse_pagination(self, main: Tag, *, page: int) -> int | None:

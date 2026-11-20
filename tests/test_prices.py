@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from tcg_toolkit.catalog import prices
 from tcg_toolkit.catalog.errors import ProductSourceError, SearchParseError, SearchRequestError
 from tcg_toolkit.catalog.models import Game, SearchItem, SearchPage, StockStatus
+from tcg_toolkit.catalog.providers.cardmax import CardMaxSearcher
 from tcg_toolkit.catalog.search import SEARCHERS
 from test_cards import client
 from test_product_details import FIXTURE, offer_html
@@ -40,8 +41,8 @@ def source(monkeypatch, pages, game=Game.WS):
 
 def test_merchants_and_authentication(client):
     response = client.get('/api/prices/merchants')
-    assert response.json() == {'items': [{'id': 'yuyutei', 'name': '游游亭',
-                                         'games': ['ws', 'wsr', 'pm', 'sev', 'lycee', 'chaos']}]}
+    assert [(m['id'], set(m['games'])) for m in response.json()['items']] == [
+        ('yuyutei', set(Game)), ('hobbystation', {'lycee', 'ws', 'wsr'}), ('cardmax', {'ws', 'sev'})]
     assert response.headers['cache-control'] == 'no-store'
     client.headers.pop('Authorization')
     for path in ['/api/prices', '/api/prices/merchants']:
@@ -63,6 +64,8 @@ def test_games_aliases_and_trimmed_number(client, monkeypatch, alias, game):
 
 @pytest.mark.parametrize('overrides,detail', [
     ({'merchant': 'other'}, 'unsupported_merchant'),
+    ({'merchant': 'cardmax', 'game': 'wsr'}, 'unsupported_merchant_game'),
+    ({'merchant': 'hobbystation', 'game': 'sev'}, 'unsupported_merchant_game'),
     *[({'game': game}, 'unsupported_merchant_game') for game in ('ws_en', 'WS EN', 'sev_en', 'SEV EN', 'custom', '')],
     *[({'card_number': value}, None) for value in ('', '  ', 'x' * 101)],
 ])
@@ -92,6 +95,41 @@ def test_exact_matches_all_pages_conditions_and_deduplication(client, monkeypatc
     assert response.json() == {**PARAMS, 'items': [
         {**{key: item.to_dict()[key] for key in prices.OFFER_FIELDS}, 'condition': 'normal'}
         for item in (first, second)]}
+
+
+@pytest.mark.parametrize('game,shop_number,official', [
+    ('ws', 'WS-W125-070S', 'BD/W125-070S'), ('wsr', 'WR-R13-001', 'OS13/R13-001')])
+def test_hobby_official_price_requires_unique_printing(client, monkeypatch, game, shop_number, official):
+    catalog = [{'card_number': official}]
+    monkeypatch.setattr(prices, 'ws_catalog_search', lambda *args: (catalog, len(catalog)))
+    def get(self, url, *, timeout):
+        html = (Path(__file__).parent / 'fixtures/hobbystation_lo.html').read_text(encoding='utf-8')
+        html = html.replace('LO-LO-4899', shop_number).replace('/lo/', '/ws/' if game == 'ws' else '/wr/')
+        html = html.replace('アストラルの研究/式部 茉優', 'カード(SR)')
+        return httpx.Response(200, text=html, request=httpx.Request('GET', url))
+    monkeypatch.setattr('tcg_toolkit.catalog.providers.hobbystation.HobbyStationClient.get', get)
+    params = dict(merchant='hobbystation', game=game, card_number=official)
+    [offer] = client.get('/api/prices', params=params).json()['items']
+    assert offer['card_number'] == official and offer['price'] == 80
+    catalog.append({'card_number': 'OTHER/' + official.split('/')[1]})
+    assert client.get('/api/prices', params=params).json()['items'] == []
+
+
+def test_cardmax_quotes_read_stock_for_only_the_exact_nm_card(client, monkeypatch):
+    html = (Path(__file__).parent / 'fixtures/cardmax_sev.html').read_text(encoding='utf-8')
+    soup = BeautifulSoup(html, 'html.parser')
+    for link in soup.select('.M_pager li.next'):
+        link.decompose()
+    calls = []
+    def respond(request):
+        calls.append(request.url.path)
+        body = str(soup) if len(calls) == 1 else '<span class="M_item-stock-small">残りあと4個</span>'
+        return httpx.Response(200, text=body)
+    monkeypatch.setattr(CardMaxSearcher, 'client_type', staticmethod(lambda: httpx.Client(
+        transport=httpx.MockTransport(respond))))
+    [offer] = client.get('/api/prices', params=dict(merchant='cardmax', game='sev', card_number='BP22-T03')).json()['items']
+    assert offer['stock_quantity'] == 4 and offer['condition'] == 'normal'
+    assert calls == ['/shop/shopbrand.html', httpx.URL(offer['product_url']).path]
 
 
 @pytest.mark.parametrize('kind,status,detail', [

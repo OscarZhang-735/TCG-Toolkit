@@ -2,6 +2,7 @@ import {lookupSource, lookupItems} from '../catalog/card-sources.js';
 import {createCards, filterCards, summarizeCards} from './cards.js';
 import {yenPrice, CURRENCIES, formatMoney, priceDisplay as showPrice} from './card-money.js';
 import {PRICE_MERCHANT, priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} from './card-prices.js';
+import {stockBadge} from '../catalog/stock-badge.js';
 import {createRateCache} from '../shared/currency.js';
 import {parseQuantity} from '../shared/quantity.js';
 import {t, getLanguage} from '../i18n.js';
@@ -330,6 +331,7 @@ function iconButton(name, label, handler, disabled) {
   return button;
 }
 function openEditor(id = '') {
+  singleMerchant = PRICE_MERCHANT;
   clearOfficial(); clearPriceLookup(); loadPriceSupport();
   inventory.edit(id);
   if (!editorOpen()) $('card-dialog').showModal();
@@ -486,7 +488,7 @@ for (const [input, edge] of [[$('cards-price-min'), 'min'], [$('cards-price-max'
 $('cards-reset').addEventListener('click', () => { filters = blankFilters(); $('cards-query').value = ''; render(); });
 // app.js owns the shared list/grid choice and announces every change.
 document.addEventListener('viewchange', render);
-$('language').addEventListener('change', render);
+$('language').addEventListener('change', () => { buildPriceSources(); render(); });
 export function clearCards() {
   transfers.reset();
   clearOfficial();
@@ -608,6 +610,7 @@ $('card-card_number').addEventListener('keydown', event => {
 // offer on the entered game and number; clicking an offer fills in its price and currency. Which
 // games can be priced comes from /api/prices/merchants; for other games the button is disabled.
 let priceSupport = {status: 'idle', merchants: []}, priceSupportController = null;
+let singleMerchant = PRICE_MERCHANT;
 const merchantGames = id => priceSupport.merchants.find(merchant => merchant.id === id)?.games ?? null;
 const merchantName = merchant => merchant.id === 'yuyutei' ? t('merchant_yuyutei') : merchant.name;
 const blankPriceLookup = () => ({status: 'idle', items: [], error: '', chosen: '', cardNumber: ''});
@@ -620,7 +623,7 @@ function loadPriceSupport() {
   fetchPriceMerchants(officialAPI, controller.signal).then(
     merchants => { if (controller === priceSupportController) priceSupport = {status: 'ready', merchants}; },
     () => { if (controller === priceSupportController) priceSupport = {status: 'failed', merchants: []}; })
-    .finally(() => { if (controller === priceSupportController) { renderPriceLookup(); buildPriceSources(); } });
+    .finally(() => { if (controller === priceSupportController) { buildPriceSources(); renderPriceLookup(); } });
 }
 // Why the lookup cannot run for the current draft ('' when it can).
 function priceLookupBlock() {
@@ -628,7 +631,7 @@ function priceLookupBlock() {
   if (!game || !draft.card_number.trim()) return t('price_lookup_needs');
   if (priceSupport.status === 'failed') return t('price_lookup_support_failed');
   if (priceSupport.status !== 'ready') return t('price_lookup_support_loading');
-  if (!merchantGames(PRICE_MERCHANT)?.has(priceGame(game))) return t('price_lookup_unsupported', {game});
+  if (!merchantGames(singleMerchant)?.has(priceGame(game))) return t('price_lookup_unsupported', {game});
   return '';
 }
 function clearPriceLookup() {
@@ -644,7 +647,7 @@ async function runPriceLookup() {
   priceLookup = {...blankPriceLookup(), status: 'loading', cardNumber: draft.card_number.trim()};
   renderPriceLookup();
   try {
-    const items = await lookupPrices(officialAPI, draft, priceLookupController.signal);
+    const items = await lookupPrices(officialAPI, draft, priceLookupController.signal, singleMerchant);
     if (generation !== priceLookupGeneration || !editorOpen()) return;
     priceLookup = {...priceLookup, status: 'done', items: rankOffers(items, inventory.state.draft.rarity)};
   } catch (error) {
@@ -660,13 +663,6 @@ function applyOffer(offer) {
   render();
   $('card-price').focus();
 }
-const stockIcons = {in_stock: 'bi-check-circle-fill', out_of_stock: 'bi-x-circle', unknown: 'bi-question-circle'};
-function stockBadge(offer) {
-  const status = stockIcons[offer.stock_status] ? offer.stock_status : 'unknown';
-  const badge = node('span', '', `badge ${status}`);
-  badge.append(icon(stockIcons[status]), t(status) + (offer.stock_quantity == null ? '' : ` (${offer.stock_quantity})`));
-  return badge;
-}
 function offerItem(offer) {
   const draft = inventory.state.draft, price = money(offer.price, offer.currency);
   const chosen = priceLookup.chosen === offer.product_url && draft.price === String(offer.price) && draft.currency === offer.currency;
@@ -680,7 +676,7 @@ function offerItem(offer) {
   const rarity = offer.rarity ? node('span', offer.rarity, `rarity-tag tier-${rarityTier(draft.game, offer.rarity)}`) : node('span', '—', 'muted');
   const name = node('span', '', 'price-offer-name'); name.append(node('span', offer.name));
   if (match) name.append(node('span', t('price_lookup_match'), 'price-offer-match'));
-  pick.append(rarity, name, stockBadge(offer), node('strong', price, 'price-offer-price'), icon(chosen ? 'bi-check-lg' : 'bi-box-arrow-in-down-left'));
+  pick.append(rarity, name, stockBadge({...offer, source: singleMerchant}), node('strong', price, 'price-offer-price'), icon(chosen ? 'bi-check-lg' : 'bi-box-arrow-in-down-left'));
   pick.addEventListener('click', () => applyOffer(offer));
   const link = document.createElement('a');
   link.className = 'price-offer-link'; link.href = offer.product_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
@@ -689,6 +685,8 @@ function offerItem(offer) {
   return item;
 }
 function renderPriceLookup() {
+  $('card-price-source').value = singleMerchant;
+  $('card-price-source').disabled = priceSupport.status !== 'ready' || inventory.state.busy;
   const state = inventory.state, block = priceLookupBlock(), {status, items, error, cardNumber} = priceLookup;
   const button = $('card-price-lookup');
   button.disabled = state.busy || status === 'loading' || Boolean(block);
@@ -705,6 +703,7 @@ function renderPriceLookup() {
   $('price-lookup-results').hidden = status !== 'done' || !items.length;
 }
 $('card-price-lookup').addEventListener('click', runPriceLookup);
+$('card-price-source').addEventListener('change', event => { singleMerchant = event.target.value; clearPriceLookup(); });
 
 // Bulk price lookup for the selected cards. The dialog picks the data source (YuYu-Tei by default)
 // and whether cards that already have a price get the looked-up one. Cards are priced one at a
@@ -721,6 +720,9 @@ const bulkPriceIcons = {updated: 'bi-check-circle-fill', kept: 'bi-dash-circle',
   unmatched: 'bi-question-circle', failed: 'bi-exclamation-circle'};
 // Source chips are rebuilt only when the merchant list changes, so keyboard focus survives renders.
 function buildPriceSources() {
+  const select = $('card-price-source');
+  select.replaceChildren(...priceSupport.merchants.map(merchant => new Option(merchantName(merchant), merchant.id)));
+  select.value = singleMerchant;
   const box = $('cards-price-sources');
   box.replaceChildren(...priceSupport.merchants.map(merchant => {
     const label = node('label', '', 'chip'), input = document.createElement('input');

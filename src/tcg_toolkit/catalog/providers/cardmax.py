@@ -114,6 +114,7 @@ class CardMaxSearcher(PagedSearcher):
             product_url=f"{self.base_url}/shopdetail/{brandcode[0]}",
             image_url=urljoin(url, image["src"]) if image and image["src"] else None,
             stock_status=StockStatus.UNKNOWN, stock_quantity=None, stock_text="",
+            condition='normal' if title.rstrip().endswith(' NM') else None,
         )
 
     @staticmethod

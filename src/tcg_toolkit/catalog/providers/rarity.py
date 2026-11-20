@@ -9,6 +9,17 @@ from .official import (LYCEE_SEARCH, PM_SEARCH, SEV_DETAIL, WS_SEARCH, WSR_SEARC
                        parse_lycee, parse_pm, parse_sev, parse_ws, parse_wsr, wsrose_rarity)
 
 
+def ws_catalog_search(game, keyword, timeout):
+    url = WSR_SEARCH if game == Game.WSR else WS_SEARCH
+    response = httpx.get(url, params={'keyword': keyword}, follow_redirects=True, timeout=timeout)
+    response.raise_for_status()
+    if game == Game.WSR:
+        return parse_wsr(response.text)
+    data = response.json()
+    cards = parse_ws(data)
+    return cards, int(data.get('total', len(cards)))
+
+
 def fill_rarities(page, game, timeout):
     empty = (None, '', '-', '－', '—')
     def identity(item):
@@ -32,12 +43,8 @@ def fill_rarities(page, game, timeout):
         try:
             if game == Game.WSR and '/' in key:
                 return wsrose_rarity(get(WSR_DETAIL, cardno=key).text, key)
-            if game == Game.WSR:
-                cards, total = parse_wsr(get(WSR_SEARCH, keyword=key).text)
-            elif game == Game.WS:
-                data = get(WS_SEARCH, keyword=key).json()
-                cards = parse_ws(data)
-                total = int(data.get('total', len(cards)))
+            if game in (Game.WS, Game.WSR):
+                cards, total = ws_catalog_search(game, key, min(timeout, 5))
             elif game == Game.SEV:
                 cards = parse_sev(get(SEV_DETAIL, cardno=key).text, key)
             elif game == Game.PM:

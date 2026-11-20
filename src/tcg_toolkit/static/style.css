@@ -708,6 +708,12 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 .cards-form-grid .field .price-input input, .field.graded-price-field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
 .card-dialog .field .price-input select, .field.graded-price-field .price-input select { width: auto; flex: none; margin-top: 0; }
 .card-dialog .price-input .price-lookup-button { flex: none; padding: 0 12px; gap: 6px; }
+.card-price-field { container-type: inline-size; }
+@container (max-width: 380px) {
+  .card-price-field .price-input { gap: 4px; }
+  .card-price-field .price-input :is(input, select, .price-lookup-button) { padding-inline: 4px; font-size: 13px; }
+  .card-price-field .price-lookup-button i { display: none; }
+}
 /* Price lookup results, below the quantity / price row. */
 .price-lookup { padding: 12px 14px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
 .price-lookup-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -777,6 +783,7 @@ button.row-action:hover { background: var(--color-hover); color: var(--color-tex
 
 /* Add / edit card dialog with official Lycee matches */
 .form-dialog.card-dialog { width: min(920px, 94vw); padding: 28px; }
+@media (max-width: 420px) { .form-dialog.card-dialog { padding-inline: 12px; } }
 .card-dialog .lookup-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
 .card-dialog .details-row { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
 .card-dialog .details-row .wide-2 { grid-column: span 2; }

@@ -1,7 +1,7 @@
 import {CURRENCIES} from './card-money.js';
 
 // Price lookup (/api/prices). Merchants name games by lowercase id; library games use display
-// names (WS EN, ChaosTCG), so map one to the other. Only YuYu-Tei exists for now.
+// names (WS EN, ChaosTCG), so map one to the other.
 export const PRICE_MERCHANT = 'yuyutei';
 export function priceGame(game) {
   const id = (game ?? '').trim().toLowerCase().replace(/\s+/g, '_');
