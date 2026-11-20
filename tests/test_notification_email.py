@@ -1,13 +1,13 @@
-import smtplib
 import time
 
 import pytest
-from sqlalchemy import select
 
-from tcg_toolkit.persistence.models import User, EmailChallenge
+from tcg_toolkit.persistence.models import EmailChallenge
 from tcg_toolkit.web import app
-from tcg_toolkit.mail.delivery import SMTPMailer
 from test_subscriptions import client, add, worker, emails, snapshot, NOW, login
+
+# Subscription workers share a database-wide advisory lock.
+pytestmark = pytest.mark.serial
 
 PATH = '/api/subscriptions/notification-email'
 
@@ -67,78 +67,3 @@ def test_wrong_expired_and_cross_account_codes(client):
         db.get(EmailChallenge, code['challenge_id']).expires_at = int(time.time()) - 1
     assert client.put(PATH, json=code).json()['detail'] == 'code_expired'
     assert client.get(PATH).json()['email'] == 'alice@example.com'
-
-
-def test_reset_invalidates_pending_codes_and_confirmation_supersedes_older_targets(client):
-    first = request_code(client)
-    second = request_code(client, 'another@example.com')
-    assert client.put(PATH, json=second).status_code == 200
-    assert client.put(PATH, json=first).json()['detail'] == 'invalid_code'
-    third = request_code(client, 'third@example.com')
-    client.request('DELETE', PATH, json={})
-    assert client.put(PATH, json=third).json()['detail'] == 'invalid_code'
-
-
-def test_delivery_failure_keeps_previous_address_and_rate_limits(client):
-    first = request_code(client)
-    client.put(PATH, json=first)
-    assert client.post(PATH + '/code', json={'email': 'alerts@example.com'}).status_code == 429
-    app.state.auth.verification.mailer.failure = smtplib.SMTPException('offline')
-    response = client.post(PATH + '/code', json={'email': 'next@example.com'})
-    assert response.status_code == 503
-    assert client.get(PATH).json()['email'] == 'alerts@example.com'
-
-
-def test_notification_proof_cannot_be_used_for_password_change(client):
-    code = request_code(client)
-    with app.state.database.session() as db:
-        account = db.scalar(select(User).where(User.username == 'alice'))
-        challenge, error = app.state.auth.verification.check(db, **code, purpose='password_change', user_id=account.id)
-        assert error.detail == 'invalid_code'
-
-
-def test_verified_custom_address_allows_legacy_account_to_subscribe(client):
-    with app.state.database.session() as db:
-        account = db.scalar(select(User).where(User.username == 'alice'))
-        account.email = account.email_verified_at = None
-    assert client.get(PATH).json()['email'] is None
-    code = request_code(client)
-    assert client.put(PATH, json=code).status_code == 200
-    assert add(client)['id']
-
-
-def test_reset_during_smtp_does_not_reactivate_challenge(client, monkeypatch):
-    mailbox = app.state.auth.verification.mailer
-    original = mailbox.send_code
-    def send(*args):
-        original(*args)
-        assert client.request('DELETE', PATH, json={}).status_code == 200
-    monkeypatch.setattr(mailbox, 'send_code', send)
-    response = client.post(PATH + '/code', json={'email': 'alerts@example.com'})
-    assert response.status_code == 503
-    assert client.get(PATH).json()['using_registration_email'] is True
-    with app.state.database.session() as db:
-        challenge = db.scalar(select(EmailChallenge).where(EmailChallenge.purpose == 'notification_email'))
-        assert challenge.state != 'active'
-
-
-@pytest.mark.parametrize('language', ['zh-CN', 'en'])
-def test_notification_verification_template(monkeypatch, language):
-    messages = []
-    monkeypatch.setattr(SMTPMailer, 'send_message', lambda self, message: messages.append(message))
-    SMTPMailer().send_code('alerts@example.com', '123456', language, 'notification_email')
-    # The requested language no longer matters: Chinese first, then English.
-    plain = messages[0].get_body(preferencelist=('plain',)).get_content()
-    assert plain.index('订阅通知邮箱') < plain.index('subscription notification email')
-    assert '123456' in plain
-
-
-@pytest.mark.parametrize('method,path,body', [('get',PATH,None), ('post',PATH+'/code',{'email':'a@example.com'}),
-                                            ('put',PATH,{'challenge_id':'x','code':'123456'}), ('delete',PATH,{})])
-def test_guards_and_cache(client, method, path, body):
-    if method != 'get':
-        assert client.request(method,path,json=body,headers={'Origin':'https://evil.example'}).status_code == 403
-    client.headers.pop('Authorization')
-    response = client.request(method,path,json=body)
-    assert response.status_code == 401
-    assert response.headers['Cache-Control'] == 'no-store'

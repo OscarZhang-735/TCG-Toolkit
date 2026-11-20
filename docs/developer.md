@@ -138,7 +138,7 @@ Card Max 使用服务器直连，例如 `GET /api/search?source=cardmax&game=sev
 ### 测试
 
 ```powershell
-docker compose -f compose.test.yaml up -d --wait
+docker compose -p tcg-pg-tests -f compose.test.yaml up -d --wait
 $env:PGHOST="127.0.0.1"
 $env:PGPORT="15433"
 $env:PGDATABASE="tcg_test"
@@ -148,7 +148,8 @@ python -m pytest -q tests
 node --test (Get-ChildItem tests/*.test.mjs).FullName
 ```
 
-测试使用真实 PostgreSQL 和每项独立 schema，要求库名以 `_test` 结尾。测试结束释放连接并清理自己创建的 schema；数据库卷不自动删除。
+纯解析测试可以单独运行，例如 `python -m pytest -q tests/test_search.py`。需要持久化的测试通过 `postgres_schema` 使用真实 PostgreSQL，库名必须以 `_test` 结尾。每个 pytest 进程迁移一次独立 schema，每项数据库测试结束后恢复初始数据，进程结束时清理 schema。
+并行运行时，先执行 `python -m pytest -q -n 2 -m "not serial"`，结束后再执行 `python -m pytest -q -m serial`。第二组覆盖共用数据库级锁的订阅任务。
 GitHub Actions 在现有 test job 内启动 PostgreSQL service，不增加数据库发布工作流。
 
 ### ORM 与事务

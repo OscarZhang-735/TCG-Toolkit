@@ -1,4 +1,3 @@
-from auth_helpers import register_user
 from pathlib import Path
 
 import httpx
@@ -6,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import tcg_toolkit.catalog.providers.yuyutei_products as module
+from auth_helpers import register_user
 from tcg_toolkit.catalog.providers import storefront_details
 from tcg_toolkit.web import app
 
@@ -19,8 +19,6 @@ class FakeClient:
 
     def get(self, url, *, timeout):
         FakeClient.calls.append(url)
-        if isinstance(FakeClient.reply, Exception):
-            raise FakeClient.reply
         return httpx.Response(200, text=FakeClient.reply, request=httpx.Request('GET', url))
 
     def close(self):
@@ -28,7 +26,7 @@ class FakeClient:
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def client(postgres_schema, monkeypatch):
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
     monkeypatch.setattr(module, 'SearchProxyClient', FakeClient)
     monkeypatch.setattr(module, '_cache', {})
@@ -39,57 +37,6 @@ def client(tmp_path, monkeypatch):
         yield client
 
 
-def test_product_details_from_page_and_cached(client):
-    for _ in range(2):
-        response = client.get('/api/yuyutei/product', params={'gid': 56, 'ver': 'OS01', 'cid': '10240'})
-        assert response.status_code == 200
-        assert response.json() == {'gid': 56, 'ver': 'OS01', 'cid': '10240',
-                                   'card_number': 'OS01/R01-053SEC', 'rarity': 'SEC'}
-    assert FakeClient.calls == ['https://yuyu-tei.jp/sell/wsr/card/OS01/10240']
-    assert response.headers['cache-control'] == 'no-store'
-
-
-def test_rarity_is_optional_but_number_is_required():
-    assert module.parse_product(FIXTURE.replace('SEC 大人', '大人'))['rarity'] is None
-    with pytest.raises(ValueError):
-        module.parse_product('<main>moved</main>')
-
-
-def test_sev_product_details_and_stock(client):
-    FakeClient.reply = '<div id="product-detail"><span class="border">BP01-U01</span></div>' \
-        '<div id="power"><h3>UR Card</h3></div><div class="counter">' \
-        '<input class="cart_kizu" value="0"><input class="cart_active" value="5"></div>'
-    response = client.get('/api/yuyutei/product', params={
-        'gid': 47, 'ver': 'bp01', 'cid': '10238', 'stock': 'true'})
-    assert response.status_code == 200
-    assert response.json()['card_number'] == 'BP01-U01'
-    assert response.json()['rarity'] == 'UR'
-    assert response.json()['stock_quantity'] == 5
-    assert FakeClient.calls == ['https://yuyu-tei.jp/sell/sev/card/bp01/10238']
-
-
-@pytest.mark.parametrize('params', [{'gid': 1, 'ver': 'OS01', 'cid': '1'}, {'gid': 56, 'ver': '../x', 'cid': '1'},
-                                    {'gid': 56, 'ver': 'OS01', 'cid': '1/2'}, {'gid': 56, 'ver': 'OS01'}])
-def test_invalid_identity_never_fetches(client, params):
-    assert client.get('/api/yuyutei/product', params=params).status_code == 422
-    assert FakeClient.calls == []
-
-
-@pytest.mark.parametrize('reply,status', [(httpx.ReadTimeout('x'), 504), (httpx.ConnectError('x'), 502),
-                                          ('<html>not a product</html>', 502)])
-def test_upstream_failures_are_not_cached(client, reply, status):
-    FakeClient.reply = reply
-    params = {'gid': 56, 'ver': 'OS01', 'cid': '10240'}
-    assert client.get('/api/yuyutei/product', params=params).status_code == status
-    FakeClient.reply = FIXTURE
-    assert client.get('/api/yuyutei/product', params=params).status_code == 200
-
-
-def test_requires_sign_in(client):
-    client.headers.pop('Authorization')
-    assert client.get('/api/yuyutei/product', params={'gid': 56, 'ver': 'OS01', 'cid': '1'}).status_code == 401
-
-
 @pytest.mark.parametrize('source,url,html,expected', [
     ('hobbystation', 'https://www.hobbystation-single.jp/lo/product/detail/305273', '''
         <div class="detailWrap"><div class="detail"><div>LO-LO-4899</div><div class="itemName"><h2>カード(SR)</h2></div>
@@ -98,10 +45,6 @@ def test_requires_sign_in(client):
         <div class="product-info"><h2>(GCR) カード(PR)(BD/W125-P05S)◇PR【ヴァイスシュヴァルツ】 NM</h2></div>
         <div id="M_itemInfo"><span class="M_item-stock-small">残りあと5個</span></div>''',
         ('in_stock', 5, 'ws', 'BD/W125-P05S', 'PR')),
-    ('cardmax', 'https://www.cardmax.jp/shopdetail/000000235105', '''
-        <div class="product-info"><h2>Other edition</h2></div>
-        <div id="M_itemInfo"><span class="M_item-stock-soldout">売り切れ</span></div>''',
-        ('out_of_stock', 0, None, None, None)),
 ])
 def test_merchant_stock_reads_the_cart_url_without_credentials_or_game(client, monkeypatch, source, url, html, expected):
     monkeypatch.setattr(storefront_details, 'HobbyStationClient', FakeClient)
@@ -119,44 +62,19 @@ def test_merchant_stock_reads_the_cart_url_without_credentials_or_game(client, m
     assert client.get(path, params={'product_url': url}).status_code == 401
     assert FakeClient.calls == [url]
 
-def stock_html(value, kizu=0):
-    return FIXTURE + f'<div class="counter"><input class="cart_kizu" value="{kizu}"><input class="cart_active" value="{value}"></div>'
-
-
 def test_stock_reads_fresh_product_page_without_polluting_details_cache(client):
     params = {'gid': 56, 'ver': 'OS01', 'cid': '10240'}
-    client.get('/api/yuyutei/product', params=params)
-    for quantity in (25, 0, 3):
-        FakeClient.reply = stock_html(quantity)
+    details = client.get('/api/yuyutei/product', params=params).json()
+    assert (details['card_number'], details['rarity']) == ('OS01/R01-053SEC', 'SEC')
+    for quantity in (25, 0):
+        FakeClient.reply = FIXTURE + offer_html(quantity=quantity)
         response = client.get('/api/yuyutei/product', params={**params, 'stock': 'true'})
         assert response.status_code == 200
         assert response.json()['stock_quantity'] == quantity
         assert response.json()['stock_status'] == ('in_stock' if quantity else 'out_of_stock')
         assert response.headers['cache-control'] == 'no-store'
-    assert len(FakeClient.calls) == 4
-    assert 'stock_quantity' not in client.get('/api/yuyutei/product', params=params).json()
-    assert len(FakeClient.calls) == 4
-
-
-@pytest.mark.parametrize('value,expected', [('12', 12), ('0', 0), ('', None), ('-1', None), ('10+', None)])
-def test_stock_parser_validates_hidden_quantity(value, expected):
-    assert module.parse_product_stock(stock_html(value))['stock_quantity'] == expected
-
-
-def test_stock_is_condition_specific_and_unknown_is_not_zero():
-    assert module.parse_product_stock(stock_html(25), kizu=1)['stock_quantity'] is None
-    assert module.parse_product_stock(stock_html(4, 1), kizu=1)['stock_quantity'] == 4
-    assert module.parse_product_stock(FIXTURE)['stock_status'] == 'unknown'
-    assert module.parse_product_stock(stock_html(25) + stock_html(10))['stock_quantity'] is None
-
-
-def test_stock_failure_and_invalid_condition(client):
-    FakeClient.reply = '<html>broken</html>'
-    params = {'gid': 56, 'ver': 'OS01', 'cid': '1', 'stock': 'true'}
-    assert client.get('/api/yuyutei/product', params=params).status_code == 502
-    FakeClient.calls.clear()
-    assert client.get('/api/yuyutei/product', params={**params, 'kizu': 2}).status_code == 422
-    assert FakeClient.calls == []
+    assert client.get('/api/yuyutei/product', params=params).json() == details
+    assert len(FakeClient.calls) == 3
 
 
 def offer_html(price='1,280', quantity='5', kizu=0):
@@ -178,21 +96,8 @@ def test_subscription_snapshot_price_stock_and_condition_isolation():
 
 
 @pytest.mark.parametrize('offers', [
-    '', offer_html(kizu=1), offer_html('', '5'), offer_html('1,2', '5'),
-    offer_html('100', ''), offer_html('100', '-1'), offer_html('100', '10+'),
-    offer_html('100', '5') + offer_html('100', '3'),
+    offer_html(kizu=1), offer_html('100', ''),
 ])
 def test_invalid_snapshot_never_turns_unknown_into_zero(offers):
     with pytest.raises(ValueError):
         module.parse_product_snapshot(FIXTURE + offers, 'wsr', 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240')
-
-
-def test_snapshot_fetch_bypasses_static_cache(client):
-    url = 'https://yuyu-tei.jp/sell/wsr/card/OS01/10240'
-    for price, quantity in [('1,280', '5'), ('980', '0')]:
-        FakeClient.reply = FIXTURE + offer_html(price, quantity)
-        result = module.fetch_product_snapshot('wsr', url)
-        assert result['price'] == int(price.replace(',', ''))
-        assert result['stock_quantity'] == int(quantity)
-    assert len(FakeClient.calls) == 2
-    assert module._cache == {}

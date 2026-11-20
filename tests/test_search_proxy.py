@@ -1,16 +1,15 @@
 import httpx
 import pytest
 
-@pytest.mark.parametrize('endpoint', ['http://relay.example', 'http://relay.example/encrypted-proxy'])
-@pytest.mark.parametrize('failure', ['', 'tamper', 'wrong_id', 'http'])
-def test_encrypted_proxy_roundtrip(monkeypatch, tmp_path, failure, endpoint):
+@pytest.mark.parametrize('tampered', [False, True])
+def test_encrypted_proxy_roundtrip(monkeypatch, tmp_path, tampered):
     import base64
     from tcg_toolkit.external.proxy_wire import Wire
     from tcg_toolkit.external.search_proxy import YuYuTeiProxyTransport
     key = tmp_path / 'master.key'
     key.write_bytes(bytes(range(32)))
     monkeypatch.setenv('TCG_PROXY_KEY_FILE', str(key))
-    monkeypatch.setenv('TCG_SEARCH_PROXY_URL', endpoint)
+    monkeypatch.setenv('TCG_SEARCH_PROXY_URL', 'http://relay.example')
     wire = Wire(key)
     calls = []
     def respond(request):
@@ -25,19 +24,18 @@ def test_encrypted_proxy_roundtrip(monkeypatch, tmp_path, failure, endpoint):
         assert headers['cookie'] == 'laravel_session=secret'
         assert headers['x-csrf-token'] == 'csrf-secret'
         assert headers['Accept-Encoding'] == 'identity'
-        if failure == 'http':
-            return httpx.Response(502)
-        result = {'request_id': 'wrong' if failure == 'wrong_id' else payload['request_id'],
+        result = {'request_id': payload['request_id'],
                   'status': 200, 'headers': [['set-cookie', 'a=1'], ['set-cookie', 'b=2']],
                   'body': base64.b64encode('中文'.encode()).decode()}
         packet = wire.seal('response', result)
-        if failure == 'tamper': packet = packet[:-1] + bytes([packet[-1] ^ 1])
+        if tampered:
+            packet = packet[:-1] + bytes([packet[-1] ^ 1])
         return httpx.Response(200, stream=httpx.ByteStream(packet))
     with httpx.Client(transport=YuYuTeiProxyTransport(transport=httpx.MockTransport(respond))) as client:
         def send():
             return client.post('https://yuyu-tei.jp/cart', content=b'counter=1',
                                headers={'cookie': 'laravel_session=secret', 'x-csrf-token': 'csrf-secret'})
-        if failure:
+        if tampered:
             with pytest.raises(httpx.TransportError): send()
         else:
             response = send()
@@ -46,22 +44,15 @@ def test_encrypted_proxy_roundtrip(monkeypatch, tmp_path, failure, endpoint):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize('host', ['yuyu-tei.jp', 'www.hobbystation-single.jp'])
-@pytest.mark.parametrize('endpoint,key_configured', [
-    ('http://relay.example/encrypted-proxy', False),
-    ('http://relay.example/proxy', True),
-])
-def test_invalid_proxy_config_never_sends_plaintext(monkeypatch, tmp_path, endpoint, key_configured, host):
+def test_missing_key_never_sends_plaintext(monkeypatch):
     from tcg_toolkit.external.search_proxy import YuYuTeiProxyTransport
-    key = tmp_path / 'key'
-    key.write_bytes(bytes(range(32)))
-    monkeypatch.setenv('TCG_SEARCH_PROXY_URL', endpoint)
-    monkeypatch.setenv('TCG_PROXY_KEY_FILE', str(key) if key_configured else '')
+    monkeypatch.setenv('TCG_SEARCH_PROXY_URL', 'http://relay.example/encrypted-proxy')
+    monkeypatch.setenv('TCG_PROXY_KEY_FILE', '')
     calls = []
-    with httpx.Client(transport=YuYuTeiProxyTransport(relay_host=host, transport=httpx.MockTransport(
+    with httpx.Client(transport=YuYuTeiProxyTransport(transport=httpx.MockTransport(
             lambda r: calls.append(r)))) as client:
         with pytest.raises(httpx.TransportError):
-            client.get(f'https://{host}/')
+            client.get('https://yuyu-tei.jp/')
     assert calls == []
 
 

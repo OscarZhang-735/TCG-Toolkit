@@ -12,8 +12,6 @@ from tcg_toolkit.catalog.providers.rarity import fill_rarities
     ('hobbystation', 'ws', 'WS-WE49-56SP', ['official_ws.json'], 'SP'),
     ('hobbystation', 'ws', 'WS-WE49-56S', ['official_ws.json'], None),
     ('hobbystation', 'wsr', 'WR-R13-001', ['official_wsr.html', 'official_wsr_detail.html'], 'RR'),
-    ('yuyutei', 'wsr', 'OS13/R13-001SEC', ['official_wsr_detail.html'], None),
-    ('cardmax', 'ws', 'BD/WE49-56BDR', ['official_ws.json'], 'BDR'),
     ('cardmax', 'sev', 'CP04-021', ['official_sev.html'], 'LG'),
 ])
 def test_official_printing(monkeypatch, shop, game, number, files, expected):

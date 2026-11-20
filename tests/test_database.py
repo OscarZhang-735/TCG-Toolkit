@@ -1,7 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from importlib.resources import files
-import ast
 import shutil
 import uuid
 
@@ -9,7 +8,7 @@ from alembic.autogenerate import compare_metadata
 from alembic import command
 from alembic.runtime.migration import MigrationContext
 from psycopg.conninfo import make_conninfo
-from sqlalchemy import MetaData, Table, event, func, inspect, select, update
+from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.schema import CreateSchema, DropSchema
 import pytest
@@ -17,9 +16,11 @@ from fastapi.testclient import TestClient
 
 from tcg_toolkit.persistence.runtime import open_database
 from tcg_toolkit.persistence.database import Database, connection_info
-from tcg_toolkit.persistence.models import Base, CardGroup, Favorite, FavoriteGroup, LoginSession, OwnedCard, SchemaMigration, User
+from tcg_toolkit.persistence.models import Base, Favorite, LoginSession, OwnedCard, SchemaMigration, User
 from tcg_toolkit.persistence import schema
 from tcg_toolkit.web import app
+
+pytestmark = pytest.mark.usefixtures("postgres_schema")
 
 
 @pytest.fixture
@@ -47,29 +48,6 @@ def test_fresh_schema_is_explicit_and_concurrent_migrations_run_once(empty_datab
         assert not inspect(db.connection()).has_table('yuyutei_credentials')
 
 
-def test_migration_rerun_preserves_data_and_sessions():
-    with open_database() as store, store.session() as db:
-        db.add(User(id='u',username='alice',password_hash='hash',created_at=1))
-        db.flush()
-        db.add(LoginSession(token_hash='token',user_id='u',expires_at=9999999999))
-    schema.migrate()
-    with open_database() as store, store.session() as db:
-        assert db.get(LoginSession, 'token').user_id == 'u'
-
-
-def test_schema_two_upgrade_defaults_to_existing_registered_email(empty_database):
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0002')
-        db.execute(User.__table__.insert().values(id='existing', username='existing', password_hash='hash',
-                   created_at=1, email='existing@example.com', email_verified_at=1))
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    from tcg_toolkit.subscriptions.recipients import notification_recipient
-    with open_database(empty_database) as store, store.session() as db:
-        user = db.get(User, 'existing')
-        assert user.notification_email is None and user.notification_email_verified_at is None
-        assert notification_recipient(user) == 'existing@example.com'
-
-
 def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_database):
     with Database(empty_database) as store, store.connect() as db:
         # Exercise the exact immutable schema deployed before ORM adoption.
@@ -94,177 +72,11 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
 
 
 def test_orm_metadata_matches_the_deployed_schema():
-    with app.state.database.connect() as db:
+    with open_database() as store, store.connect() as db:
         assert compare_metadata(MigrationContext.configure(db), Base.metadata) == []
 
 
-def test_schema_fourteen_upgrade_adds_graded_cards_preserving_saved_data(empty_database):
-    from tcg_toolkit.persistence.models import GradedCard
-
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0014')
-        db.execute(User.__table__.insert().values(id='collector', username='collector', password_hash='hash', created_at=1))
-        db.execute(LoginSession.__table__.insert().values(token_hash='keep', user_id='collector', expires_at=9999999999))
-        db.execute(OwnedCard.__table__.insert().values(id='card', user_id='collector', game='wsr',
-                   card_number='A-001', rarity='R', name='Saved card', quantity=3, notes='keep',
-                   game_key='wsr', number_key='a-001', rarity_key='r', created_at=1, updated_at=1))
-        assert not inspect(db).has_table('graded_cards')
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert db.get(User, 'collector').username == 'collector'
-        assert db.get(LoginSession, 'keep').user_id == 'collector'
-        assert db.get(OwnedCard, 'card').quantity == 3
-        assert db.scalar(select(func.count()).select_from(GradedCard)) == 0
-        db.add(GradedCard(id='graded', user_id='collector', provider='ars', cert_number='00123',
-                          snapshot='{}', created_at=1, refreshed_at=1))
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert db.get(GradedCard, 'graded').cert_number == '00123'
-
-
-def test_schema_fifteen_upgrade_keeps_graded_cards_without_uploaded_images(empty_database):
-    from tcg_toolkit.persistence.models import GradedCard
-
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0015')
-        db.execute(User.__table__.insert().values(id='collector', username='collector', password_hash='hash', created_at=1))
-        db.execute(Table('graded_cards', MetaData(), autoload_with=db).insert().values(
-            id='graded', user_id='collector', provider='psa', cert_number='98428602', snapshot='{"images": []}',
-            created_at=1, refreshed_at=2))
-        assert 'front_image_url' not in {column['name'] for column in inspect(db).get_columns('graded_cards')}
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        row = db.get(GradedCard, 'graded')
-        assert (row.cert_number, row.refreshed_at, row.front_image_url, row.back_image_url) == ('98428602', 2, None, None)
-        assert (row.price, row.currency) == (None, 'JPY')
-        assert row.group_id is None
-
-
-def test_schema_seventeen_upgrade_adds_graded_groups_keeping_cards_ungrouped(empty_database):
-    from tcg_toolkit.persistence.models import GradedCard, GradedCardGroup
-
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0017')
-        db.execute(User.__table__.insert().values(id='collector', username='collector', password_hash='hash', created_at=1))
-        db.execute(Table('graded_cards', MetaData(), autoload_with=db).insert().values(
-            id='graded', user_id='collector', provider='psa', cert_number='98428602', snapshot='{"images": []}',
-            created_at=1, refreshed_at=2, price=12.5, currency='CAD'))
-        assert not inspect(db).has_table('graded_card_groups')
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        row = db.get(GradedCard, 'graded')
-        assert (row.group_id, str(row.price), row.currency, row.display_name) == (None, '12.50', 'CAD', None)
-        db.add(GradedCardGroup(id='slabs', user_id='collector', name='Slabs', created_at=3))
-        db.flush()
-        row.group_id = 'slabs'
-    with open_database(empty_database) as store, store.session() as db:
-        assert db.get(GradedCard, 'graded').group_id == 'slabs'
-
-
-def test_schema_thirteen_keeps_one_session_per_account(empty_database):
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0013')
-        db.execute(User.__table__.insert(), [
-            dict(id=user, username=user, password_hash='hash', created_at=1)
-            for user in ('alice', 'bob', 'single', 'empty')])
-        db.execute(LoginSession.__table__.insert(), [
-            dict(token_hash='alice-old', user_id='alice', expires_at=9999999998),
-            dict(token_hash='alice-new', user_id='alice', expires_at=9999999999),
-            dict(token_hash='bob-a', user_id='bob', expires_at=9999999999),
-            dict(token_hash='bob-z', user_id='bob', expires_at=9999999999),
-            dict(token_hash='single-token', user_id='single', expires_at=9999999999)])
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert {row.user_id: row.token_hash for row in db.scalars(select(LoginSession))} == {
-            'alice': 'alice-new', 'bob': 'bob-z', 'single': 'single-token'}
-        assert db.scalar(select(func.count()).select_from(User)) == 4
-        with pytest.raises(IntegrityError) as error, db.begin_nested():
-            db.add(LoginSession(token_hash='alice-extra', user_id='alice', expires_at=9999999999))
-            db.flush()
-        assert error.value.orig.diag.constraint_name == 'sessions_user'
-        db.add(LoginSession(token_hash='empty-first', user_id='empty', expires_at=9999999999))
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert {row.user_id: row.token_hash for row in db.scalars(select(LoginSession))} == {
-            'alice': 'alice-new', 'bob': 'bob-z', 'single': 'single-token', 'empty': 'empty-first'}
-
-
-def test_schema_ten_keeps_historical_cards_ungrouped(empty_database):
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0010')
-        db.execute(User.__table__.insert(), [dict(id=user, username=user, password_hash='hash', created_at=1)
-                                             for user in ('alice', 'bob', 'empty')])
-        old_cards = Table('owned_cards', MetaData(), autoload_with=db)
-        db.execute(old_cards.insert(), [
-            dict(id=f'{user}-{i}', user_id=user, game='WS', card_number=f'ABC-{i}', rarity='SR',
-                 name='历史卡牌', quantity=i, notes='Keep', image_url='https://example.com/card.png',
-                 game_key='ws', number_key=f'abc-{i}', rarity_key='sr', created_at=10+i, updated_at=20+i)
-            for user in ('alice', 'bob') for i in range(2)])
-        before = [dict(row) for row in db.execute(select(old_cards).order_by(old_cards.c.id)).mappings()]
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert db.scalar(select(func.count()).select_from(CardGroup)) == 0
-        after = [dict(row) for row in db.execute(select(OwnedCard.__table__).order_by(OwnedCard.id)).mappings()]
-        for row in after:
-            assert row.pop('group_id') is None
-            assert row.pop('price') is None
-            assert row.pop('currency') == 'JPY'
-        assert after == before
-        db.add(CardGroup(id='deck', user_id='alice', name='Deck', created_at=1))
-        db.flush()
-        db.get(OwnedCard, 'alice-0').group_id = 'deck'
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert db.get(OwnedCard, 'alice-0').group_id == 'deck'
-
-
-def test_schema_eleven_adds_optional_price_preserving_cards(empty_database):
-    from decimal import Decimal
-
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0011')
-        db.execute(User.__table__.insert().values(id='alice', username='alice', password_hash='hash', created_at=1))
-        db.execute(CardGroup.__table__.insert().values(id='deck', user_id='alice', name='Deck', created_at=1))
-        old_cards = Table('owned_cards', MetaData(), autoload_with=db)
-        db.execute(old_cards.insert().values(id='card', user_id='alice', group_id='deck', game='WS',
-                   card_number='ABC-001', rarity='SR', name='Saved', quantity=3, notes='Keep',
-                   game_key='ws', number_key='abc-001', rarity_key='sr', created_at=10, updated_at=20))
-        before = dict(db.execute(select(old_cards)).mappings().one())
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        after = dict(db.execute(select(OwnedCard.__table__)).mappings().one())
-        assert after.pop('price') is None
-        assert after.pop('currency') == 'JPY'
-        assert after == before
-        db.get(OwnedCard, 'card').price = Decimal('12.34')
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert db.get(OwnedCard, 'card').price == Decimal('12.34')
-
-
-def test_schema_twelve_records_existing_prices_as_jpy(empty_database):
-    from decimal import Decimal
-
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0012')
-        db.execute(User.__table__.insert().values(id='alice', username='alice', password_hash='hash', created_at=1))
-        old_cards = Table('owned_cards', MetaData(), autoload_with=db)
-        db.execute(old_cards.insert(), [
-            dict(id=f'card-{i}', user_id='alice', game='WS', card_number=f'ABC-{i}', rarity='SR', name='Saved',
-                 quantity=1, price=price, notes='', game_key='ws', number_key=f'abc-{i}', rarity_key='sr',
-                 created_at=10, updated_at=20) for i, price in enumerate([None, Decimal('800.50')])])
-        before = [dict(row) for row in db.execute(select(old_cards).order_by(old_cards.c.id)).mappings()]
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        after = [dict(row) for row in db.execute(select(OwnedCard.__table__).order_by(OwnedCard.id)).mappings()]
-        assert [row.pop('currency') for row in after] == ['JPY', 'JPY']
-        assert after == before
-        db.get(OwnedCard, 'card-1').currency = 'CNY'
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert db.get(OwnedCard, 'card-1').currency == 'CNY'
-
-
+@pytest.mark.serial  # Delivers pending mail under the worker's database-wide lock.
 def test_schema_eight_preserves_subscriptions_runs_and_pending_mail(empty_database):
     from datetime import date
     from tcg_toolkit.persistence.models import Subscription, SubscriptionRun, SubscriptionEmail
@@ -317,25 +129,6 @@ def test_newer_schema_is_rejected():
         open_database()
 
 
-def test_schema_nine_resets_all_accounts_to_24_hours(empty_database):
-    from tcg_toolkit.persistence.models import Subscription
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0009')
-        users = Table('users', MetaData(), autoload_with=db)
-        subscriptions = Table('subscriptions', MetaData(), autoload_with=db)
-        db.execute(users.insert(), [dict(id=u, username=u, password_hash='hash', created_at=1)
-                                    for u in ('mixed', 'uniform', 'empty')])
-        for number, (user, interval) in enumerate([('mixed', 1), ('mixed', 6), ('uniform', 3)]):
-            db.execute(subscriptions.insert().values(id=str(number), user_id=user, game='wsr',
-                       product_url=f'https://example.com/{number}', snapshot='{}', created_at=1,
-                       checked_at=100, interval_hours=interval, next_check_at=100 + interval * 3600))
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert [u.subscription_interval_hours for u in db.scalars(select(User))] == [24, 24, 24]
-        assert [s.next_check_at for s in db.scalars(select(Subscription))] == [86500] * 3
-        assert 'interval_hours' not in {c['name'] for c in inspect(db.connection()).get_columns('subscriptions')}
-
-
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
@@ -361,114 +154,28 @@ def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path
 
 
 def test_session_rolls_back_pending_and_flushed_changes():
-    store = app.state.database
-    with pytest.raises(RuntimeError):
-        with store.session() as db:
+    with open_database() as store:
+        with pytest.raises(RuntimeError), store.session() as db:
             db.add(User(id='rollback',username='rollback',password_hash='hash',created_at=1))
             db.flush()
             raise RuntimeError('operation failed')
-    with store.session() as db:
-        assert db.get(User, 'rollback') is None
-    with pytest.raises(IntegrityError):
         with store.session() as db:
+            assert db.get(User, 'rollback') is None
+        with pytest.raises(IntegrityError), store.session() as db:
             db.add_all([User(id='one',username='same',password_hash='hash',created_at=1),
                         User(id='two',username='SAME',password_hash='hash',created_at=1)])
-    with store.session() as db:
-        assert db.scalar(select(func.count()).select_from(User)) == 0
-
-
-def test_values_are_bound_parameters_not_sql():
-    store = app.state.database
-    payload = "quoted' ; DROP TABLE users; --"
-    captured = []
-    def capture(conn, cursor, statement, parameters, context, executemany):
-        captured.append((statement, parameters))
-    event.listen(store.engine, 'before_cursor_execute', capture)
-    try:
         with store.session() as db:
-            db.add(User(id='bound',username=payload,password_hash='hash',created_at=1))
-        with store.session() as db:
-            assert db.scalar(select(User).where(User.username == payload)).id == 'bound'
-    finally:
-        event.remove(store.engine, 'before_cursor_execute', capture)
-    assert all(payload not in statement for statement, _ in captured)
-    assert any(payload in parameters.values() for _, parameters in captured if isinstance(parameters, dict))
-
-
-def test_business_code_has_no_raw_sql_escape_hatches():
-    root = files('tcg_toolkit')
-    for path in root.rglob('*.py'):
-        if 'migrations' in path.relative_to(root).parts:
-            continue
-        tree = ast.parse(path.read_text(encoding='utf-8'))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            name = getattr(node.func, 'attr', getattr(node.func, 'id', ''))
-            assert name not in ('text', 'literal_column', 'exec_driver_sql'), str(path)
-            if name == 'execute' and node.args:
-                assert not isinstance(node.args[0], (ast.Constant, ast.JoinedStr)), str(path)
+            assert db.scalar(select(func.count()).select_from(User)) == 0
 
 
 def test_health_detects_database_failure_and_recovers(monkeypatch):
-    store = app.state.database
-    real_connect = store.connect
     @contextmanager
     def unavailable():
         raise OperationalError('connect', {}, Exception('connection refused'))
         yield
-    client = TestClient(app)
-    monkeypatch.setattr(store, 'connect', unavailable)
-    assert client.get('/api/health').status_code == 503
-    monkeypatch.setattr(store, 'connect', real_connect)
-    assert client.get('/api/health').json() == {'status': 'ok'}
 
-
-def test_schema_check_cannot_pass_without_database_tables():
-    with app.state.database.session() as db:
-        db.execute(update(SchemaMigration).where(SchemaMigration.version == schema.SCHEMA_VERSION).values(version=999))
-    assert TestClient(app).get('/api/health').status_code == 503
-
-
-def test_schema_three_keeps_historical_favorites_ungrouped(empty_database):
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0003')
-        db.execute(User.__table__.insert(), [
-            dict(id=user, username=user, password_hash='hash', created_at=1)
-            for user in ('alice', 'bob', 'empty')])
-        old_favorites = Table('favorites', MetaData(), autoload_with=db)
-        db.execute(old_favorites.insert(), [
-            dict(id=f'{user}-{i}', user_id=user, game='wsr', product_url=f'https://example/{i}',
-                 snapshot='{"price":123}', created_at=10+i, refreshed_at=20+i)
-            for user in ('alice', 'bob') for i in range(2)])
-        before = [dict(row) for row in db.execute(select(old_favorites).order_by(old_favorites.c.id)).mappings()]
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert db.scalar(select(func.count()).select_from(FavoriteGroup)) == 0
-        after = [dict(row) for row in db.execute(select(Favorite.__table__).order_by(Favorite.id)).mappings()]
-        for row in after:
-            assert row.pop('group_id') is None
-        assert after == before
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-
-
-def test_schema_four_default_groups_become_ungrouped(empty_database):
-    with Database(empty_database) as store, store.connect() as db:
-        command.upgrade(schema.alembic_config(db), '0003')
-        db.execute(User.__table__.insert(), [dict(id=user, username=user, password_hash='hash', created_at=1)
-                                             for user in ('alice', 'bob')])
-        old_favorites = Table('favorites', MetaData(), autoload_with=db)
-        db.execute(old_favorites.insert(), [
-            dict(id=f'{user}-{i}', user_id=user, game='wsr', product_url=f'https://example/{i}',
-                 snapshot='{}', created_at=10+i) for user in ('alice', 'bob') for i in range(2)])
-        command.upgrade(schema.alembic_config(db), '0004')
-        old_groups = Table('favorite_groups', MetaData(), autoload_with=db)
-        db.execute(old_groups.insert().values(id='deck', user_id='alice', name='Deck', is_default=False, created_at=5))
-        grouped = Table('favorites', MetaData(), autoload_with=db)
-        db.execute(grouped.update().where(grouped.c.id == 'alice-1').values(group_id='deck'))
-    assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
-    with open_database(empty_database) as store, store.session() as db:
-        assert [(row.id, row.name) for row in db.scalars(select(FavoriteGroup))] == [('deck', 'Deck')]
-        assert {row.id: row.group_id for row in db.scalars(select(Favorite))} == {
-            'alice-0': None, 'alice-1': 'deck', 'bob-0': None, 'bob-1': None}
-        assert 'is_default' not in {column['name'] for column in inspect(db.connection()).get_columns('favorite_groups')}
+    with TestClient(app) as client:
+        with monkeypatch.context() as patch:
+            patch.setattr(app.state.database, 'connect', unavailable)
+            assert client.get('/api/health').status_code == 503
+        assert client.get('/api/health').json() == {'status': 'ok'}

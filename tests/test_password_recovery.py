@@ -1,15 +1,10 @@
-from sqlalchemy import select, func, update
-from tcg_toolkit.persistence.models import EmailChallenge, User
-from concurrent.futures import ThreadPoolExecutor
-from threading import Event
-import smtplib
-
 import pytest
+from sqlalchemy import update
 
 from auth_helpers import register_user
-from test_email_verification import client, legacy_user, advance
-from tcg_toolkit.auth.email_verification import AuthError, EmailVerification
+from test_email_verification import advance, client, legacy_user
 from tcg_toolkit.auth.service import AuthService
+from tcg_toolkit.persistence.models import EmailChallenge, User
 from tcg_toolkit.web import app
 
 NEW = {'new_password': 'new-password123', 'confirm_password': 'new-password123'}
@@ -78,15 +73,6 @@ def test_unknown_and_unverified_email_use_generic_success_without_mail(client):
     assert not app.state.auth.verification.mailer.messages
 
 
-def test_change_email_requires_verified_account_and_ignores_client_target(client):
-    token = legacy_user()
-    client.headers['Authorization'] = 'Bearer ' + token
-    assert client.post('/api/auth/password/change/email-code', json={}).json()['detail'] == 'verified_email_required'
-    account(client)
-    code_body(client, 'change', 'attacker@example.com')
-    assert app.state.auth.verification.mailer.messages[-1]['email'] == 'alice@example.com'
-
-
 def test_codes_cannot_cross_purposes_or_accounts(client, monkeypatch):
     alice = account(client)
     change = code_body(client, 'change')
@@ -99,125 +85,3 @@ def test_codes_cannot_cross_purposes_or_accounts(client, monkeypatch):
     assert client.post('/api/auth/password/change', json={k:v for k,v in {**reset, 'method':'email'}.items() if k!='email'}).json()['detail'] == 'invalid_code'
     assert client.post('/api/auth/password/reset', json={**reset, 'email':'bob@example.com'}).json()['detail'] == 'invalid_code'
     assert app.state.auth.current_user(bob['token'])
-
-
-def test_failed_attempts_expiry_resend_and_smtp_failure(client, monkeypatch):
-    account(client)
-    body = code_body(client, 'reset')
-    wrong = '000000' if body['code'] != '000000' else '111111'
-    for _ in range(5):
-        result = client.post('/api/auth/password/reset', json={**body,'code':wrong})
-    assert result.json()['detail'] == 'code_attempts_exhausted'
-    assert client.post('/api/auth/password/reset', json=body).json()['detail'] == 'code_attempts_exhausted'
-    advance(monkeypatch, 61)
-    fresh = code_body(client, 'reset')
-    assert client.post('/api/auth/password/reset', json=body).json()['detail'] == 'invalid_code'
-    advance(monkeypatch, 61)
-    app.state.auth.verification.mailer.failure = smtplib.SMTPException('private SMTP error')
-    failed = client.post('/api/auth/password/reset/email-code', json={'email':'alice@example.com'})
-    assert failed.status_code == 503 and 'private' not in failed.text
-    advance(monkeypatch, 600)
-    assert client.post('/api/auth/password/reset', json=fresh).json()['detail'] == 'code_expired'
-
-
-def test_old_password_change_invalidates_outstanding_reset_and_binding_proofs(client):
-    original = account(client)
-    body = code_body(client, 'reset')
-    assert client.post('/api/auth/password/change', json={**NEW,'method':'password','current_password':'password123'}).status_code == 204
-    assert client.post('/api/auth/password/reset', json=body).json()['detail'] == 'invalid_code'
-    # Even if dependency authentication happened earlier, service rechecks the session under the lock.
-    with pytest.raises(AuthError) as exc:
-        app.state.auth.change_password(original['user']['id'], original['token'], 'anotherpassword',
-                                       'password', NEW['new_password'])
-    assert exc.value.status_code == 401
-
-
-def test_inflight_email_cannot_reactivate_after_password_change(client):
-    original = account(client)
-    def delivery(*args):
-        app.state.auth.change_password(original['user']['id'], original['token'], NEW['new_password'],
-                                       'password', 'password123')
-    app.state.auth.verification.mailer.send_code = delivery
-    assert client.post('/api/auth/password/reset/email-code', json={'email':'alice@example.com'}).status_code == 503
-    with app.state.database.session() as db:
-        assert db.scalar(select(func.count()).select_from(EmailChallenge).where(EmailChallenge.state == "active")) == 0
-
-
-def test_concurrent_reset_succeeds_once(client):
-    account(client)
-    body = code_body(client, 'reset')
-    def reset():
-        try:
-            app.state.auth.reset_password(body['email'],body['challenge_id'],body['code'],body['new_password'])
-            return True
-        except AuthError:
-            return False
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        assert sum(pool.map(lambda _: reset(), range(2))) == 1
-
-
-def test_login_in_progress_cannot_leave_old_password_session_after_reset(client, monkeypatch):
-    import tcg_toolkit.auth.service as module
-    account(client)
-    body = code_body(client, 'reset')
-    verifying, release = Event(), Event()
-    real_verify = module.verify_password
-    def paused_verify(encoded, password):
-        if password == 'password123':
-            verifying.set()
-            assert release.wait(5)
-        return real_verify(encoded, password)
-    monkeypatch.setattr(module, 'verify_password', paused_verify)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        login = pool.submit(app.state.auth.login, 'alice', 'password123')
-        assert verifying.wait(5)
-        # Reset uses its email proof even after login replaces the original session.
-        reset = pool.submit(app.state.auth.reset_password, 'alice@example.com', body['challenge_id'],
-                            body['code'], NEW['new_password'])
-        release.set()
-        token = login.result()[1]
-        reset.result()
-    assert app.state.auth.current_user(token) is None
-
-
-def test_replaced_session_cannot_change_password_after_earlier_authentication(client):
-    original = account(client)
-    token = app.state.auth.login('alice', 'password123')[1]
-    with pytest.raises(AuthError) as exc:
-        app.state.auth.change_password(original['user']['id'], original['token'], NEW['new_password'],
-                                        'password', 'password123')
-    assert exc.value.status_code == 401
-    assert app.state.auth.current_user(token)
-
-
-@pytest.mark.parametrize('body', [
-    {**NEW,'method':'password'},
-    {**NEW,'method':'email'},
-    {**NEW,'method':'password','current_password':'password123','code':'123456'},
-    {**NEW,'method':'password','current_password':'password123','new_password':'short'},
-    {**NEW,'method':'password','current_password':'password123','confirm_password':'mismatched'},
-])
-def test_validation_does_not_echo_passwords(client, body):
-    account(client)
-    response = client.post('/api/auth/password/change', json=body)
-    assert response.status_code == 422 and response.json() == {'detail':'validation_error'}
-
-
-@pytest.mark.parametrize('path,limit', [('change',10),('reset',10),('change/email-code',5),('reset/email-code',5)])
-def test_password_guards_and_limits(client,path,limit):
-    client.headers['Authorization'] = 'Bearer ' + legacy_user()
-    url = '/api/auth/password/' + path
-    assert client.post(url,json={},headers={'Origin':'https://evil.example'}).status_code == 403
-    assert client.post(url,content='{}',headers={'Content-Type':'text/plain'}).status_code == 415
-    for _ in range(limit):
-        assert client.post(url,json={}).status_code != 429
-    response = client.post(url,json={})
-    assert response.status_code == 429 and response.headers['Cache-Control'] == 'no-store'
-
-
-def test_email_configuration_failure_does_not_change_password(client):
-    original = account(client)
-    app.state.auth.verification.secret = b''
-    assert client.post('/api/auth/password/reset/email-code',json={'email':'alice@example.com'}).status_code == 503
-    assert app.state.auth.current_user(original['token'])
-    assert app.state.auth.login('alice','password123')

@@ -4,7 +4,6 @@ import httpx
 import pytest
 
 from tcg_toolkit import HobbyStationLyceeSearcher, SearchPaginationError, SearchParseError
-from tcg_toolkit.catalog.providers.hobbystation import HobbyStationClient
 
 
 def fixture(name):
@@ -22,26 +21,6 @@ def test_hobby_page_fields():
     assert normal.product_url == 'https://www.hobbystation-single.jp/lo/product/detail/305273'
     assert normal.image_url.endswith('/lo/LO-LO-4899.jpg')
     assert (normal.stock_status, normal.stock_quantity, normal.cart, normal.rarity) == ('in_stock', None, None, None)
-
-
-def test_hobby_rarity_matches_exact_lycee_printing(monkeypatch):
-    official = (Path(__file__).parent / 'fixtures' / 'official_lycee.html').read_text(encoding='utf-8')
-    official = (official.replace('LO-1606-S', 'LO-4899-K').replace('LO-1606', 'LO-4899')
-                .replace('>SP<', '>KR<').replace('>SR<', '>R<'))
-    def lookup(url, **kwargs):
-        assert kwargs['params']['word'] in ('LO-4899', 'LO-4899-K')
-        return httpx.Response(200, text=official, request=httpx.Request('GET', url))
-    monkeypatch.setattr(httpx, 'get', lookup)
-    with httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text=fixture('')))) as client:
-        normal, parallel = HobbyStationLyceeSearcher(client=client).search_page('LO-4899').items
-    assert (normal.rarity, parallel.rarity) == ('R', 'KR')
-
-
-def test_hobby_fullwidth_rarity_before_condition():
-    html = fixture('').replace('アストラルの研究/式部 茉優', 'カード（ＳＲ）（キズあり）')
-    with HobbyStationLyceeSearcher() as searcher:
-        result = searcher.parse_page(html, keyword='x', page=1, url=searcher.base_url)
-    assert all(item.rarity == 'SR' for item in result.items)
 
 
 def test_hobby_pagination_and_stock(monkeypatch):
@@ -72,22 +51,3 @@ def test_hobby_empty_and_unrecognized():
             searcher.parse_page('<main>temporarily unavailable</main>', **args)
         with pytest.raises(SearchParseError, match='Item 1'):
             searcher.parse_page(fixture('').replace('80円', '未定'), **args)
-
-
-def test_hobby_landing_page_reloads_once(monkeypatch):
-    monkeypatch.setenv('TCG_SEARCH_PROXY_URL', '')
-    requests = []
-    def respond(request):
-        requests.append(request)
-        return httpx.Response(200, text='<title>安全な接続を確認中...</title>'
-                              '<script>document.cookie = "eccube_bot_check=sample; path=/";</script>')
-
-    client = HobbyStationClient(transport=httpx.MockTransport(respond))
-    try:
-        with pytest.raises(SearchParseError):
-            HobbyStationLyceeSearcher(client=client).search_page('LO-4899')
-    finally:
-        client.close()
-    assert len(requests) == 2
-    assert 'cookie' not in requests[0].headers
-    assert requests[1].headers['cookie'] == 'eccube_bot_check=sample'

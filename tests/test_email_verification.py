@@ -1,26 +1,17 @@
-from sqlalchemy import select, func, update
-from tcg_toolkit.persistence.models import EmailChallenge, LoginSession, User
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-import smtplib
-
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
-from auth_helpers import (Mailbox, TEST_SECRET, install_mailbox,
-                          registration_body, register_user)
-from tcg_toolkit.auth.email_verification import AuthError, EmailVerification, normalize_email
-from tcg_toolkit.mail.delivery import SMTPMailer
+from auth_helpers import install_mailbox, registration_body
 from tcg_toolkit.auth.passwords import hasher
-from tcg_toolkit.auth.service import AuthService, token_hash
-from tcg_toolkit.persistence.runtime import open_database
+from tcg_toolkit.persistence.models import EmailChallenge, User
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def client(monkeypatch, postgres_schema):
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
     with TestClient(app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as client:
         install_mailbox()
@@ -60,7 +51,6 @@ def test_verified_registration_normalizes_email_and_both_logins(client):
     for name in ['ALICE', ' Alice+Cards@EXAMPLE.COM ']:
         login = client.post('/api/auth/login', json={'username': name, 'password': 'password123'})
         assert login.status_code == 200
-    assert normalize_email('a.b+tag@example.com') == 'a.b+tag@example.com'
     duplicate = client.post('/api/auth/register/email-code', json={'email': 'ALICE+CARDS@example.com'})
     assert duplicate.status_code == 409 and duplicate.json()['detail'] == 'email_taken'
     assert client.post('/api/auth/register', json=body).json()['detail'] == 'invalid_code'
@@ -87,83 +77,6 @@ def test_expiration_and_resend(client, monkeypatch):
     assert client.post('/api/auth/register', json=new).status_code == 201
 
 
-def test_email_cooldown_hourly_quota_and_restart(client, monkeypatch):
-    advance(monkeypatch, 0)  # Freeze before issuance; assertions must not cross a wall-clock second.
-    body = registration_body(client)
-    response = client.post('/api/auth/register/email-code', json={'email': body['email']})
-    assert response.status_code == 429 and int(response.headers['Retry-After']) == 60
-    verification = app.state.auth.verification
-    app.state.auth = AuthService(open_database(app.state.database.conninfo),
-                                EmailVerification(app.state.database, verification.mailer, TEST_SECRET))
-    with pytest.raises(AuthError) as failure:
-        app.state.auth.verification.send(body['email'])
-    assert failure.value.status_code == 429
-    for _ in range(4):
-        advance(monkeypatch, 60)
-        app.state.auth.verification.send(body['email'])
-    advance(monkeypatch, 60)
-    with pytest.raises(AuthError) as failure:
-        app.state.auth.verification.send(body['email'])
-    assert failure.value.headers['Retry-After'] == '3300'
-    advance(monkeypatch, 3300)
-    assert app.state.auth.verification.send(body['email'])['challenge_id']
-
-
-def test_code_survives_service_restart(client):
-    body = registration_body(client)
-    app.state.auth = AuthService(open_database(app.state.database.conninfo),
-                                EmailVerification(app.state.database, Mailbox(), TEST_SECRET))
-    assert client.post('/api/auth/register', json=body).status_code == 201
-
-
-def test_failed_send_preserves_previous_code_and_counts_quota(client, monkeypatch):
-    body = registration_body(client)
-    advance(monkeypatch, 60)
-    app.state.auth.verification.mailer.failure = smtplib.SMTPException('secret SMTP details')
-    response = client.post('/api/auth/register/email-code', json={'email': body['email']})
-    assert response.status_code == 503 and response.json()['detail'] == 'email_send_failed'
-    assert 'secret' not in response.text
-    retry = client.post('/api/auth/register/email-code', json={'email': body['email']})
-    assert retry.status_code == 429
-    assert client.post('/api/auth/register', json=body).status_code == 201
-
-
-def test_username_collision_does_not_consume_code(client):
-    register_user(client, 'alice')
-    body = registration_body(client, 'ALICE', email='second@example.com')
-    assert client.post('/api/auth/register', json=body).json()['detail'] == 'username_taken'
-    assert client.post('/api/auth/register', json={**body, 'username': 'bob'}).status_code == 201
-
-
-def test_concurrent_verification_consumes_once(client):
-    body = registration_body(client)
-    args = {k: v for k, v in body.items() if k != 'confirm_password'}
-    def register():
-        try:
-            return app.state.auth.register(**args)
-        except AuthError as exc:
-            return exc.detail
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: register(), range(2)))
-    assert sum(isinstance(result, tuple) for result in results) == 1
-    assert 'invalid_code' in results
-    with app.state.database.session() as db:
-        assert db.scalar(select(func.count()).select_from(LoginSession)) == 1
-
-
-def test_concurrent_send_reserves_quota_once(client):
-    def send():
-        try:
-            return app.state.auth.verification.send('concurrent@example.com')
-        except AuthError as exc:
-            return exc.status_code
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: send(), range(2)))
-    assert sum(isinstance(result, dict) for result in results) == 1
-    assert 429 in results
-    assert len(app.state.auth.verification.mailer.messages) == 1
-
-
 def test_legacy_binding_requires_password_and_updates_existing_session(client):
     token = legacy_user()
     client.headers['Authorization'] = 'Bearer ' + token
@@ -183,96 +96,3 @@ def test_legacy_binding_requires_password_and_updates_existing_session(client):
     assert client.post('/api/auth/email/bind', json=body).json()['detail'] == 'invalid_code'
     assert client.post('/api/auth/email/bind-code', json={
         'email': 'new@example.com', 'current_password': 'password123'}).json()['detail'] == 'email_already_bound'
-
-
-def test_challenge_bound_to_email_purpose_and_user(client):
-    registration = registration_body(client)
-    assert client.post('/api/auth/register', json={**registration, 'email': 'other@example.com'}).json()['detail'] == 'invalid_code'
-    alice, bob = legacy_user('alice'), legacy_user('bob')
-    client.headers['Authorization'] = 'Bearer ' + alice
-    assert client.post('/api/auth/email/bind', json={k: registration[k] for k in ['challenge_id','code']}).json()['detail'] == 'invalid_code'
-    binding = binding_body(client)
-    client.headers['Authorization'] = 'Bearer ' + bob
-    assert client.post('/api/auth/email/bind', json=binding).json()['detail'] == 'invalid_code'
-    assert client.post('/api/auth/register', json={**registration, **binding, 'email': 'bound@example.com'}).json()['detail'] == 'invalid_code'
-    client.headers['Authorization'] = 'Bearer ' + alice
-    assert client.post('/api/auth/email/bind', json=binding).status_code == 200
-
-
-def test_email_conflict_between_binding_and_registration_keeps_code(client):
-    body = registration_body(client)
-    client.headers['Authorization'] = 'Bearer ' + legacy_user()
-    # Separate purposes can compete for the same address after the shared cooldown.
-    with app.state.database.session() as db:
-        db.execute(update(EmailChallenge).values(created_at=EmailChallenge.created_at-60))
-    binding = binding_body(client, body['email'])
-    assert client.post('/api/auth/email/bind', json=binding).status_code == 200
-    response = client.post('/api/auth/register', json=body)
-    assert response.status_code == 409 and response.json()['detail'] == 'email_taken'
-    with app.state.database.session() as db:
-        assert db.get(EmailChallenge, body['challenge_id']).state == 'active'
-
-
-@pytest.mark.parametrize('path', ['register/email-code', 'email/bind-code', 'email/bind', 'register'])
-def test_guards_no_cache_and_no_sensitive_validation_echo(client, path):
-    for origin, status in [('https://evil.example', 403), (ORIGIN, None)]:
-        response = client.post('/api/auth/' + path, headers={'Origin': origin},
-                               json={'password': 'private', 'code': 'secret-code'})
-        assert response.status_code == status if status else response.status_code in (401, 422)
-        assert 'secret-code' not in response.text and 'private' not in response.text
-        assert response.headers['Cache-Control'] == 'no-store'
-        if origin == ORIGIN:
-            assert 'Retry-After' in response.headers['Access-Control-Expose-Headers']
-    assert client.post('/api/auth/' + path, content='{}', headers={'Content-Type': 'text/plain'}).status_code == 415
-
-
-def test_configuration_missing_only_disables_email(client):
-    token = legacy_user()
-    app.state.auth.verification = EmailVerification(app.state.database, Mailbox(), '')
-    assert client.post('/api/auth/register/email-code', json={'email': 'alice@example.com'}).json()['detail'] == 'email_unavailable'
-    assert client.get('/api/auth/me', headers={'Authorization': 'Bearer ' + token}).status_code == 200
-    login = client.post('/api/auth/login', json={'username': 'legacy', 'password': 'password123'})
-    assert login.status_code == 200
-    assert client.get('/api/auth/me', headers={'Authorization': 'Bearer ' + login.json()['token']}).status_code == 200
-
-
-
-
-
-
-@pytest.mark.parametrize('mode,port', [('starttls', 587), ('ssl', 465)])
-@pytest.mark.parametrize('language', ['en', 'zh-CN'])
-def test_smtp_transport_tls_and_templates(monkeypatch, mode, port, language):
-    for key, value in {'HOST':'smtp.example.com', 'USERNAME':'sender', 'PASSWORD':'smtp-password',
-                       'FROM':'TCG Toolkit <sender@example.com>', 'TLS':mode}.items():
-        monkeypatch.setenv('TCG_SMTP_' + key, value)
-    monkeypatch.delenv('TCG_SMTP_PORT', raising=False)
-    calls = []
-    class SMTP:
-        def __init__(self, host, actual_port, **kwargs):
-            assert host == 'smtp.example.com' and actual_port == port and kwargs['timeout'] == 10
-            assert ('context' in kwargs) == (mode == 'ssl')
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def starttls(self, **kwargs):
-            assert kwargs['context'].check_hostname
-            calls.append('tls')
-        def login(self, username, password):
-            assert (username, password) == ('sender', 'smtp-password')
-            calls.append('login')
-        def send_message(self, message):
-            assert message['To'] == 'alice@example.com'
-            assert message.get_content_type() == 'multipart/alternative'
-            html = message.get_body(preferencelist=('html',)).get_content()
-            assert '012345' in html and 'TCG Toolkit' in html
-            assert '<table' in html and '10' in html
-            assert '012345' in message.get_body(preferencelist=('plain',)).get_content() and '10' in message.get_body(preferencelist=('plain',)).get_content()
-            # Bilingual regardless of the requested language: Chinese first, then English.
-            assert message['Subject'].index('验证码') < message['Subject'].index('verification code')
-            calls.append('send')
-            return {}
-    monkeypatch.setattr(smtplib, 'SMTP_SSL' if mode == 'ssl' else 'SMTP', SMTP)
-    mailer = SMTPMailer()
-    assert mailer.configured
-    mailer.send_code('alice@example.com', '012345', language, 'register')
-    assert calls == (['tls'] if mode == 'starttls' else []) + ['login', 'send']

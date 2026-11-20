@@ -29,7 +29,7 @@ from tcg_toolkit.web import app
                                          reason='Set TCG_LIVE_ARS_TEST=1 for live ARS lookup.'),
                  id='ars'),
 ])
-def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, source_url):
+def test_certificate_lookup_over_http(postgres_schema, monkeypatch, caplog, provider, number, source_url):
     certificate_path = f'/api/grading/{provider}/certificates/{number}'
     monkeypatch.setenv('TCG_SUBSCRIPTIONS_ENABLED', 'false')
     monkeypatch.setenv('TCG_AVATAR_COS_URL', '')

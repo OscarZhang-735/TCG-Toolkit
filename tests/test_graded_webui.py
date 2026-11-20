@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(os.getenv('TCG_BROWSER_TEST') != '1', reason='Se
 FIXTURES = Path(__file__).parent / 'fixtures'
 
 
-def test_graded_webui(monkeypatch, tmp_path):
+def test_graded_webui(postgres_schema, monkeypatch, tmp_path):
     from playwright.sync_api import sync_playwright, expect
 
     # Uploaded card photos go to an in-memory bucket; the page serves its URLs from a fixture.

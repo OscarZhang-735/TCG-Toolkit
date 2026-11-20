@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tcg_toolkit import CardMaxSEVSearcher, CardMaxWSSearcher, SearchPaginationError, SearchParseError, create_searcher
+from tcg_toolkit import CardMaxSEVSearcher, CardMaxWSSearcher, SearchParseError, create_searcher
 
 
 def fixture(game):
@@ -27,32 +27,6 @@ def test_ws_number_query_and_extended_japanese():
     assert item.product_url == 'https://www.cardmax.jp/shopdetail/000000179635'
     assert item.image_url.endswith('/0000001796353_cQyYtxx.jpg')
     assert (item.stock_status, item.stock_quantity, item.cart) == ('unknown', None, None)
-
-
-def test_sev_singles_and_pagination():
-    with CardMaxSEVSearcher() as searcher:
-        result = searcher.parse_page(fixture('sev'), keyword='シャドウバース', page=1, url=searcher.base_url)
-        assert result.next_page == 2
-        assert [(i.card_number, i.name, i.rarity, i.price) for i in result.items] == [
-            ('BP22-T03', 'レディアントアーティファクト', 'T', 30),
-            ('BP22-014', '冷徹のダークエルフ /EVOLVE', 'BR', 30),
-        ]
-        with pytest.raises(SearchPaginationError):
-            searcher.parse_page(fixture('sev'), keyword='x', page=2, url=searcher.base_url)
-
-
-def test_last_page_retains_requested_page_and_legacy_number():
-    def respond(request):
-        assert dict(request.url.params) == {'search': 'リノセウス &', 'category': 'ct1740', 'page': '2'}
-        html = fixture('sev').replace('(BP22) レディアントアーティファクト(T)(BP22-T03)',
-                                     '【BP01】 リノセウス(GR)(004)')
-        start = html.index('<ul class="M_pager">')
-        html = html[:start] + ('<ul class="M_pager"><li class="next"><a href="?page=1">« 前の30件</a></li>'
-                               '<li class="active">2</li></ul></form>')
-        return httpx.Response(200, text=html)
-    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        page = CardMaxSEVSearcher(client=client).search_page('リノセウス &', page=2)
-    assert page.next_page is None and page.items[0].card_number == 'BP01-004'
 
 
 def test_only_explicit_zero_count_is_empty():

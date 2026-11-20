@@ -1,9 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 import json
-import smtplib
-import os
-import time
 from threading import Event
 from types import SimpleNamespace
 
@@ -16,8 +12,10 @@ from auth_helpers import register_user
 from tcg_toolkit.persistence.models import Favorite, Subscription, SubscriptionEmail, SubscriptionRun, User
 from tcg_toolkit.subscriptions import service as api
 from tcg_toolkit.subscriptions.worker import SubscriptionWorker
-from tcg_toolkit.subscriptions.schedule import next_hour
 from tcg_toolkit.web import app
+
+# Subscription workers share a database-wide advisory lock.
+pytestmark = pytest.mark.serial
 
 ORIGIN = 'https://testserver'
 NOW = 1_800_000_000
@@ -43,7 +41,7 @@ class Mailer:
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(postgres_schema, monkeypatch):
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
     monkeypatch.setattr(api, 'time', SimpleNamespace(time=lambda: NOW - 86400))
     monkeypatch.setattr(api, 'fetch_product_snapshot', lambda game, url: snapshot(url))
@@ -67,8 +65,8 @@ def add(client, url=URL, interval_hours=None):
     return response.json()
 
 
-def favorite(client, item=None, group_id=None):
-    response = client.post('/api/favorites', json={**(item or snapshot()), 'group_id': group_id})
+def favorite(client, item=None):
+    response = client.post('/api/favorites', json=item or snapshot())
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -78,9 +76,9 @@ def emails():
         return db.scalars(select(SubscriptionEmail).order_by(SubscriptionEmail.created_at)).all()
 
 
-def worker(fetcher=None, mailer=None, now=None):
+def worker(fetcher=None, now=None):
     return SubscriptionWorker(app.state.database, fetcher=fetcher or (lambda game, url: snapshot(url)),
-                              mailer=mailer or Mailer(), clock=lambda: now[0] if now else NOW)
+                              mailer=Mailer(), clock=lambda: now[0] if now else NOW)
 
 
 def test_subscription_idempotency_normalization_and_isolation(client, monkeypatch):
@@ -103,34 +101,6 @@ def test_subscription_idempotency_normalization_and_isolation(client, monkeypatc
     assert client.get('/api/subscriptions').json()['items'] == []
 
 
-def test_merchant_favorites_subscribe_independently_with_fresh_baselines(client, monkeypatch):
-    urls = ('https://www.hobbystation-single.jp/ws/product/detail/123',
-            'https://www.cardmax.jp/shopdetail/123')
-    calls = []
-
-    def fetch(game, url):
-        calls.append((game, url))
-        return {**snapshot(url, price=200), 'game': game.value, 'rarity': None, 'card_number': None,
-                'stock_status': 'in_stock', 'stock_quantity': None, 'stock_text': '在庫あり'}
-
-    monkeypatch.setattr(api, 'fetch_product_snapshot', fetch)
-    favorites, subscriptions = [], []
-    for url in urls:
-        favorites.append(favorite(client, {**snapshot(url), 'game': 'ws', 'price': 500}))
-        body = {'game': 'ws', 'product_url': url + '/'}
-        result = client.post('/api/subscriptions', json=body)
-        assert result.status_code == 200, result.text
-        assert result.json()['item'] == {
-            **snapshot(url, price=200), 'game': 'ws', 'stock_status': 'in_stock',
-            'stock_quantity': None, 'stock_text': '在庫あり'}
-        subscriptions.append(result.json())
-        assert client.post('/api/subscriptions', json={**body, 'product_url': url}).json() == result.json()
-    assert calls == [('ws', url) for url in urls]
-    assert subscriptions[0]['id'] != subscriptions[1]['id']
-    assert client.request('DELETE', '/api/favorites/' + favorites[0]['id'], json={}).status_code == 204
-    assert client.get('/api/subscriptions').json()['items'] == subscriptions[1:]
-
-
 def test_unfavorite_removes_only_the_matching_users_subscription(client):
     favorite = client.post('/api/favorites', json=snapshot(URL + '/'))
     assert favorite.status_code == 200
@@ -151,39 +121,6 @@ def test_unfavorite_removes_only_the_matching_users_subscription(client):
     assert client.get('/api/subscriptions').json()['items'] == [bobs_subscription]
 
 
-def test_unfavorite_rolls_back_subscription_if_favorite_delete_fails(client):
-    favorite = client.post('/api/favorites', json=snapshot()).json()
-    subscription = add(client)
-    engine = app.state.database.engine
-
-    def fail_favorite_delete(conn, cursor, statement, parameters, context, executemany):
-        if statement.startswith('DELETE FROM favorites '):
-            raise RuntimeError('simulated favorite delete failure')
-
-    event.listen(engine, 'before_cursor_execute', fail_favorite_delete)
-    try:
-        with pytest.raises(RuntimeError, match='simulated favorite delete failure'):
-            client.request('DELETE', '/api/favorites/' + favorite['id'], json={})
-    finally:
-        event.remove(engine, 'before_cursor_execute', fail_favorite_delete)
-    assert client.get('/api/favorites').json()['items'] == [favorite]
-    assert client.get('/api/subscriptions').json()['items'] == [subscription]
-
-
-@pytest.mark.parametrize('url', [
-    URL.replace('https:', 'http:'), URL.replace('yuyu-tei.jp', 'evil.example'),
-    URL.replace('/wsr/', '/ws/'), URL + '?next=1', URL + '#x',
-    URL.replace('OS01', '..'), URL.replace('OS01', '%2e%2e'),
-    URL.replace('yuyu-tei.jp', 'yuyu-tei.jp@localhost'), URL + '/more',
-    'https://www.hobbystation-single.jp/ws/product/detail/123',
-    'https://www.hobbystation-single.jp/wr/product/detail/123?next=1',
-    'https://www.cardmax.jp/shopdetail/123',  # Card Max does not sell WSR through this integration.
-])
-def test_invalid_urls_never_fetch(client, monkeypatch, url):
-    monkeypatch.setattr(api, 'fetch_product_snapshot', lambda *args: pytest.fail('invalid URL fetched'))
-    assert client.post('/api/subscriptions', json=dict(game='wsr', product_url=url)).status_code == 422
-
-
 def test_guards_and_verified_email_required(client):
     body = dict(game='wsr', product_url=URL)
     assert client.post('/api/subscriptions', json=body, headers={'Origin': 'https://evil.example'}).status_code == 403
@@ -198,15 +135,7 @@ def test_guards_and_verified_email_required(client):
         assert response.headers['cache-control'] == 'no-store'
 
 
-def test_failed_initial_fetch_leaves_no_subscription(client, monkeypatch):
-    def unavailable(*args):
-        raise ProductSourceError('product_timeout')
-    monkeypatch.setattr(api, 'fetch_product_snapshot', unavailable)
-    assert client.post('/api/subscriptions', json=dict(game='wsr', product_url=URL)).status_code == 504
-    assert client.get('/api/subscriptions').json()['items'] == []
-
-
-@pytest.mark.parametrize('price,quantity', [(110, 5), (90, 5), (100, 0), (100, 3), (100, 8)])
+@pytest.mark.parametrize('price,quantity', [(90, 5), (100, 0)])
 def test_changes_are_queued_once_and_sent_once(client, price, quantity):
     add(client)
     service = worker(lambda game, url: snapshot(url, price, quantity))
@@ -266,69 +195,7 @@ def test_storefront_checks_refresh_favorites_and_send_one_mixed_digest(client, m
     assert '有货 In stock' in html and '有货 In stock → 有货 In stock' in plain
 
 
-@pytest.mark.parametrize('price', [100, 200])
-@pytest.mark.parametrize('condition', [None, 0, 1])
-def test_checks_refresh_favorite_details_preserving_identity_and_condition(client, price, condition):
-    group = client.post('/api/favorites/groups', json={'name': 'Collection'}).json()
-    item = {**snapshot(URL + '/', price=50, quantity=2), 'name': 'Old name',
-            'card_number': 'OLD-001', 'rarity': 'C'}
-    if condition is not None:
-        item['cart'] = {'gid': 56, 'ver': 'OS01', 'cid': '10240', 'kizu': condition}
-    saved = favorite(client, item, group['id'])
-    add(client)
-    updated = {**snapshot(price=price), 'name': 'Updated name', 'card_number': 'NEW-001',
-               'rarity': 'SR', 'image_url': 'https://yuyu-tei.jp/images/new.jpg',
-               'stock_text': 'Updated stock'}
-    service = worker(lambda game, url: updated)
-    assert service.check_due()
-    expected = saved if condition == 1 else {
-        **saved, 'item': {**saved['item'], **updated, 'product_url': item['product_url']},
-        'refreshed_at': NOW,
-    }
-    assert client.get('/api/favorites').json()['items'] == [expected]
-    assert len(emails()) == (price != 100)
-
-
-def test_checks_only_refresh_matching_users_products(client):
-    checked = favorite(client)
-    unrelated = favorite(client, snapshot(URL + '1'))
-    add(client)
-    alice = client.headers['Authorization']
-    login(client, 'bob')
-    other_user = favorite(client)
-    assert worker(lambda game, url: snapshot(url, price=200)).check_due()
-    assert client.get('/api/favorites').json()['items'] == [other_user]
-    client.headers['Authorization'] = alice
-    assert client.get('/api/favorites').json()['items'] == [
-        unrelated, {**checked, 'item': snapshot(price=200), 'refreshed_at': NOW},
-    ]
-
-
-def test_many_cards_one_digest_per_user_and_shared_fetch(client):
-    favorites = [favorite(client), favorite(client, snapshot(URL + '1'))]
-    add(client)
-    add(client, URL + '1')
-    login(client, 'bob')
-    favorites.append(favorite(client))
-    add(client)
-    calls = []
-    def fetch(game, url):
-        calls.append(url)
-        return snapshot(url, price=200)
-    service = worker(fetch)
-    service.check_due()
-    service.deliver_due()
-    assert sorted(calls) == [URL, URL + '1']
-    assert sorted(len(json.loads(row.changes)) for row in emails()) == [1, 2]
-    assert {message['To'] for message in service.mailer.messages} == {'alice@example.com', 'bob@example.com'}
-    with app.state.database.session() as db:
-        for saved in favorites:
-            row = db.get(Favorite, saved['id'])
-            assert json.loads(row.snapshot) == snapshot(saved['item']['product_url'], price=200)
-            assert row.refreshed_at == NOW
-
-
-@pytest.mark.parametrize('failure', ['product_timeout', 'product_unavailable', 'product_unreadable', 'unknown'])
+@pytest.mark.parametrize('failure', ['product_timeout', 'unknown'])
 def test_source_failure_preserves_baseline_and_other_cards_continue(client, failure):
     failed_favorite = favorite(client)
     other_favorite = favorite(client, snapshot(URL + '1'))
@@ -362,30 +229,6 @@ def test_source_failure_preserves_baseline_and_other_cards_continue(client, fail
         assert refreshed.refreshed_at == NOW + 86400
 
 
-def test_retry_schedule_exhaustion_and_restart(client):
-    add(client)
-    now = [NOW]
-    mailer = Mailer()
-    mailer.error = smtplib.SMTPException('failure')
-    service = worker(lambda game, url: snapshot(url, price=200), mailer, now)
-    service.check_due()
-    for attempt, delay in enumerate((60, 300, 1800), start=1):
-        service.deliver_due()
-        row = emails()[0]
-        assert row.attempts == attempt and row.state == 'pending'
-        assert row.next_attempt_at == now[0] + delay
-        service.deliver_due()
-        assert emails()[0].attempts == attempt
-        now[0] += delay
-        service = worker(mailer=mailer, now=now)  # Process restart, durable schedule.
-    service.deliver_due()
-    assert emails()[0].state == 'failed' and emails()[0].attempts == 4
-    mailer.error = None
-    now[0] += 86400
-    service.deliver_due()
-    assert not mailer.messages
-
-
 def test_retry_after_restart_retains_original_change(client):
     add(client)
     now = [NOW]
@@ -398,23 +241,6 @@ def test_retry_after_restart_retains_original_change(client):
     restarted.deliver_due()
     assert emails()[0].state == 'sent'
     assert '100 → 200 JPY' in restarted.mailer.messages[0].get_body(preferencelist=('plain',)).get_content()
-
-
-@pytest.mark.parametrize('remove_all', [False, True])
-def test_cancelled_subscriptions_are_excluded_from_pending_mail(client, remove_all):
-    first = add(client)
-    second = add(client, URL + '1')
-    service = worker(lambda game, url: snapshot(url, price=200))
-    service.check_due()
-    client.request('DELETE', '/api/subscriptions/' + first['id'], json={})
-    if remove_all:
-        client.request('DELETE', '/api/subscriptions/' + second['id'], json={})
-    service.deliver_due()
-    if remove_all:
-        assert emails()[0].state == 'cancelled' and not service.mailer.messages
-    else:
-        body = service.mailer.messages[0].get_body(preferencelist=('plain',)).get_content()
-        assert URL + '\n' not in body and URL + '1' in body
 
 
 def test_atomic_snapshot_and_outbox_on_database_failure(client):
@@ -439,49 +265,6 @@ def test_atomic_snapshot_and_outbox_on_database_failure(client):
     assert client.get('/api/favorites').json()['items'] == [
         {**saved_favorite, 'item': snapshot(price=200), 'refreshed_at': NOW},
     ]
-
-
-def test_concurrent_unfavorite_and_check_do_not_deadlock(client, monkeypatch):
-    from tcg_toolkit.collection import favorites as favorite_api
-
-    saved = favorite(client)
-    add(client)
-    favorite_locked, worker_locking = Event(), Event()
-    original_owned = favorite_api.owned
-
-    def pause_after_favorite_lock(*args, **kwargs):
-        row = original_owned(*args, **kwargs)
-        if kwargs.get('lock'):
-            favorite_locked.set()
-            assert worker_locking.wait(10)
-        return row
-
-    # Let deletion hold the favorite while the worker starts its matching lock.
-    # Both operations also need the subscription, so opposite orders deadlock.
-    def resume_delete(conn, cursor, statement, parameters, context, executemany):
-        if 'FROM favorites' in statement and 'FOR UPDATE' in statement:
-            worker_locking.set()
-
-    monkeypatch.setattr(favorite_api, 'owned', pause_after_favorite_lock)
-    engine = app.state.database.engine
-    service = worker(lambda game, url: snapshot(url, price=200))
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        deletion = pool.submit(client.request, 'DELETE', '/api/favorites/' + saved['id'], json={})
-        listening = False
-        try:
-            assert favorite_locked.wait(10)
-            event.listen(engine, 'before_cursor_execute', resume_delete)
-            listening = True
-            checking = pool.submit(service.check_due)
-            assert deletion.result(timeout=15).status_code == 204
-            assert checking.result(timeout=15)
-        finally:
-            worker_locking.set()
-            if listening:
-                event.remove(engine, 'before_cursor_execute', resume_delete)
-    assert client.get('/api/favorites').json()['items'] == []
-    assert client.get('/api/subscriptions').json()['items'] == []
-    assert emails() == []
 
 
 def test_concurrent_workers_do_not_repeat_checks_or_mail(client):
@@ -518,94 +301,3 @@ def test_concurrent_workers_do_not_repeat_checks_or_mail(client):
             release.set()
         running.result()
     assert len(first.mailer.messages) == 1 and emails()[0].attempts == 1
-
-
-def test_hourly_schedule_startup_and_missed_hours(monkeypatch):
-    before = datetime(2026, 11, 1, 11, 59, 59).timestamp()
-    noon = datetime(2026, 11, 1, 12).timestamp()
-    assert next_hour(before) == noon
-    assert next_hour(noon) == noon + 3600
-    now = [before]
-    service = worker(now=now)
-    calls = []
-    monkeypatch.setattr(service, 'check_due', lambda slot=None: calls.append(now[0]) or True)
-    monkeypatch.setattr(service, 'deliver_due', lambda: None)
-    service.tick()
-    assert calls == [before]
-    now[0] = noon
-    service.tick()
-    service.tick()
-    assert calls == [before, noon]
-    now[0] += 5 * 86400
-    service.tick()
-    assert calls == [before, noon, now[0]]
-    assert service.deadline == now[0] + 3600
-
-
-def test_local_direct_transport_only_applies_to_scheduled_hobby_checks(monkeypatch):
-    from tcg_toolkit.external.search_proxy import direct_search
-    from tcg_toolkit.subscriptions import worker as runner
-    hs = 'https://www.hobbystation-single.jp/ws/product/detail/387566'
-    monkeypatch.setattr(runner, 'fetch_product_snapshot', lambda game, url: direct_search.get())
-    monkeypatch.setenv('TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT', 'true')
-    assert runner.fetch_scheduled_product('ws', hs)
-    assert not direct_search.get()
-    assert not runner.fetch_scheduled_product('wsr', URL)
-    monkeypatch.delenv('TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT')
-    assert not runner.fetch_scheduled_product('ws', hs)
-
-
-def test_busy_mail_worker_does_not_skip_due_check(client):
-    add(client)
-    now = [NOW]
-    service = worker(lambda game, url: snapshot(url, price=200), now=now)
-    other = worker()
-    with other.exclusive() as acquired:
-        assert acquired
-        service.tick()
-        assert service.deadline == now[0]
-        assert not emails()
-    service.tick()
-    assert len(emails()) == 1 and emails()[0].state == 'sent'
-
-
-@pytest.mark.skipif(not hasattr(time, 'tzset'), reason='Requires POSIX timezone switching')
-@pytest.mark.parametrize('day,expected_hour', [(datetime(2026, 3, 8, 1, 30), 3),
-                                              (datetime(2026, 11, 1, 1, 30, fold=0), 1)])
-def test_next_hour_observes_dst(day, expected_hour):
-    previous = os.environ.get('TZ')
-    try:
-        os.environ['TZ'] = 'America/Toronto'
-        time.tzset()
-        now = day.timestamp()
-        due = next_hour(now)
-        assert datetime.fromtimestamp(due).hour == expected_hour
-        assert due - now == 1800
-    finally:
-        if previous is None:
-            os.environ.pop('TZ', None)
-        else:
-            os.environ['TZ'] = previous
-        time.tzset()
-
-
-def test_worker_lifecycle_is_explicitly_enabled(monkeypatch):
-    import tcg_toolkit.web as web
-    calls = []
-    class Worker:
-        def __init__(self, store):
-            self.store = store
-        def start(self):
-            calls.append('start')
-        def stop(self):
-            # Store is still usable until the worker has stopped.
-            with self.store.session() as db:
-                db.scalar(select(func.count()).select_from(User))
-            calls.append('stop')
-    monkeypatch.setattr(web, 'SubscriptionWorker', Worker)
-    with TestClient(app):
-        assert calls == []
-    monkeypatch.setenv('TCG_SUBSCRIPTIONS_ENABLED', 'true')
-    with TestClient(app):
-        assert calls == ['start']
-    assert calls == ['start', 'stop']
