@@ -159,7 +159,7 @@ function cartControls(item) {
   const soldOut = item.stock_status === 'out_of_stock' || (item.stock_quantity != null && quantity >= item.stock_quantity);
   // Stock is the cart's upper bound here; typed numbers are clamped to it.
   const stock = item.stock_status === 'out_of_stock' ? 0 : item.stock_quantity ?? null, limits = cart.range(target, {stock});
-  return cartStepper(cart, target, {quantity, canIncrease: !soldOut, increaseKey: soldOut ? 'cart_no_stock' : 'cart_increase',
+  return cartStepper(cart, target, {shop: sourceLabel(source), quantity, canIncrease: !soldOut, increaseKey: soldOut ? 'cart_no_stock' : 'cart_increase',
     canEdit: limits.min < limits.max, onSet: value => cart.setTo(target, value, {stock, item}),
     onDecrease: () => cart.decrease(target), onIncrease: () => cart.increase(target, item)});
 }
@@ -229,15 +229,17 @@ function setView(next) {
   // Other pages (My cards) re-render on this instead of relying on click-handler order.
   document.dispatchEvent(new CustomEvent('viewchange', {detail: view}));
 }
-const linkHosts = new Set(['yuyu-tei.jp', 'www.hobbystation-single.jp', 'www.cardmax.jp']);
+const linkShops = new Map(Object.values(SHOP_CART_PAGES).map(({cartUrl, source}) => [new URL(cartUrl).hostname, source]));
 function cardLink(item, className = '') {
   const link = el('a', className, item.name);
   const url = new URL(item.product_url, location.origin);
-  if (url.protocol === 'https:' && linkHosts.has(url.hostname)) link.href = url.href;
+  const source = linkShops.get(url.hostname);
+  if (url.protocol === 'https:' && source) link.href = url.href;
   link.target = '_blank'; link.rel = 'noopener noreferrer';
   const confirm = event => {
     event.preventDefault();
     if (!link.hasAttribute('href')) return;
+    $('detail-description').textContent = t('detail_description', {shop: sourceLabel(source)});
     $('detail-name').textContent = item.name;
     $('detail-url').textContent = link.href;
     $('detail-confirm').href = link.href;

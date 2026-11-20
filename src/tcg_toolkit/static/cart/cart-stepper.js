@@ -10,7 +10,7 @@ const number = value => value.toLocaleString(getLanguage());
 
 // Unsent typing survives re-renders (any cart change redraws the list).
 const drafts = new Map();
-export function cartStepper(cart, target, {quantity, onIncrease, onDecrease, onSet, draftKey = productKey(target),
+export function cartStepper(cart, target, {shop, quantity, onIncrease, onDecrease, onSet, draftKey = productKey(target),
   increaseKey = 'cart_increase', canIncrease = true, canDecrease = true, canEdit = true}) {
   const box = el('div', 'cart-controls'), busy = cart.isBusy(target);
   const pending = busy || (cart.state.loading && !cart.state.rows.length);
@@ -18,7 +18,7 @@ export function cartStepper(cart, target, {quantity, onIncrease, onDecrease, onS
   stepper.setAttribute('aria-label', t('cart_quantity_label', {quantity}));
   const button = (iconName, key, disabled, action) => {
     const node = el('button', 'cart-step'); node.type = 'button'; node.append(icon(iconName));
-    node.setAttribute('aria-label', t(key)); node.title = t(key); node.disabled = disabled;
+    node.title = t(key, {shop}); node.setAttribute('aria-label', node.title); node.disabled = disabled;
     node.addEventListener('click', action); return node;
   };
   let count;
@@ -59,7 +59,7 @@ export function cartStepper(cart, target, {quantity, onIncrease, onDecrease, onS
   const message = cart.message(target);
   if (message) {
     const {key, params} = typeof message === 'string' ? {key: message, params: {}} : message;
-    const text = t(key, Object.fromEntries(Object.entries(params).map(([k, v]) => [k, number(v)])));
+    const text = t(key, {shop, ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, number(v)]))});
     showFeedback(message, text, {anchor: box, control: stepper, started: cart.bubbleStarted(target)});
   }
   return box;

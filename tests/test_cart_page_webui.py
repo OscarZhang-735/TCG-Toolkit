@@ -92,6 +92,17 @@ def test_stock_and_quantity_controls_on_all_cart_routes(client):
             expect(page.locator('#cart-kinds')).to_have_text('2')
             page.locator('[data-view=list]:visible').click()
             expect(page.locator('#cart-table')).to_be_visible()
+            label = {'yuyutei': 'YuYu-Tei', 'hobbystation': 'Hobby Station', 'cardmax': 'Card Max'}[shop]
+            buttons = page.locator('#cart-rows .cart-stepper').first.get_by_role('button')
+            for button, hint in [(buttons.first, f'Remove one from your {label} cart'),
+                                 (buttons.last, f'Add one to your {label} cart')]:
+                expect(button).to_have_attribute('title', hint)
+                expect(button).to_have_accessible_name(hint)
+            product_link = page.locator('#cart-rows .product-summary a').first
+            product_link.click()
+            expect(page.locator('#detail-description')).to_have_text(f'This link will open {label} in a new tab.')
+            expect(page.locator('#detail-confirm')).to_have_attribute('href', rows[shop][0]['product_url'])
+            page.locator('#detail-cancel').click()
             single = page.locator('.cart-stock-fetch:visible')
             expect(single).to_have_count(2)
             expect(page.locator('.product-summary:visible, .card-name:visible').first).to_contain_text(shop)

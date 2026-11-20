@@ -58,14 +58,14 @@ export function createCartPage({carts, stock, details, amountDisplay, gameLabel,
     const target = targetOf(row);
     // Lowering re-reads the row's removal control, so rows without one stay read-only.
     const limits = cart.range(target, {type: row.type});
-    return cartStepper(cart, target, {quantity: row.quantity, canDecrease: row.removable, draftKey: productKey(target) + row.type,
+    return cartStepper(cart, target, {shop: t(shop.label), quantity: row.quantity, canDecrease: row.removable, draftKey: productKey(target) + row.type,
       canEdit: limits.min < limits.max, onSet: value => cart.setTo(target, value, {type: row.type, item: row}),
       onDecrease: () => cart.decrease(target, row.type), onIncrease: () => cart.increase(target, row)});
   }
   function removeButton(row) {
     const button = el('button', 'icon-button row-action'); button.type = 'button';
     button.append(icon('bi-trash3'));
-    button.setAttribute('aria-label', t('cart_remove')); button.title = t(row.removable ? 'cart_remove' : 'cart_not_removable');
+    button.setAttribute('aria-label', t('cart_remove')); button.title = t(row.removable ? 'cart_remove' : 'cart_not_removable', {shop: t(shop.label)});
     button.disabled = !row.removable || cart.isBusy(targetOf(row));
     button.addEventListener('click', () => {
       pendingRemove = {row, cart};

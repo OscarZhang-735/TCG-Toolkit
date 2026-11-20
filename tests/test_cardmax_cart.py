@@ -159,7 +159,7 @@ def test_search_and_favorites_share_verified_member_cart(client, shop):
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(channel=os.getenv('TCG_BROWSER_CHANNEL') or None)
-        page = browser.new_page()
+        page = browser.new_page(locale='zh-CN')
         page.route('**/*', serve)
         page.add_init_script("localStorage.setItem('tcg.session', " + json.dumps(client.headers['Authorization'][7:]) + ")")
         page.goto('https://testserver/#account')
@@ -191,10 +191,12 @@ def test_search_and_favorites_share_verified_member_cart(client, shop):
         page.locator('#keyword').fill('BP22-T03')
         page.locator('#search-button').click()
         control = page.locator('#search .cart-stepper:visible').first
+        expect(control.locator('button').last).to_have_attribute('title', '向 Card Max 购物车添加一张')
         control.locator('button').last.click()
         expect(control.locator('input')).to_have_value('1')
         page.evaluate("location.hash = '#favorites'")
         favorite = page.locator('#favorites-panel .cart-stepper:visible').first
+        expect(favorite.locator('button').first).to_have_accessible_name('从 Card Max 购物车减少一张')
         expect(favorite.locator('input')).to_have_value('1')
         favorite.locator('input').fill('2')
         favorite.locator('input').press('Enter')
