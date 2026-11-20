@@ -287,7 +287,7 @@
 <section class="results">
 <div class="section-heading">
 <div class="heading-left"><h2 id="cards-title"></h2><span class="count" id="cards-count" hidden></span><span id="cards-status" role="status" aria-live="polite"></span></div>
-<div class="heading-actions"><button id="cards-select" type="button" class="secondary compact" aria-pressed="false" disabled><i class="bi bi-check2-square"></i><span data-i18n="favorite_select"></span></button><button id="cards-import" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-upload" aria-hidden="true"></i><span data-i18n="cards_import"></span></button><button id="cards-export" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-download" aria-hidden="true"></i><span data-i18n="cards_export"></span></button><button id="cards-add" type="button" class="compact" disabled><i class="bi bi-plus-lg"></i><span data-i18n="cards_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
+<div class="heading-actions"><button id="cards-select" type="button" class="secondary compact" aria-pressed="false" disabled><i class="bi bi-check2-square"></i><span data-i18n="favorite_select"></span></button><button id="cards-import" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-upload" aria-hidden="true"></i><span data-i18n="cards_import"></span></button><button id="cards-purchase-import" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-receipt" aria-hidden="true"></i><span data-i18n="purchase_import"></span></button><button id="cards-export" type="button" class="secondary compact" aria-haspopup="dialog" disabled><i class="bi bi-download" aria-hidden="true"></i><span data-i18n="cards_export"></span></button><button id="cards-add" type="button" class="compact" disabled><i class="bi bi-plus-lg"></i><span data-i18n="cards_add"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
 <div id="cards-selection-bar" class="selection-bar" hidden><label class="select-all"><input id="cards-select-all" type="checkbox"/><span data-i18n="favorite_select_all"></span></label><span id="cards-selection-count" class="selection-count" role="status" aria-live="polite"></span><div class="selection-actions"><button id="cards-bulk-move" type="button" class="secondary compact"><i class="bi bi-folder-symlink"></i><span data-i18n="favorite_move"></span></button><button id="cards-bulk-price" type="button" class="secondary compact" aria-haspopup="dialog"><i class="bi bi-tag"></i><span data-i18n="cards_bulk_price"></span></button><button id="cards-bulk-delete" type="button" class="secondary compact"><i class="bi bi-trash3"></i><span data-i18n="cards_delete"></span></button></div></div>
 <button id="cards-retry" type="button" class="secondary" hidden><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="favorite_retry"></span></button>
@@ -546,6 +546,30 @@
 <div class="dialog-actions">
 <button id="cards-import-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
 <button id="cards-import-confirm" type="submit"><i class="bi bi-upload" aria-hidden="true"></i><span data-i18n="cards_import"></span></button>
+</div>
+</form>
+</dialog>
+<dialog id="purchase-dialog" class="form-dialog purchase-dialog" aria-labelledby="purchase-title">
+<form id="purchase-form">
+<div class="dialog-head"><h2 id="purchase-title" data-i18n="purchase_import"></h2><button type="button" id="purchase-close" class="icon-button" data-i18n-aria-label="close" data-i18n-title="close"><i class="bi bi-x-lg"></i></button></div>
+<div id="purchase-entry" class="purchase-entry">
+<label class="field"><span data-i18n="purchase_source"></span><select id="purchase-source"><option value="yuyutei" data-i18n="source_yuyutei"></option></select></label>
+<label class="field"><span data-i18n="purchase_text"></span><textarea id="purchase-text" rows="6" data-i18n-placeholder="purchase_placeholder" aria-describedby="purchase-hint"></textarea></label>
+<p id="purchase-hint" class="field-hint" data-i18n="purchase_hint"></p>
+</div>
+<fieldset id="purchase-games" class="export-group"><legend data-i18n="purchase_games"></legend>
+<div class="chips"></div></fieldset>
+<section id="purchase-preview" hidden aria-labelledby="purchase-preview-title">
+<h3 id="purchase-preview-title" data-i18n="purchase_preview"></h3>
+<p class="field-hint" data-i18n="purchase_quantity_hint"></p>
+<ul id="purchase-rows" class="purchase-rows"></ul>
+</section>
+<p id="purchase-status" class="import-result" role="status" aria-live="polite"></p>
+<p id="purchase-error" class="dialog-error" role="alert"></p>
+<div class="dialog-actions">
+<button id="purchase-back" type="button" class="secondary" data-i18n="purchase_edit" hidden></button>
+<button id="purchase-cancel" type="button" class="secondary" data-i18n="detail_cancel"></button>
+<button id="purchase-submit" type="submit"><i class="bi bi-search" aria-hidden="true"></i><span data-i18n="purchase_lookup"></span></button>
 </div>
 </form>
 </dialog>

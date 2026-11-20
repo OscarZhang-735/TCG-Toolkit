@@ -3,7 +3,7 @@ import time
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +16,7 @@ from ..persistence.models import CardGroup, OwnedCard
 from . import transfer
 from .group_routes import GroupTarget, group_router
 from .groups import CollectionGroups, lock_user
+from .purchases import PurchaseBatch, record_purchases
 from .schemas import CardCreate, card_record, card_values
 
 router = APIRouter(prefix='/api/cards')
@@ -93,6 +94,13 @@ def add(body: CardCreate, request: Request, user=Depends(current_user)):
                 conflict(db, user['id'], body)
             raise
         return card_record(row)
+
+
+@router.post('/purchases', dependencies=[Depends(write_guard)])
+def add_purchases(body: PurchaseBatch, request: Request,
+                  key: Annotated[str, Header(alias='Idempotency-Key', pattern=r'^[A-Za-z0-9_.:-]{1,128}$')],
+                  user=Depends(current_user)):
+    return record_purchases(request.app.state.database, collection_groups, user['id'], key, body)
 
 
 @router.put('/{card_id}/group', dependencies=[Depends(write_guard)])

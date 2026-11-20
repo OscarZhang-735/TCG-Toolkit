@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -90,3 +92,40 @@ def test_cards_and_groups_belong_to_their_account(client):
     assert client.get('/api/cards', params={'group_id': group['id']}).json()['items'] == [saved]
     assert client.request('DELETE', '/api/cards/groups/' + group['id'], json={}).status_code == 204
     assert client.get('/api/cards').json()['items'] == [{**saved, 'group_id': None}]
+
+
+def test_purchase_import_merges_card_identities_and_replays_concurrent_confirmations(client):
+    old_group = client.post('/api/cards/groups', json={'name': 'Binder'}).json()['id']
+    new_group = client.post('/api/cards/groups', json={'name': 'New purchases'}).json()['id']
+    saved = client.post('/api/cards', json={**CARD, 'group_id': old_group, 'price': '12.50', 'currency': 'CAD'}).json()
+    ws = {**CARD, 'card_number': 'abc-001', 'name': 'Official name', 'notes': '', 'quantity': 3}
+    wsr = {**CARD, 'game': 'WSR', 'card_number': 'OS01/R01-047S', 'name': 'New', 'quantity': 6}
+    body = {'items': [ws, wsr, {**wsr, 'rarity': 'sr', 'quantity': 1}], 'group_id': new_group}
+    path, headers = '/api/cards/purchases', {'Idempotency-Key': 'confirmation-1'}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _: client.post(path, json=body, headers=headers), range(2)))
+    for response in responses:
+        assert response.status_code == 200, response.text
+        assert response.json() == {'created': 1, 'updated': 1, 'quantity': 10}
+    assert client.post(path, json={'items': [ws]}, headers=headers).status_code == 409
+    added, updated = client.get('/api/cards').json()['items']
+    assert (added['quantity'], added['group_id'], added['game']) == (7, new_group, 'WSR')
+    assert updated == {**saved, 'quantity': 5, 'updated_at': updated['updated_at']}
+
+    login(client, 'bob')
+    assert client.post(path, json=body, headers=headers).status_code == 404
+    assert client.post(path, json={'items': [ws]}, headers=headers).json() == {'created': 1, 'updated': 0, 'quantity': 3}
+    assert len(client.get('/api/cards').json()['items']) == 1
+
+
+def test_purchase_import_rolls_back_overflow_and_can_retry_failed_confirmation(client):
+    path, headers = '/api/cards/purchases', {'Idempotency-Key': 'confirmation-2'}
+    saved = client.post('/api/cards', json={**CARD, 'quantity': 9007199254740991}).json()
+    other = {**CARD, 'card_number': 'ABC-002', 'quantity': 1}
+    response = client.post(path, json={'items': [other, CARD]}, headers=headers)
+    assert response.status_code == 422 and response.json()['detail'] == 'card_quantity_overflow'
+    assert client.get('/api/cards').json()['items'] == [saved]
+    for invalid in [0, -1, 1.5]:
+        assert client.post(path, json={'items': [{**other, 'quantity': invalid}]}, headers=headers).status_code == 422
+    assert client.post(path, json={'items': [other]}).status_code == 422
+    assert client.post(path, json={'items': [other]}, headers=headers).json() == {'created': 1, 'updated': 0, 'quantity': 1}

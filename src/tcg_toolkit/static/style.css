@@ -852,6 +852,24 @@ button.official-card.chosen, button.official-card.chosen:hover { border-color: v
 .import-result { margin: 14px 0 0; padding: 10px 14px; font-size: 13px; color: var(--color-text);
   background: var(--color-success-bg); border: 1px solid var(--color-success-border); border-radius: var(--radius-md); }
 .import-result:empty { display: none; }
+.form-dialog.purchase-dialog { width: min(700px, 94vw); }
+.purchase-entry { display: grid; gap: 12px; }
+.purchase-entry textarea { margin-top: 6px; }
+.purchase-entry .field-hint { margin: -6px 0 0; }
+.purchase-entry:not([hidden]) + #purchase-games { margin-top: 14px; }
+.purchase-dialog h3 { margin: 0; font-size: 15px; }
+.purchase-rows { display: grid; gap: 0; margin: 14px 0 0; padding: 0; list-style: none; }
+.purchase-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px; align-items: start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--color-border); }
+.purchase-row-info { min-width: 0; overflow-wrap: anywhere; }
+.purchase-row-info strong { display: block; font-size: 14px; }
+.purchase-row-info p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 12px; }
+.purchase-row .field input { margin-top: 6px; }
+.purchase-dialog .dialog-actions { flex-wrap: wrap; }
+#purchase-back { margin-right: auto; }
+@media (max-width: 440px) {
+  .form-dialog.purchase-dialog { padding: 16px; }
+  .purchase-row { grid-template-columns: minmax(0, 1fr) 76px; }
+}
 .import-result.pending { background: var(--color-surface-muted); border-color: var(--color-border); color: var(--color-text-secondary); }
 
 /* Export settings dialog */

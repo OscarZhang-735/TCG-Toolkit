@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 LYCEE_SEARCH = 'https://lycee-tcg.com/card/'
 
 
-def parse_lycee(html, base=LYCEE_SEARCH):
+def parse_lycee(html, base=LYCEE_SEARCH, *, separate_rows=False):
     soup = BeautifulSoup(html, 'html.parser')
     items = []
     seen = set()
@@ -22,9 +22,10 @@ def parse_lycee(html, base=LYCEE_SEARCH):
             image_url = None
         if not number or not name or not rarity:
             raise ValueError('Invalid official card row')
-        if number not in seen:
+        identity = id(row) if separate_rows else number
+        if identity not in seen:
             items.append(dict(game='Lycee', card_number=number, name=name, rarity=rarity, image_url=image_url))
-            seen.add(number)
+            seen.add(identity)
     if not items and not soup.select('input[name="word"]'):
         raise ValueError('Unrecognized official search page')
     return items
@@ -55,14 +56,15 @@ WSR_SEARCH = 'https://ws-rose.com/cardlist/searchresults/'
 WSR_DETAIL = 'https://ws-rose.com/cardlist/'
 
 
-def parse_wsr(html):
+def parse_wsr(html, *, fragment=False):
     soup = BeautifulSoup(html, 'html.parser')
     hits = soup.select_one('.search-Hits span')
-    if hits is None:
+    if not fragment and hits is None:
         raise ValueError('Unrecognized WSR search page')
-    total = int(hits.get_text(strip=True).replace(',', ''))
+    total = None if fragment else int(hits.get_text(strip=True).replace(',', ''))
     items = []
-    for link in soup.select('.cardlist-Result_Item .card-Item a[href]'):
+    selector = '.card-Item a[href]' if fragment else '.cardlist-Result_Item .card-Item a[href]'
+    for link in soup.select(selector):
         number = parse_qs(urlsplit(link['href']).query).get('cardno', [''])[0]
         image = link.select_one('img[src]')
         if not number or image is None or not image.get('alt'):
@@ -161,15 +163,18 @@ def parse_sev(html, number):
 WS_EN_SEARCH = 'https://en.ws-tcg.com/cardlist/searchresults/'
 
 
-def parse_ws_en(html):
+def parse_ws_en(html, word='', *, limit=5, fragment=False):
     soup = BeautifulSoup(html, 'html.parser')
     hits = soup.select_one('.c-search__results-item span')
-    if hits is None:
+    if not fragment and hits is None:
         raise ValueError('Unrecognized WS EN results')
-    total = int(hits.get_text(strip=True).replace(',', ''))
+    total = None if fragment else int(hits.get_text(strip=True).replace(',', ''))
     items = []
-    for link in soup.select('a[href*="?cardno="]')[:5]:
-        number = parse_qs(urlsplit(link['href']).query).get('cardno', [''])[0]
+    links = [(parse_qs(urlsplit(link['href']).query).get('cardno', [''])[0], link)
+             for link in soup.select('a[href*="?cardno="]')]
+    if word:
+        links.sort(key=lambda entry: entry[0].casefold() != word.casefold())
+    for number, link in links[:limit]:
         name = link.select_one('.ttl')
         image = link.select_one('.image img[src]')
         fields = {dt.get_text(strip=True): dt.find_next_sibling('dd').get_text(strip=True)

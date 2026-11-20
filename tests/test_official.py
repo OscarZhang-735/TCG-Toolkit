@@ -1,9 +1,12 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 
+from tcg_toolkit.catalog import official as official_routes
 from tcg_toolkit.catalog.providers import official
 from test_cards import client
 
@@ -78,3 +81,101 @@ def test_ws_en_real_results():
     first = result['items'][0]
     assert (first['game'], first['card_number'], first['name'], first['rarity']) == (
         'WS EN', 'BD/WE34-E01', '"Astral Harmony" Nanami Hiromachi', 'RR')
+
+
+@pytest.mark.parametrize('search,search_url,file,selector,number', [
+    (official_routes.search_wsr, official.WSR_SEARCH, 'official_wsr.html', '.card-Item', 'OS13/R13-001'),
+    (official_routes.search_ws_en, official.WS_EN_SEARCH, 'official_ws_en.html', 'a[href*="?cardno="]', 'BD/WE34-E01'),
+])
+def test_exact_printing_after_first_five_prefix_matches(monkeypatch, search, search_url, file, selector, number):
+    page = BeautifulSoup(fixture(file), 'html.parser')
+    exact = page.select_one(selector)
+    variants = [number + suffix for suffix in ('S', 'SP', 'SSP', 'SEC', 'OFR')]
+    for variant in variants:
+        card = deepcopy(exact)
+        link = card if card.name == 'a' else card.find('a')
+        link['href'] = link['href'].replace('cardno=' + number, 'cardno=' + variant)
+        exact.insert_before(card)
+    page.select_one('.search-Hits span, .c-search__results-item span').string = '10'
+
+    def get(self, url, *, params):
+        if url == search_url:
+            assert params == {'keyword': number}
+            content = str(page)
+        else:
+            assert url == official.WSR_DETAIL
+            content = fixture('official_wsr_detail.html').replace(number, params['cardno'])
+        return httpx.Response(200, text=content, request=httpx.Request('GET', url))
+
+    monkeypatch.setattr(httpx.Client, 'get', get)
+    result = search(number)
+    assert [item['card_number'] for item in result['items']] == [number, *variants[:4]]
+
+
+@pytest.mark.parametrize('search,search_url,file,selector,number,view', [
+    (official_routes.search_wsr, official.WSR_SEARCH, 'official_wsr.html',
+     '.card-Item', 'OS13/R13-001', 'image'),
+    (official_routes.search_ws_en, official.WS_EN_SEARCH, 'official_ws_en.html',
+     'a[href*="?cardno="]', 'BD/WE34-E01', 'text'),
+])
+def test_purchase_exact_printings_from_later_bushiroad_page(monkeypatch, search, search_url, file, selector, number, view):
+    first = BeautifulSoup(fixture(file), 'html.parser')
+    links = first.select(selector)
+    first.select_one('.search-Hits span, .c-search__results-item span').string = str(len(links) + 1)
+    second = str(links[0])
+
+    def get(self, url, *, params):
+        if url == search_url:
+            content = str(first)
+        elif url == official.WSR_DETAIL:
+            assert params == {'cardno': number}
+            content = fixture('official_wsr_detail.html')
+        else:
+            assert url.endswith('/cardlist/cardsearch_ex')
+            assert params == {'keyword': number, 'view': view, 'page': 2}
+            content = second
+        return httpx.Response(200, text=content, request=httpx.Request('GET', url))
+
+    monkeypatch.setattr(httpx.Client, 'get', get)
+    assert [row['card_number'] for row in search(number, exact=True)['items']] == [number, number]
+
+
+def test_purchase_ws_requires_every_page_even_after_one_exact_match(monkeypatch):
+    first = json.loads(fixture('official_ws.json'))
+    number = first['items'][0]['card_number']
+    pages = {1: {**first, 'total': 4}, 2: {**first, 'items': first['items'][:1], 'total': 4, 'page': 2}}
+
+    def get(self, url, *, params):
+        return httpx.Response(200, json=pages[params.get('page', 1)], request=httpx.Request('GET', url))
+    monkeypatch.setattr(httpx.Client, 'get', get)
+    assert len(official_routes.search_ws(number, exact=True)['items']) == 2
+    pages[2]['items'] = []
+    with pytest.raises(official_routes.HTTPException) as exc:
+        official_routes.search_ws(number, exact=True)
+    assert exc.value.status_code == 502
+
+
+@pytest.mark.parametrize('search,file,number,page_link,next_page,selector', [
+    (official_routes.search, 'official_lycee.html', 'LO-1606',
+     '<div id="pagemenu"><button name="page" value="2">2</button></div>', 2, 'tr'),
+    (official_routes.search_pm, 'official_pm.html', '01-001',
+     '<ul class="pager"><li class="pager-next"><a href="?page=1">next</a></li></ul>', 1, 'table tbody tr'),
+])
+def test_purchase_table_printings_across_pages(monkeypatch, search, file, number, page_link, next_page, selector):
+    first = fixture(file)
+    second = BeautifulSoup(first, 'html.parser')
+    for row in second.select(selector)[:-1]:
+        row.decompose()
+    first_matches = 1 if file == 'official_lycee.html' else 6
+
+    def get(self, url, *, params):
+        if 'page' in params:
+            assert params['page'] == next_page
+            content = str(second)
+        else:
+            content = first + page_link
+        return httpx.Response(200, text=content, request=httpx.Request('GET', url))
+
+    monkeypatch.setattr(httpx.Client, 'get', get)
+    items = search(number, exact=True)['items']
+    assert [item['card_number'] for item in items] == [number] * (first_matches + 1)

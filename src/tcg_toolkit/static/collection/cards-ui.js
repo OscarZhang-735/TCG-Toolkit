@@ -10,6 +10,8 @@ import {rarityBadge, cardImage, cardImageUrl, markOrientation} from '../catalog/
 import {numberButton} from '../shared/copy-number.js';
 import {setNavCount} from '../shared/nav-count.js';
 import {createCardTransfers} from './cards-transfer-ui.js';
+import {createPurchaseImporter} from './purchase-import.js';
+import {createPurchaseImport} from './purchase-import-ui.js';
 import {raritiesForGame, rarityCategories, findRarity, rarityTier, rarityDescription} from '../catalog/rarities.js';
 import {bindGroups} from '../shared/group-ui.js';
 import {priceSteps, sliderIndex, sliderBound} from '../catalog/logic.js';
@@ -31,6 +33,7 @@ const groups = bindGroups(inventory, {prefix: 'cards', deleteMessage: 'cards_gro
 const groupName = id => inventory.state.groups.find(group => group.id === id)?.name ?? null;
 const transfers = createCardTransfers({inventory, request: (...args) => officialAPI(...args),
   hiddenGames: () => filters.hiddenGames});
+const purchaseImport = createPurchaseImport({inventory, ...createPurchaseImporter({inventory, request: (...args) => officialAPI(...args)})});
 function node(tag, text = '', className = '') {const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el;}
 function icon(name) {return node('i', '', `bi ${name}`);}
 const number = value => value.toLocaleString(getLanguage());
@@ -363,6 +366,7 @@ export function ownedQuantity(item) {
 function render() {
   const state = inventory.state, open = editorOpen();
   transfers.render();
+  purchaseImport.render();
   indexOwned(state.records, state.ready);
   // Editor dialog
   gameOptions();
@@ -493,6 +497,7 @@ document.addEventListener('viewchange', render);
 $('language').addEventListener('change', () => { buildPriceSources(); render(); });
 export function clearCards() {
   transfers.reset();
+  purchaseImport.reset();
   clearOfficial();
   priceSupportController?.abort(); priceSupportController = null; priceSupport = {status: 'idle', merchants: []};
   clearPriceLookup();

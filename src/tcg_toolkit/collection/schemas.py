@@ -10,6 +10,7 @@ from ..catalog.games import GAME_NAMES
 
 # Currencies a unit price may be recorded in; the WebUI converts between them for display.
 CURRENCIES = ('JPY', 'CNY', 'CAD')
+MAX_CARD_QUANTITY = 9007199254740991
 
 
 class CardPriceInput(BaseModel):
@@ -34,7 +35,7 @@ class CardInput(CardPriceInput):
     card_number: str = Field(min_length=1)
     rarity: str = Field(min_length=1)
     name: str = Field(min_length=1)
-    quantity: int = Field(default=1, strict=True, ge=0, le=9007199254740991)
+    quantity: int = Field(default=1, strict=True, ge=0, le=MAX_CARD_QUANTITY)
     notes: str = ''
     image_url: str = ''
 
