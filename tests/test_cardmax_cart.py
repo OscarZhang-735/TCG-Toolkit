@@ -163,6 +163,14 @@ def test_search_and_favorites_share_verified_member_cart(client, shop):
         page.route('**/*', serve)
         page.add_init_script("localStorage.setItem('tcg.session', " + json.dumps(client.headers['Authorization'][7:]) + ")")
         page.goto('https://testserver/#account')
+        expect(page.locator('#cm-cart-state-label')).not_to_have_text('')
+        chips = page.locator('.cart-settings-meta .cart-state')
+        expect(chips).to_have_count(3)
+        for width in (390, 1280):
+            page.set_viewport_size({'width': width, 'height': 800})
+            sizes = chips.evaluate_all('(chips) => chips.map(chip => [chip.offsetWidth, chip.offsetHeight])')
+            assert sizes[0] == sizes[1] == sizes[2]
+            expect(page.locator('#cm-cart-state-icon')).to_have_css('display', 'none')
         for field, value in [('tempid', 'test-cart'), ('login-id', 'test-member'),
                              ('member-name', '123'), ('member-value', 'test-signature')]:
             page.locator('#cm-cart-' + field).fill(value)
@@ -171,6 +179,7 @@ def test_search_and_favorites_share_verified_member_cart(client, shop):
         page.locator('#cm-cart-member-name').fill('123_key')
         page.locator('#cm-cart-save').click()
         expect(page.locator('#cm-cart-body')).to_be_hidden()
+        expect(page.locator('#cm-cart-state-icon')).not_to_have_css('display', 'none')
         page.evaluate("location.hash = '#search'")
         page.locator('label.chip:has(input[name=merchant][value=cardmax])').click()
         for checkbox in page.locator('input[name=merchant], input[name=source]').all():

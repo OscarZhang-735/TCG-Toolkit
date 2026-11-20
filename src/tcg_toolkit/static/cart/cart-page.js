@@ -1,35 +1,45 @@
-// YuYu-Tei cart page.
+// The three merchant routes share this page; each cart owns its own rows and writes.
 import {t, getLanguage} from '../i18n.js';
 import {cardImage, rarityBadge} from '../catalog/card-view.js';
+import {stockBadge} from '../catalog/stock-badge.js';
 import {productKey} from '../catalog/product-identity.js';
 import {cartStepper} from './cart-stepper.js';
 import {numberButton} from '../shared/copy-number.js';
+import {SHOP_CART_PAGES} from './shop-cart-page.js';
 const $ = id => document.getElementById(id);
 const el = (tag, className = '', text = '') => {const node = document.createElement(tag); node.className = className; node.textContent = text; return node;};
 const icon = name => el('i', `bi ${name}`);
 const number = value => value.toLocaleString(getLanguage());
 // Cart rows name games by their shop path; the rest of the UI uses search game keys.
-const GAME_KEYS = {lo: 'lycee'}, KNOWN_GAMES = ['wsr', 'lycee', 'chaos', 'ws', 'pm', 'sev'];
-const targetOf = row => ({gid: row.gid, ver: row.ver, cid: row.cid, kizu: row.kizu});
-const SHOP_CART_URL = 'https://yuyu-tei.jp/cart/sell';
-const STOCK_ICONS = {in_stock: 'bi-check-circle-fill', out_of_stock: 'bi-x-circle', unknown: 'bi-question-circle'};
-
-export function createCartPage({cart, stock, details, amountDisplay, gameLabel, cardLink, currentView}) {
-  let pendingRemove = null;
-  // Number and rarity come with rows added from search; others are looked up once.
+const GAME_KEYS = {lo: 'lycee', wr: 'wsr'}, KNOWN_GAMES = ['wsr', 'lycee', 'chaos', 'ws', 'pm', 'sev'];
+function targetOf({gid, ver, cid, kizu, product_url}) {
+  return gid === 'hs' || gid === 'cm' ? {gid, ver, cid, kizu, product_url} : {gid, ver, cid, kizu};
+}
+export function createCartPage({carts, stock, details, amountDisplay, gameLabel, cardLink, currentView}) {
+  let shop, cart, pendingRemove = null;
+  const current = () => SHOP_CART_PAGES[location.hash]?.source ?? null;
   function info(row) {
-    return row.card_number ? {status: 'done', card_number: row.card_number, rarity: row.rarity ?? null}
-      : details.get(targetOf(row));
+    const target = targetOf(row);
+    if (shop.source === 'yuyutei') {
+      return row.card_number ? row : details.get(target);
+    }
+    const entry = stock.get(target), fetched = entry.status === 'done' ? entry : entry.last;
+    const known = details.peek(target) ?? {};
+    const pathGame = row.gid === 'hs' && row.product_url?.match(/\.jp\/([^/]+)\/product\//)?.[1];
+    return {card_number: fetched?.card_number ?? known.card_number ?? row.card_number,
+      rarity: fetched?.rarity ?? known.rarity ?? row.rarity, game: fetched?.game ?? known.game ?? (row.game || pathGame)};
   }
   function item(row) {
     const known = info(row), rarity = known.rarity ?? null;
     // Cart names read "<rarity> <name>"; the rarity is shown as its own badge.
-    const full = row.name ?? '', name = rarity && full.startsWith(rarity + ' ') ? full.slice(rarity.length + 1) : full;
-    return {...row, name, rarity, card_number: known.card_number ?? '', game: GAME_KEYS[row.game] ?? row.game, price: row.unit_price};
+    const full = row.name ?? '', name = shop.source === 'yuyutei' && rarity && full.startsWith(rarity + ' ')
+      ? full.slice(rarity.length + 1) : full;
+    const game = known.game || row.game;
+    return {...row, source: shop.source, name, rarity, card_number: known.card_number ?? '', game: GAME_KEYS[game] ?? game, price: row.unit_price};
   }
   function tags(row, {withRarity = false} = {}) {
     const box = el('div', 'card-tags'), shown = item(row);
-    box.append(el('span', 'game-tag', KNOWN_GAMES.includes(shown.game) ? gameLabel(shown.game) : shown.game));
+    if (shown.game) box.append(el('span', 'game-tag', KNOWN_GAMES.includes(shown.game) ? gameLabel(shown.game) : shown.game));
     if (withRarity) box.append(rarityBadge(shown));
     if (row.type === 'reserved') box.append(el('span', 'cart-tag', t('cart_reserved')));
     if (row.kizu) box.append(el('span', 'cart-tag', t('cart_damaged')));
@@ -37,10 +47,10 @@ export function createCartPage({cart, stock, details, amountDisplay, gameLabel, 
   }
   function cardNumber(row) {
     const known = info(row);
-    if (known.status === 'done') return numberButton(known.card_number);
+    if (known.card_number) return numberButton(known.card_number);
     const pending = el('span', 'mono muted');
     if (known.status === 'loading') { pending.append(icon('bi-arrow-repeat spin')); pending.title = t('cart_details_loading'); }
-    else { pending.textContent = '—'; pending.title = t('cart_details_failed'); }
+    else { pending.textContent = '—'; if (known.status === 'failed') pending.title = t('cart_details_failed'); }
     return pending;
   }
   function stepper(row) {
@@ -57,14 +67,15 @@ export function createCartPage({cart, stock, details, amountDisplay, gameLabel, 
     button.setAttribute('aria-label', t('cart_remove')); button.title = t(row.removable ? 'cart_remove' : 'cart_not_removable');
     button.disabled = !row.removable || cart.isBusy(targetOf(row));
     button.addEventListener('click', () => {
-      pendingRemove = row;
-      $('cart-remove-message').textContent = t('cart_confirm_remove', {name: item(row).name, quantity: number(row.quantity)});
+      pendingRemove = {row, cart};
+      $('cart-remove-message').textContent = t('shop_cart_confirm_remove',
+        {shop: t(shop.label), name: item(row).name, quantity: number(row.quantity)});
       $('cart-remove-dialog').showModal();
     });
     return button;
   }
   // Same badge language as search results, plus a warning when the shop holds fewer than the cart.
-  function stockBadge(row, state) {
+  function cartStockBadge(row, state) {
     const result = state.status === 'done' ? state : state.last;
     if (!result) {
       const badge = el('span', `badge unknown${state.status === 'failed' ? ' stock-failed' : ''}`);
@@ -72,19 +83,13 @@ export function createCartPage({cart, stock, details, amountDisplay, gameLabel, 
       else { badge.textContent = '—'; badge.title = t('cart_stock_idle'); }
       return badge;
     }
-    const quantity = result.quantity;
-    const short = quantity !== null && quantity > 0 && quantity < row.quantity;
-    const status = quantity === null ? 'unknown' : quantity === 0 ? 'out_of_stock' : 'in_stock';
-    const badge = el('span', `badge ${status}${short ? ' stock-short' : ''}`);
-    badge.append(icon(short ? 'bi-exclamation-triangle-fill' : STOCK_ICONS[status]),
-      t(short ? 'cart_stock_short' : status) + (quantity === null ? '' : ` (${number(quantity)})`));
-    if (short) badge.title = t('cart_stock_short_hint', {stock: number(quantity), quantity: number(row.quantity)});
-    return badge;
+    return stockBadge({source: shop.source, stock_status: result.stockStatus, stock_quantity: result.quantity,
+      stock_text: result.stockText}, row.quantity);
   }
   function stockControl(row) {
     const target = targetOf(row), state = stock.get(target), loading = state.status === 'loading';
     const box = el('div', 'cart-stock-control');
-    const badge = stockBadge(row, state); badge.setAttribute('role', 'status');
+    const badge = cartStockBadge(row, state); badge.setAttribute('role', 'status');
     const key = loading ? 'cart_stock_loading' : state.status === 'failed' ? 'cart_retry_stock'
       : state.status === 'idle' ? 'cart_get_stock' : 'cart_refresh_stock';
     const button = el('button', 'icon-button cart-stock-fetch'); button.type = 'button';
@@ -116,22 +121,26 @@ export function createCartPage({cart, stock, details, amountDisplay, gameLabel, 
   }
   function emptyState(state) {
     const link = (key, href) => { const a = el('a', 'cart-empty-link', t(key)); a.href = href; return a; };
-    if (!state.configured) return [t('cart_need_credentials'), link('cart_go_setup', '#account')];
+    if (!state.configured) return [t(shop.needCredentials), link('cart_go_setup', '#account')];
     if (state.loading) return [t('cart_loading')];
     if (state.error) return [t(state.error)];
     if (!state.complete) return [t('cart_summary_incomplete')];
-    return [t('cart_empty'), link('cart_go_search', '#search')];
+    return [t('shop_cart_empty', {shop: t(shop.label)}), link('cart_go_search', '#search')];
   }
   function render() {
+    shop = SHOP_CART_PAGES[location.hash];
+    if (!shop) { close(); return; }
+    cart = carts[shop.source];
     const state = cart.state, rows = state.rows, view = currentView();
     const has = rows.length > 0;
+    const shopLabel = {shop: t(shop.label)};
+    $('cart-page-title').textContent = t('shop_cart_title', shopLabel);
     $('cart-stats').hidden = !state.configured || (!has && !state.complete);
-    // Checkout happens on YuYu-Tei: open its own cart (after the usual leaving-the-site confirmation).
-    const checkout = cardLink({name: t('cart_checkout_name'), product_url: SHOP_CART_URL}, 'cart-checkout');
+    const checkout = cardLink({name: t('shop_cart_title', shopLabel), product_url: shop.cartUrl}, 'cart-checkout');
     const logo = document.createElement('img');
-    logo.src = './yuyutei-logo.webp'; logo.alt = ''; logo.className = 'cart-checkout-logo'; logo.setAttribute('aria-hidden', 'true');
-    checkout.replaceChildren(logo, el('span', '', t('cart_checkout')), icon('bi-box-arrow-up-right'));
-    checkout.title = t('cart_checkout_hint');
+    logo.src = shop.icon; logo.alt = ''; logo.className = 'cart-checkout-logo'; logo.setAttribute('aria-hidden', 'true');
+    checkout.replaceChildren(logo, el('span', '', t('shop_cart_checkout', shopLabel)), icon('bi-box-arrow-up-right'));
+    checkout.title = t('shop_cart_checkout_hint', shopLabel);
     $('cart-checkout-slot').replaceChildren(checkout);
     $('cart-kinds').textContent = number(rows.length);
     $('cart-quantity-total').textContent = state.totalQuantity === null ? '—' : number(state.totalQuantity);
@@ -139,6 +148,7 @@ export function createCartPage({cart, stock, details, amountDisplay, gameLabel, 
     $('cart-count').hidden = !has; $('cart-count').textContent = number(rows.length);
     $('cart-status').textContent = state.loading && has ? t('cart_loading') : state.error && has ? t(state.error) : '';
     $('cart-warning').hidden = state.complete;
+    $('cart-warning-text').textContent = t('shop_cart_incomplete_warning', shopLabel);
     $('cart-get-stock').disabled = !has || !state.configured || rows.some(row => stock.get(targetOf(row)).status === 'loading');
     $('cart-page-refresh').disabled = !state.configured || state.loading;
     $('cart-page-refresh').querySelector('.bi').classList.toggle('spin', state.loading);
@@ -152,16 +162,20 @@ export function createCartPage({cart, stock, details, amountDisplay, gameLabel, 
       $('cart-empty').querySelector('h3').textContent = message;
       $('cart-empty-action').replaceChildren(...(action ? [action] : []));
     }
-    if (pendingRemove && !rows.some(row => productKey(row) === productKey(pendingRemove) && row.type === pendingRemove.type))
-      $('cart-remove-dialog').close();
+    if (pendingRemove && (pendingRemove.cart !== cart || !rows.some(row => productKey(row) === productKey(pendingRemove.row)
+        && row.type === pendingRemove.row.type))) close();
   }
+  function close() { pendingRemove = null; $('cart-remove-dialog').close(); }
   $('cart-get-stock').addEventListener('click', () => stock.fetchAll(cart.state.rows.map(targetOf)));
-  $('cart-page-refresh').addEventListener('click', () => { details.retryFailed(); cart.refresh(); });
-  $('cart-remove-cancel').addEventListener('click', () => $('cart-remove-dialog').close());
+  $('cart-page-refresh').addEventListener('click', () => {
+    if (shop.source === 'yuyutei') details.retryFailed();
+    cart.refresh();
+  });
+  $('cart-remove-cancel').addEventListener('click', close);
   $('cart-remove-confirm').addEventListener('click', () => {
-    const row = pendingRemove; $('cart-remove-dialog').close();
-    if (row) cart.remove(targetOf(row), row.type);
+    const pending = pendingRemove; close();
+    if (pending && pending.cart === carts[current()]) pending.cart.remove(targetOf(pending.row), pending.row.type);
   });
   $('cart-remove-dialog').addEventListener('close', () => { pendingRemove = null; });
-  return {render, close: () => $('cart-remove-dialog').close()};
+  return {render, close, current};
 }

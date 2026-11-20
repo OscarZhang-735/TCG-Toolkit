@@ -7,7 +7,8 @@ export function createProductDetails(onChange = () => {}, concurrency = 3) {
   const known = new Map(), queue = [];
   const keyOf = target => productKey({...target, kizu: 0});
   function remember(target, item) {
-    if (target && item?.card_number) known.set(keyOf(target), {status: 'done', card_number: item.card_number, rarity: item.rarity ?? null});
+    if (target && item?.card_number) known.set(keyOf(target), {status: 'done', card_number: item.card_number,
+      rarity: item.rarity ?? null, ...(item.game ? {game: item.game} : {})});
   }
   async function load(target, current) {
     const key = keyOf(target);
@@ -43,5 +44,5 @@ export function createProductDetails(onChange = () => {}, concurrency = 3) {
     for (const [key, entry] of known) if (entry.status === 'failed') known.delete(key);
   }
   function clear() { generation++; known.clear(); queue.length = 0; request = null; }
-  return {get, remember, retryFailed, clear, activate(next) { clear(); request = next; }};
+  return {get, peek: target => known.get(keyOf(target)), remember, retryFailed, clear, activate(next) { clear(); request = next; }};
 }

@@ -8,6 +8,7 @@ import {createSubscriptions, subscriptionKey} from './subscriptions/subscription
 import {t, applyLanguage, setLanguage, getLanguage} from './i18n.js';
 import {loadResults} from './catalog/logic.js';
 import {rarityBadge, cardImage} from './catalog/card-view.js';
+import {stockBadge} from './catalog/stock-badge.js';
 import {numberButton} from './shared/copy-number.js';
 import {setNavCount} from './shared/nav-count.js';
 import {createFilterPanel} from './catalog/filters.js';
@@ -28,16 +29,13 @@ import {createProductDetails} from './catalog/product-details.js';
 import {showFeedback, markDot} from './shared/feedback.js';
 import {messageTier} from './shared/notices.js';
 import {createCartStock} from './cart/cart-stock.js';
-import {SEARCH_SOURCES, searchTargets, searchParams, isYuyutei} from './catalog/search-sources.js';
-import {createShopCartPage} from './cart/shop-cart-page.js';
+import {SEARCH_SOURCES, searchTargets, searchParams} from './catalog/search-sources.js';
 const $ = id => document.getElementById(id);
 const checked = name => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(el => el.value);
 const gameKeys = {"wsr": "wsr", "lycee": "lycee", "chaos": "chaostcg", "ws": "ws", "pm": "pm", "sev": "sev", "sev_en": "sev_en"};
 const gameLabel = game => t(gameKeys[game]);
 const sourceLabel = source => t(SEARCH_SOURCES[source]?.label ?? source);
 let items = [], limit = 100, controller = null, batch = 0, started = false;
-const stockKeys = {"in_stock": "in_stock", "out_of_stock": "out_of_stock", "unknown": "unknown"};
-const stockIcons = {in_stock: 'bi-check-circle-fill', out_of_stock: 'bi-x-circle', unknown: 'bi-question-circle'};
 let view = localStorage.getItem('view') === 'grid' ? 'grid' : 'list';
 const el = (tag, className = '', text = '') => {const node = document.createElement(tag); node.className = className; node.textContent = text; return node;};
 const icon = name => el('i', `bi ${name}`);
@@ -83,7 +81,8 @@ let userId = null, requestAPI = fetch, notificationEmail = null;
 let history = [];
 const favorites = createFavorites(removedItem => {
   if (removedItem) subscriptions.forget(removedItem);
-  render(); renderFavorites();
+  for (const {item} of favorites.state.records) rememberProduct(item);
+  render(); renderFavorites(); cartPage?.render();
 });
 const favoriteGroups = bindFavoriteGroups(favorites);
 const subscriptions = createSubscriptions(() => {render(); renderFavorites(); renderNotice();});
@@ -92,9 +91,7 @@ let cartPage = null;
 const cartStock = createCartStock(() => cartPage?.render());
 const productDetails = createProductDetails(() => cartPage?.render());
 const cart = createCart(yuyuteiClient, () => {render(); renderFavorites(); renderCartSummary(); cartPage?.render(); renderNotice();});
-// These storefronts share search and favorite controls; each has its own cart state.
-let shopCartPage = null;
-const renderShopCart = () => {render(); renderFavorites(); renderNotice(); renderCartNav(); shopCartPage?.render();};
+const renderShopCart = () => {render(); renderFavorites(); renderNotice(); renderCartNav(); cartPage?.render();};
 const hsCart = createHobbystationCart(hobbystationClient, renderShopCart);
 const cmCart = createCardmaxCart(cardmaxClient, renderShopCart);
 // Account-level problems (credentials, notification email) would hit every card the same way,
@@ -108,12 +105,16 @@ const dismissNotice = () => { cart.dismissNotice(); hsCart.dismissNotice(); cmCa
 $('page-notice-close').addEventListener('click', dismissNotice);
 $('page-notice-action').addEventListener('click', dismissNotice);
 const cartSettings = bindCartSettings(yuyuteiClient, cart);
-const yuyuteiCart = cart;
 const hobbystationSettings = bindHobbystationSettings(hobbystationClient,
   {onCart: value => value ? hsCart.load(hobbystationCartRows(value)) : hsCart.clear({syncCredentials: true})});
 const cardmaxSettings = bindCardmaxSettings(cardmaxClient,
   {onCart: value => value ? cmCart.load(cardmaxCartRows(value)) : cmCart.clear({syncCredentials: true})});
-const shopCarts = {hobbystation: [hsCart, hobbystationTarget], cardmax: [cmCart, cardmaxTarget], yuyutei: [yuyuteiCart, cartTarget]};
+const shopCarts = {yuyutei: cart, hobbystation: hsCart, cardmax: cmCart};
+const cartTargets = {yuyutei: cartTarget, hobbystation: hobbystationTarget, cardmax: cardmaxTarget};
+function rememberProduct(item) {
+  const target = cartTargets[item.source ?? 'yuyutei'];
+  productDetails.remember(target(item), item);
+}
 function renderCartSummary() {
   const state = cart.state, box = $('cart-summary');
   const content = [icon('bi-cart3')];
@@ -132,13 +133,12 @@ function renderCartSummary() {
   cartSettings.render();
 }
 $('cart-refresh').addEventListener('click', () => cart.refresh());
-cartPage = createCartPage({cart, stock: cartStock, details: productDetails, amountDisplay, gameLabel, cardLink, currentView: () => view});
+cartPage = createCartPage({carts: shopCarts,
+  stock: cartStock, details: productDetails, amountDisplay, gameLabel, cardLink, currentView: () => view});
 document.addEventListener('viewchange', () => cartPage.render());
-shopCartPage = createShopCartPage({carts: {hobbystation: hsCart, cardmax: cmCart}, amountDisplay, cardLink, currentView: () => view});
-document.addEventListener('viewchange', () => shopCartPage.render());
 // Sidebar cart menu: each shop's count on its entry, their sum on the menu itself.
 function renderCartNav() {
-  const counts = [[yuyuteiCart, 'cart-nav-count'], [hsCart, 'hs-cart-nav-count'], [cmCart, 'cm-cart-nav-count']].map(([shop, id]) => {
+  const counts = [[cart, 'cart-nav-count'], [hsCart, 'hs-cart-nav-count'], [cmCart, 'cm-cart-nav-count']].map(([shop, id]) => {
     const count = shop.state.configured ? shop.state.totalQuantity ?? 0 : 0;
     setNavCount($(id), count); return count;
   });
@@ -146,8 +146,8 @@ function renderCartNav() {
 }
 // The displayed quantity comes from the corresponding merchant's cart.
 function cartControls(item) {
-  const [cart, getTarget] = shopCarts[item.source] ?? shopCarts.yuyutei;
-  const target = getTarget(item);
+  const source = item.source ?? 'yuyutei', cart = shopCarts[source];
+  const target = cartTargets[source](item);
   if (!target || !cart.state.configured) { const box = el('div', 'cart-controls'); box.append(el('span', 'muted', '—')); return box; }
   const quantity = cart.quantity(target);
   const soldOut = item.stock_status === 'out_of_stock' || (item.stock_quantity != null && quantity >= item.stock_quantity);
@@ -240,19 +240,6 @@ function cardLink(item, className = '') {
   link.addEventListener('click', confirm);
   link.addEventListener('auxclick', event => {if (event.button === 1) confirm(event);});
   return link;
-}
-function stockBadge(item) {
-  const badge = el('span', `badge ${item.stock_status}`);
-  // The source shows ◯ instead of a count when there are 10 or more in stock.
-  const quantity = item.stock_quantity ?? null;
-  badge.append(icon(stockIcons[item.stock_status]),
-    t(stockKeys[item.stock_status]) + (quantity === null ? '' : ` (${quantity})`));
-  // "In stock" without a count: explain why (a native title, since table cells clip overlays).
-  if (item.stock_status === 'in_stock' && quantity === null) {
-    badge.title = t('stock_count_unknown') + (item.source === 'hobbystation' ? t('stock_count_unknown_hobbystation') : '');
-    badge.classList.add('has-hint');
-  }
-  return badge;
 }
 function favoriteToggle(item) {
   const saved = favorites.find(item), subscribed = saved && subscriptions.find(item);
@@ -432,11 +419,9 @@ $('favorites-retry').addEventListener('click', () => {
 });
 window.addEventListener('hashchange', () => {
   render(); renderFavorites(); renderNotice();
-  // Each visit reads the shop again: the cart may have changed on YuYu-Tei itself.
-  if (location.hash === '#cart' && userId) cart.refresh();
-  const shop = shopCartPage.current();
-  if (shop && userId) { const shopCart = shop === 'hobbystation' ? hsCart : cmCart; if (shopCart.state.configured) shopCart.refresh(); }
-  shopCartPage.render();
+  const shop = cartPage.current();
+  if (shop && userId) shopCarts[shop].refresh();
+  cartPage.render();
 });
 document.addEventListener('inventorychange', () => {render(); renderFavorites();});
 // Round badge with the merchant's site icon; the name is in the tooltip and accessible label.
@@ -539,7 +524,7 @@ $('search-form').addEventListener('submit', async event => {
     onPage: result => {if (current === batch) {
       const found = result.items.map(item => ({...item, source: result.source}));
       items.push(...found);
-      for (const item of found) if (isYuyutei(item)) productDetails.remember(cartTarget(item), item);
+      for (const item of found) rememberProduct(item);
       render();
     }},
     onError: ({game, source}, error) => {if (current === batch) {errors.push({game, source, key: error.translationKey || 'unable_to_search_this_game'}); renderErrors();}}, wait});
@@ -576,7 +561,7 @@ function renderSourceTips() {
 }
 function refreshLanguage() {
   applyLanguage(document); $('language').value = getLanguage(); renderSourceTips();
-  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); shopCartPage.render(); renderNotice(); hobbystationSettings.render(); cardmaxSettings.render();
+  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); renderNotice(); hobbystationSettings.render(); cardmaxSettings.render();
 }
 $('language').addEventListener('change', () => {setLanguage($('language').value); refreshLanguage();});
 $('detail-cancel').addEventListener('click', () => $('detail-dialog').close());
@@ -586,7 +571,7 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); hobbystationSettings.reset(); cardmaxSettings.reset(); hobbystationSettings.render(); cardmaxSettings.render(); hsCart.clear(); cmCart.clear(); cartPage.close(); shopCartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); hobbystationSettings.reset(); cardmaxSettings.reset(); hobbystationSettings.render(); cardmaxSettings.render(); hsCart.clear(); cmCart.clear(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
   userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;

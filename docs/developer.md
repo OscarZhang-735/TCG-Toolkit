@@ -784,7 +784,9 @@ Content-Type: application/json
 
 凭据配置页支持粘贴浏览器 Network 的 Copy as cURL（bash / cmd），点击“保存并验证”。只提取 laravel_session 与 X-CSRF-TOKEN，在浏览器中解析并通过现有账户隔离机制保存至 sessionStorage，不执行命令、不上传原始请求；保存后与 Cookie + CSRF 方式相同，读取一次购物车验证凭据（只提交提取出的两项）。成功后清空粘贴内容；解析失败保留原凭据。退出或切换账户会清空表单。
 
-购物车页在“刷新购物车”左侧提供“获取库存”，列表和网格中的每张卡牌也可单独获取。通过 `/api/yuyutei/product?gid=…&ver=…&cid=…&stock=true&kizu=0` 重新读取详情页隐藏库存字段，不使用编号/稀有度的长期缓存。批量查询按商品和品相去重，最多并发三项；失败可重试，无法识别品相对应库存时显示未知，不视为零库存。库存仅为查询时的快照，不修改购物车数量。
+三个购物车页均可在列表或网格中单张获取库存，也可以点页首的“获取库存”查询当前店铺整车。游游亭通过 `/api/yuyutei/product?gid=…&ver=…&cid=…&stock=true&kizu=…` 读取指定品相的当前库存。Hobby Station 和 Card Max 分别通过 `GET /api/hobbystation/product/stock` 和 `GET /api/cardmax/product/stock` 查询，参数 `product_url` 取自购物车行。这两个只读接口使用本站 Bearer 登录，复用订阅的商品详情查询，无需店铺购物车凭据。批量查询最多并发三项，按商品去重，游游亭区分品相。查询失败可单独重试。库存查询保留购物车原有数量。
+
+Hobby Station 的搜索结果和购物车在有货时统一显示“有货”。悬停可看详情页给出的具体张数或库存标记。Card Max 和游游亭有确切数量时直接展示数量。三家都区分售罄和未知。
 
 
 ## Hobby Station 销售购物车后端
@@ -815,13 +817,13 @@ Content-Type: application/json
 
 WebUI 的搜索结果和收藏夹中，Hobby Station 商品使用与游游亭相同的数量控件。`static/cart/hs-cart.js` 把该接口适配到 `cart.js` 的购物车状态：商品键为 `gid: 'hs'` 加商品 ID，购物车行的 `type` 为 `product_class_id`。加购回复自带核对后的购物车，因此不再重新查询。凭据错误、访问检查等账户级问题以页面提示显示。
 
-侧边栏的“购物车”是可展开菜单，每个来源对应一个页面：`#cart`（游游亭，`cart-page.js`）、`#cart-hobbystation` 和 `#cart-cardmax`。后两者共用 `static/cart/shop-cart-page.js` 和同一个 `#shop-cart-panel`。每次进入页面都会重新读取该店的购物车。页面提供数量调整、移除确认和跳转到该店官网购物车结算的链接。Hobby Station 商品图片通过 `/api/images/hobbystation/…` 转发显示。菜单上的数字为三家购物车数量之和，展开后显示各店数量。竖屏手机上，三个购物车直接列在分组下拉中。
+侧边栏的“购物车”按来源展开为 `#cart`（游游亭）、`#cart-hobbystation` 和 `#cart-cardmax`。三者共用 `static/cart/cart-page.js` 与 `#cart-panel`，进入时重新读取所选店铺的购物车。列表和网格都支持查询库存、调整数量、确认移除和前往对应官网结算。Hobby Station 商品图片通过 `/api/images/hobbystation/…` 转发显示。菜单上的数字为三家购物车数量之和，展开后显示各店数量。竖屏手机上，三个购物车直接列在分组下拉中。
 
 用户中心的“Hobby Station 登录凭据”面板要求同时填写 `eccube` 和 `eccube_bot_check`，并附打码的 DevTools 截图（`static/hs-help-cookies.webp`）。前端 `static/cart/hobbystation-client.js` 把两个值按当前账号存入本标签页的 `sessionStorage`（`tcg.hobbystation.credentials`），切换账号、退出登录或关闭标签页即清除；`static/cart/hs-cart-settings.js` 保存后调用 `/query` 验证，页面重新加载时会再验证一次。
 
 ## Card Max 销售购物车
 
-在用户中心填写 `tempid` 和 `login_id` 的值，再分别填写会员 Cookie 的名称（如 `123_key`）和值。保存并验证后，即可在搜索结果和收藏中使用加减按钮或输入目标数量。凭据保存在当前标签页的 sessionStorage，与本站登录账户绑定。独立购物车页仍展示游游亭。
+在用户中心填写 `tempid` 和 `login_id` 的值，再分别填写会员 Cookie 的名称（如 `123_key`）和值。保存并验证后，即可在搜索结果和收藏中使用加减按钮或输入目标数量，也可在“购物车 → Card Max”查看整车。凭据保存在当前标签页的 sessionStorage，与本站登录账户绑定。
 
 后端直连 `www.cardmax.jp`。所有接口要求本站 Bearer 登录、可信 Origin 和 JSON 请求体。每次请求都提交 `credentials`，其中 `tempid` 和 `login_id` 填 Cookie 值，`member_key` 填完整的 `<会员编号>_key=<值>`。后端仅发送这三项 Cookie，并核对购物车页的会话标识和会员登录状态。
 

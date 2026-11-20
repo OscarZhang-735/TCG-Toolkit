@@ -30,11 +30,23 @@ def normalize_favorite_url(source: SearchSource, game: Game | str, value: str) -
         return normalize_product_url(game, value)
     game = Game(game)
     if source == SearchSource.HOBBYSTATION and game in HOBBY_GAME_DIRS:
-        path = f'/{HOBBY_GAME_DIRS[game]}/product/detail'
-    elif source == SearchSource.CARDMAX and game in CARDMAX_CATEGORIES:
+        return normalize_storefront_url(source, value, hobby_dir=HOBBY_GAME_DIRS[game])
+    if source == SearchSource.CARDMAX and game in CARDMAX_CATEGORIES:
+        return normalize_storefront_url(source, value)
+    raise ValueError(f"{source} does not support {game}.")
+
+
+def normalize_storefront_url(source, value, *, hobby_dir=None):
+    """Cart rows can come from any game the storefront sells."""
+    if favorite_source(value) != source:
+        raise ValueError('Product host does not match source')
+    if source == SearchSource.HOBBYSTATION:
+        directory = re.escape(hobby_dir) if hobby_dir else '[a-z0-9_-]+'
+        path = f'/{directory}/product/detail'
+    elif source == SearchSource.CARDMAX:
         path = '/shopdetail'
     else:
-        raise ValueError(f"{source} does not support {game}.")
+        raise ValueError('Unsupported storefront')
     url = urlsplit(value)
     if (url.scheme != 'https' or url.query or url.fragment
             or not re.fullmatch(rf'{path}/[0-9]{{1,32}}/?', url.path)):

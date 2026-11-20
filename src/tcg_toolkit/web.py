@@ -136,7 +136,7 @@ async def request_proxy_mode(request, call_next):
 async def browser_cache_policy(request, call_next):
     response = await call_next(request)
     if any(request.url.path == path or request.url.path.startswith(path + '/')
-           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/hobbystation/cart', '/api/cardmax/cart',
+           for path in ('/api/auth', '/api/favorites', '/api/cards', '/api/yuyutei', '/api/hobbystation', '/api/cardmax',
                         '/api/subscriptions', '/api/prices',
                         '/api/grading', '/api/graded-cards')):
         response.headers['Cache-Control'] = 'no-store'

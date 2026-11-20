@@ -50,31 +50,28 @@ function resetEmails() {
   registrationEmail.reset(); bindingEmail.reset(); bindError = '';
   for (const id of ['auth-email', 'auth-code', 'bind-email', 'bind-code', 'bind-password']) $(id).value = '';
 }
-const SHOP_CART_HASHES = ['#cart-hobbystation', '#cart-cardmax'];
+const CART_HASHES = ['#cart', '#cart-hobbystation', '#cart-cardmax'];
 function showPage() {
   const cards = Boolean(user) && location.hash === '#cards';
   $('cards-panel').hidden = !cards;
   const graded = Boolean(user) && location.hash === '#graded';
   $('graded-panel').hidden = !graded;
   const favorites = Boolean(user) && location.hash === '#favorites';
-  const cart = Boolean(user) && location.hash === '#cart';
+  const cart = Boolean(user) && CART_HASHES.includes(location.hash);
   $('cart-panel').hidden = !cart;
-  // Hobby Station and Card Max share one cart page; app.js fills it for the current shop.
-  const shopCart = Boolean(user) && SHOP_CART_HASHES.includes(location.hash);
-  $('shop-cart-panel').hidden = !shopCart;
   $('favorites-panel').hidden = !favorites;
   const account = Boolean(user) && location.hash === '#account';
   // Subscriptions may have changed elsewhere; refresh the next-check estimate.
   if (account && $('account-panel').hidden) subscriptionSettingsUI.reload();
   document.body.classList.toggle('signed-out', !user);
   $('auth-panel').hidden = Boolean(user);
-  $('search').hidden = !user || account || favorites || cards || graded || cart || shopCart;
+  $('search').hidden = !user || account || favorites || cards || graded || cart;
   $('account-panel').hidden = !account;
   $('user-bar').hidden = !user;
   $('app-nav').hidden = !user;
   $('app-settings').hidden = !user;
   document.querySelectorAll('#app-nav a, #account-link').forEach(a => {
-    if (a.hash === (cards ? '#cards' : graded ? '#graded' : cart ? '#cart' : shopCart ? location.hash : account ? '#account' : favorites ? '#favorites' : '#search')) a.setAttribute('aria-current', 'page');
+    if (a.hash === (cards ? '#cards' : graded ? '#graded' : cart ? location.hash : account ? '#account' : favorites ? '#favorites' : '#search')) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
   syncNavMenus();
@@ -193,7 +190,7 @@ async function signedIn(value) {
   $('account-status').textContent = '';
   resetNicknameEditor(); renderDisplayName();
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = '';
-  if (!['#account', '#favorites', '#cards', '#graded', '#cart', ...SHOP_CART_HASHES].includes(location.hash)) location.hash = '#search';
+  if (!['#account', '#favorites', '#cards', '#graded', ...CART_HASHES].includes(location.hash)) location.hash = '#search';
   showPage(); refresh();
 }
 $('auth-form').addEventListener('submit', async event => {
