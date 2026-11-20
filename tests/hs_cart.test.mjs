@@ -7,8 +7,10 @@ const asModule = source => `data:text/javascript;base64,${Buffer.from(source).to
 const read = name => readFile(new URL(name, base), 'utf8');
 const noticesModule = asModule(await read('shared/notices.js'));
 const identityModule = asModule(await read('catalog/product-identity.js'));
+const maximizeModule = asModule(await read('cart/maximize-quantity.js'));
 const cartModule = asModule((await read('cart/cart.js'))
-  .replace("'../shared/notices.js'", JSON.stringify(noticesModule)).replace("'../catalog/product-identity.js'", JSON.stringify(identityModule)));
+  .replace("'../shared/notices.js'", JSON.stringify(noticesModule)).replace("'../catalog/product-identity.js'", JSON.stringify(identityModule))
+  .replace("'./maximize-quantity.js'", JSON.stringify(maximizeModule)));
 const {hobbystationTarget, hobbystationCartErrorKey, createHobbystationCart, hobbystationCartRows} = await import(asModule((await read('cart/hs-cart.js'))
   .replace("'./storefront-cart.js'", JSON.stringify(asModule(await read('cart/storefront-cart.js'))))
   .replace("'./cart.js'", JSON.stringify(cartModule))));

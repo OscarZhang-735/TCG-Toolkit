@@ -62,5 +62,5 @@ export function createFilterPanel(placeholder, {onChange, formatPrice, isSubscri
     });
   }
   part('reset').addEventListener('click', reset);
-  return {element: root, apply, reset};
+  return {element: root, apply, reset, chosenSources};
 }

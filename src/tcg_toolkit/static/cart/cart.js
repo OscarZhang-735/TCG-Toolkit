@@ -2,6 +2,7 @@
 // The shop is the source of truth; every change is reported back by the server.
 import {createMessages, messageTier} from '../shared/notices.js';
 import {productKey, GAME_PATHS} from '../catalog/product-identity.js';
+import {maximizeQuantity, unverifiedQuantity} from './maximize-quantity.js';
 
 export function cartErrorKey(error) {
   if (error?.message === 'yuyutei_credentials_missing') return 'cart_need_credentials';
@@ -96,18 +97,20 @@ export function createCart(client, onView = () => {}, newKey = randomKey,
   }
   const rowsFor = target => state.rows.filter(row => productKey(row) === productKey(target));
   const quantity = target => rowsFor(target).reduce((sum, row) => sum + row.quantity, 0);
-  async function operate(target, action) {
+  async function operate(target, action, {loadsCart = false} = {}) {
     const key = productKey(target), current = generation;
-    if (state.busy.has(key)) return;
+    if (state.busy.has(key)) return false;
     state.busy.add(key); messages.remove(key); onChange();
-    let resync = false;
+    let resync = false, succeeded = false;
     try {
       // An action returns true when its local result is incomplete and needs a re-read.
       resync = Boolean(await action());
-      // This reply is newer than any query still in flight.
-      reads++; state.loading = false; state.error = ''; state.notice = '';
+      if (current !== generation) return false;
+      succeeded = true;
+      // load() already supersedes older reads when an action receives a snapshot.
+      if (!loadsCart) { reads++; state.loading = false; state.error = ''; state.notice = ''; }
     } catch (error) {
-      if (current !== generation || error.name === 'AbortError') return;
+      if (current !== generation || error.name === 'AbortError') return false;
       report(key, errorKey(error));
       // The outcome may differ from what we believe: read the real cart again.
       resync = error.status !== 422 && error.message !== missingError;
@@ -115,6 +118,36 @@ export function createCart(client, onView = () => {}, newKey = randomKey,
       if (current === generation) { state.busy.delete(key); onChange(); }
     }
     if (resync && current === generation) await refresh();
+    return succeeded;
+  }
+  // Hold this product's busy flag from the stock lookup through the last probe.
+  async function maximize(target, readStock) {
+    if (!state.configured) return false;
+    const started = generation;
+    function checkSession() {
+      if (started !== generation) throw new DOMException('Stale cart', 'AbortError');
+    }
+    function verifiedQuantity(snapshot) {
+      checkSession();
+      state.notice = '';
+      load(snapshot);
+      if (!snapshot.complete) throw unverifiedQuantity();
+      return quantity(target);
+    }
+    return operate(target, async () => {
+      const entry = await readStock();
+      checkSession();
+      if (entry.status === 'idle') throw new DOMException('Stock lookup cancelled', 'AbortError');
+      const stock = entry.stockStatus === 'out_of_stock' ? 0 : entry.quantity ?? null;
+      await maximizeQuantity(stock, async () => {
+        checkSession();
+        return verifiedQuantity(await client.query());
+      }, async count => {
+        checkSession();
+        const result = await client.add({...target, counter: count}, newKey());
+        return verifiedQuantity(result.cart);
+      }, MAX_ADD);
+    }, {loadsCart: true});
   }
   // `item` is a search result (or cart row) describing a product the cart may not list yet.
   async function addCount(target, item, count) {
@@ -197,7 +230,7 @@ export function createCart(client, onView = () => {}, newKey = randomKey,
     reads++; state.configured = configured(); state.loading = false; state.error = '';
     apply(cart); onChange();
   }
-  return {state, refresh, clear, load, quantity, dismissNotice() { state.notice = ''; onChange(); }, increase, decrease, remove, setTo, range,
+  return {state, refresh, clear, load, quantity, dismissNotice() { state.notice = ''; onChange(); }, increase, decrease, remove, setTo, range, maximize,
     isBusy: target => state.busy.has(productKey(target)),
     // When this card's bubble started; undefined once the bubble is over.
     bubbleStarted: target => messages.started(productKey(target)),

@@ -77,7 +77,27 @@ test('clearing mid-run stops the remaining cards', async () => {
   selection.setActive(true); selection.setAll(['a', 'b', 'c'].map(card), true);
   await selection.moveTo('deck');
   assert.equal(calls.length, 1);
-  assert.deepEqual(selection.state, {active: false, keys: new Set(), running: false, done: 0, total: 0, failed: 0});
+  assert.deepEqual(selection.state, {active: false, keys: new Set(), running: false, action: '', done: 0, total: 0, failed: 0});
+});
+
+test('maximizing runs once on all filtered cards, including unchecked cards, only in selection mode', async () => {
+  const {favorites, subscriptions, records} = models();
+  const selection = createSelection(favorites, subscriptions, () => {});
+  const matches = records.slice(1).map(row => row.item), calls = [];
+  const add = item => { calls.push(item.name); return item.name !== 'b'; };
+  await selection.maximize(matches, add);
+  assert.deepEqual(calls, []);
+  selection.setActive(true);
+  selection.toggle(card('c'));
+  const pending = selection.maximize(matches, add);
+  await selection.maximize(matches, add);
+  await pending;
+  assert.deepEqual(calls, ['b', 'c']);
+  assert.deepEqual([...selection.state.keys], [cardKey(card('c'))]);
+  assert.equal(selection.state.done, 2);
+  assert.equal(selection.state.failed, 1);
+  assert.equal(selection.state.action, 'maximize');
+  assert.equal(selection.state.running, false);
 });
 
 test('bulk subscribe, unsubscribe and refresh keep the selection; refresh is paced', async () => {

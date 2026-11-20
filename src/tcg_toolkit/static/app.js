@@ -352,6 +352,11 @@ function selectBox(item) {
   box.addEventListener('change', () => selection.toggle(item));
   return box;
 }
+const filteredFavorites = (rows = favorites.visible()) => favoriteFilters.apply(rows.map(row => row.item));
+function favoriteCartSource() {
+  const sources = favoriteFilters.chosenSources();
+  return sources.length === 1 && shopCarts[sources[0]].state.configured ? sources[0] : null;
+}
 function renderSelection(matches) {
   const sel = selection.state, count = sel.keys.size, busy = sel.running || favorites.state.running;
   $('favorites-panel').classList.toggle('selecting', sel.active);
@@ -362,8 +367,19 @@ function renderSelection(matches) {
   $('favorites-select-all').checked = count > 0 && count === matches.length;
   $('favorites-select-all').indeterminate = count > 0 && count < matches.length;
   $('favorites-select-all').disabled = busy || !matches.length;
-  $('favorites-selection-count').textContent = sel.running ? t('favorite_bulk_progress', {done: sel.done, total: sel.total})
-    : t('favorite_selected_count', {count}) + (sel.failed ? ' · ' + t('favorite_bulk_failed', {count: sel.failed}) : '');
+  const selectedCount = t('favorite_selected_count', {count});
+  let status = sel.running ? t('favorite_bulk_progress', {done: sel.done, total: sel.total}) : selectedCount;
+  if (sel.action === 'maximize') {
+    status = sel.running ? t('favorite_cart_progress', {done: sel.done, total: sel.total})
+      : selectedCount + ' · ' + t('favorite_cart_result', {done: sel.done - sel.failed, total: sel.total});
+  } else if (!sel.running && sel.failed) {
+    status += ' · ' + t('favorite_bulk_failed', {count: sel.failed});
+  }
+  $('favorites-selection-count').textContent = status;
+  const maximize = $('favorites-bulk-maximize'), source = favoriteCartSource();
+  maximize.disabled = !sel.active || busy || !source || !matches.length;
+  maximize.querySelector('span').textContent = t('favorite_cart_maximize', {count: matches.length});
+  maximize.title = source ? '' : t('favorite_cart_requirements');
   $('favorites-bulk-refresh').disabled = busy || !count;
   // Subscribing needs a verified notification address, same as the per-card bell.
   $('favorites-bulk-subscribe').disabled = busy || !count || !subscriptions.state.ready || !notificationEmail;
@@ -374,7 +390,7 @@ function renderSelection(matches) {
 }
 function renderFavorites() {
   const state = favorites.state, rows = favorites.visible(), group = favoriteGroups.selected();
-  const matches = favoriteFilters.apply(rows.map(row => row.item));
+  const matches = filteredFavorites(rows);
   selection.prune(matches); renderSelection(matches);
   setNavCount($('favorites-nav-count'), state.ready ? state.records.length : 0);
   favoriteGroups.render();
@@ -404,8 +420,15 @@ $('favorites-refresh').addEventListener('click', () => favorites.refreshAll());
 $('favorites-details').addEventListener('click', () => {showDetails = !showDetails; renderFavorites();});
 $('favorites-select').addEventListener('click', () => selection.setActive(!selection.state.active));
 $('favorites-select-all').addEventListener('change', event => {
-  const items = favoriteFilters.apply(favorites.visible().map(row => row.item));
-  selection.setAll(items, event.target.checked);
+  selection.setAll(filteredFavorites(), event.target.checked);
+});
+$('favorites-bulk-maximize').addEventListener('click', () => {
+  const source = favoriteCartSource();
+  if (!source || favorites.state.running) return;
+  selection.maximize(filteredFavorites(), item => {
+    const target = cartTargets[source](item);
+    return target ? shopCarts[source].maximize(target, () => cartStock.fetch(target)) : false;
+  });
 });
 $('favorites-bulk-refresh').addEventListener('click', () => selection.refresh());
 $('favorites-bulk-subscribe').addEventListener('click', () => selection.subscribe());

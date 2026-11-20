@@ -5,8 +5,10 @@ import {readFile} from 'node:fs/promises';
 const noticesModule = 'data:text/javascript;base64,' + Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/shared/notices.js', import.meta.url), 'utf8')).toString('base64');
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const identityModule = asModule(await readFile(new URL('../src/tcg_toolkit/static/catalog/product-identity.js', import.meta.url), 'utf8'));
+const maximizeModule = asModule(await readFile(new URL('../src/tcg_toolkit/static/cart/maximize-quantity.js', import.meta.url), 'utf8'));
 const source = (await readFile(new URL('../src/tcg_toolkit/static/cart/cart.js', import.meta.url), 'utf8'))
-  .replace("'../shared/notices.js'", JSON.stringify(noticesModule)).replace("'../catalog/product-identity.js'", JSON.stringify(identityModule));
+  .replace("'../shared/notices.js'", JSON.stringify(noticesModule)).replace("'../catalog/product-identity.js'", JSON.stringify(identityModule))
+  .replace("'./maximize-quantity.js'", JSON.stringify(maximizeModule));
 const {cartErrorKey, createCart, quantityRange, planQuantity} = await import(asModule(source));
 const {cartTarget} = await import(identityModule);
 const {parseQuantity} = await import(asModule(await readFile(new URL('../src/tcg_toolkit/static/shared/quantity.js', import.meta.url), 'utf8')));
@@ -343,4 +345,159 @@ test('credential problems become one page notice instead of a per-card message',
   await cart.increase(target); assert.equal(cart.state.notice, 'cart_credentials_rejected');
   fail = false; await cart.increase(target);
   assert.equal(cart.state.notice, '');
+});
+
+const freshStock = quantity => async () => ({status: 'done', quantity,
+  stockStatus: quantity === null ? 'unknown' : quantity ? 'in_stock' : 'out_of_stock'});
+
+// Keep the shop's quantity separate from the cart shown in the page.
+function maximumCart({initial, limit, shop = 'yuyutei', clamp = false, genericRejection = false, failure = null}) {
+  const product = shop === 'yuyutei' ? target : shop === 'cardmax'
+    ? {gid: 'cm', ver: '23', cid: '', kizu: 0, product_url: 'https://www.cardmax.jp/shopdetail/23/'}
+    : {gid: 'hs', ver: '23', cid: '', kizu: 0, product_url: 'https://www.hobbystation-single.jp/lo/product/detail/23'};
+  let quantity = initial, nextKey = 0, rejectedSinceRead = false;
+  const requests = [];
+  const snapshot = () => cartOf(quantity ? [row(quantity, 'normal', product)] : []);
+  const client = {
+    hasCredentials: () => true,
+    query: async () => { rejectedSinceRead = false; return snapshot(); },
+    add: async ({counter}, key) => {
+      const before = quantity, desired = before + counter;
+      requests.push({counter, desired, key});
+      assert.ok(Number.isInteger(counter) && counter >= 1 && counter <= 99);
+      assert.ok(requests.length < 30, 'Probing should converge');
+      assert.equal(rejectedSinceRead, false, 'Read back a business rejection before probing again');
+      let detail = failure;
+      if (!detail && desired > limit) {
+        if (clamp) {
+          quantity = limit;
+          detail = {type: shop + '_quantity_mismatch', after_quantity: quantity,
+            outcome: 'unknown', verification: 'mismatch',
+            ...(shop === 'yuyutei' ? {before_quantity: before, requested_quantity: counter} : {expected_quantity: desired})};
+        } else if (genericRejection) {
+          detail = shop === 'yuyutei' ? {type: 'yuyutei_cart_rejected', code: 'ERROR1', requested_quantity: counter,
+            before_quantity: before, after_quantity: null, verification: 'unknown'}
+            : {type: 'hobbystation_cart_rejected', outcome: 'unknown'};
+          rejectedSinceRead = true;
+        } else {
+          detail = {type: shop + '_stock_exceeded', ...(shop === 'hobbystation'
+            ? {reason: 'purchase_limit', outcome: 'unknown'} : {outcome: 'not_sent'})};
+        }
+      }
+      if (detail) throw Object.assign(new Error('cart_request_failed'), {status: 409, detail});
+      quantity = desired;
+      return {status: 'SUCCESS', before_quantity: before, after_quantity: quantity, requested_quantity: counter,
+        observed_delta: counter, verification: 'verified', cart: snapshot()};
+    },
+  };
+  return {cart: createCart(client, () => {}, () => 'key-' + ++nextKey), product, requests, shopQuantity: () => quantity};
+}
+
+test('maximize fills the gap to exact stock across 99-card requests and preserves existing quantities', async () => {
+  const {cart, product, requests, shopQuantity} = maximumCart({initial: 8, limit: 208});
+  await cart.refresh();
+  assert.equal(await cart.maximize(product, freshStock(208)), true);
+  assert.equal(shopQuantity(), 208);
+  assert.equal(cart.quantity(product), 208);
+  assert.deepEqual(requests.map(r => r.counter), [99, 99, 2]);
+  assert.equal(new Set(requests.map(r => r.key)).size, requests.length);
+  for (const stock of [208, 4, 0]) {
+    assert.equal(await cart.maximize(product, freshStock(stock)), true);
+    assert.equal(requests.length, 3);
+    assert.equal(shopQuantity(), 208);
+  }
+});
+
+test('maximize starts unknown stock at a total of ten and searches above or below it', async () => {
+  for (const [shop, limit, stock] of [
+    ['hobbystation', 7, freshStock(null)],
+    ['cardmax', 26, async () => ({status: 'failed'})],
+  ]) {
+    const {cart, product, requests, shopQuantity} = maximumCart({shop, initial: 3, limit});
+    await cart.refresh();
+    assert.equal(await cart.maximize(product, stock), true);
+    assert.equal(requests[0].desired, 10);
+    assert.ok(requests.some(r => r.desired > limit));
+    assert.equal(shopQuantity(), limit);
+    assert.equal(cart.quantity(product), limit);
+  }
+});
+
+test('a sold-out favorite leaves an in-flight cart refresh intact', async () => {
+  let finishRead;
+  const cart = createCart(fakeClient({query: () => new Promise(resolve => { finishRead = resolve; })}));
+  const refresh = cart.refresh();
+  assert.equal(await cart.maximize(target, freshStock(0)), true);
+  finishRead(cartOf([row(3)]));
+  await refresh;
+  assert.equal(cart.quantity(target), 3);
+});
+
+test('maximize narrows exact stock to a lower purchase limit', async () => {
+  const {cart, product, requests, shopQuantity} = maximumCart({shop: 'hobbystation', initial: 1, limit: 13});
+  await cart.refresh();
+  assert.equal(await cart.maximize(product, freshStock(70)), true);
+  assert.equal(requests[0].desired, 70);
+  assert.ok(requests.length <= 9, 'Narrow the rejected interval instead of trying each quantity');
+  assert.equal(shopQuantity(), 13);
+  assert.equal(cart.quantity(product), 13);
+});
+
+test('maximize retains partial additions verified by each shop', async () => {
+  for (const shop of ['yuyutei', 'hobbystation', 'cardmax']) {
+    const {cart, product, requests, shopQuantity} = maximumCart({shop, initial: 2, limit: 6, clamp: true});
+    await cart.refresh();
+    assert.equal(await cart.maximize(product, freshStock(10)), true, shop);
+    assert.equal(requests[0].desired, 10);
+    assert.equal(shopQuantity(), 6);
+    assert.equal(cart.quantity(product), 6);
+  }
+});
+
+test('maximize stops on unknown write outcomes, inconsistent counts and account errors', async () => {
+  for (const failure of [
+    {type: 'yuyutei_timeout', outcome: 'unknown'},
+    {type: 'yuyutei_credentials_rejected'},
+    {type: 'yuyutei_quantity_mismatch', requested_quantity: 37, before_quantity: 3, after_quantity: 5,
+      verification: 'mismatch', outcome: 'unknown'},
+  ]) {
+    const {cart, product, requests} = maximumCart({initial: 3, limit: 6, failure});
+    await cart.refresh();
+    assert.equal(await cart.maximize(product, freshStock(40)), false);
+    assert.equal(requests.length, 1);
+    assert.equal(cart.isBusy(product), false);
+  }
+});
+
+test('maximize probes smaller quantities after a confirmed business rejection and reports persistent rejection', async () => {
+  for (const shop of ['yuyutei', 'hobbystation']) {
+    for (const limit of [0, 4]) {
+      const {cart, product, shopQuantity} = maximumCart({shop, initial: 0, limit, genericRejection: true});
+      await cart.refresh();
+      assert.equal(await cart.maximize(product, freshStock(10)), limit > 0, shop);
+      assert.equal(shopQuantity(), limit);
+      assert.equal(cart.quantity(product), limit);
+    }
+  }
+});
+
+test('maximize drops a previous account’s add reply and stops further probes', async () => {
+  let started, respond;
+  const writing = new Promise(resolve => { started = resolve; });
+  let writes = 0;
+  const cart = createCart(fakeClient({query: async () => cartOf([]), add: () => {
+    writes++;
+    started();
+    return new Promise(resolve => { respond = resolve; });
+  }}), () => {}, () => 'key');
+  await cart.refresh();
+  const pending = cart.maximize(target, freshStock(null));
+  await writing;
+  cart.clear();
+  respond({before_quantity: 0, after_quantity: 10, requested_quantity: 10, verification: 'verified',
+    observed_delta: 10, cart: cartOf([row(10)])});
+  assert.equal(await pending, false);
+  assert.equal(writes, 1);
+  assert.equal(cart.quantity(target), 0);
+  assert.equal(cart.state.configured, false);
 });

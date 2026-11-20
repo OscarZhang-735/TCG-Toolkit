@@ -1,19 +1,19 @@
 import {cardKey} from './favorites.js';
 
-// Multi-select on the favorites page. Bulk actions run one card at a time through the same
-// favorites / subscriptions models, so per-card busy state and error notes still apply.
+// Bulk actions run one card at a time through the same models as the card controls.
 export function createSelection(favorites, subscriptions, onChange, pause = () => new Promise(resolve => setTimeout(resolve, 1000))) {
   let generation = 0;
-  const state = {active: false, keys: new Set(), running: false, done: 0, total: 0, failed: 0};
+  const initial = () => ({active: false, keys: new Set(), running: false, action: '', done: 0, total: 0, failed: 0});
+  const state = initial();
   const selected = () => favorites.state.records.filter(row => state.keys.has(cardKey(row.item)));
   function clear() {
     generation++;
-    Object.assign(state, {active: false, keys: new Set(), running: false, done: 0, total: 0, failed: 0});
+    Object.assign(state, initial());
     onChange();
   }
   function setActive(active) {
     if (state.running) return;
-    Object.assign(state, {active, keys: new Set(), failed: 0}); onChange();
+    Object.assign(state, {active, keys: new Set(), action: '', failed: 0}); onChange();
   }
   function toggle(item) {
     if (!state.active || state.running) return;
@@ -35,30 +35,32 @@ export function createSelection(favorites, subscriptions, onChange, pause = () =
   // Failed cards stay selected so the same action can be retried.
   // Moves and removals deselect finished cards; with keep (subscribe, refresh) the whole
   // selection stays so another action can follow. gap spaces out calls to the card source.
-  async function run(operation, {keep = false, gap = false} = {}) {
-    const rows = selected(), current = generation;
-    if (state.running || !rows.length) return;
-    Object.assign(state, {running: true, done: 0, total: rows.length, failed: 0}); onChange();
-    for (const [index, row] of rows.entries()) {
+  async function run(operation, {keep = false, gap = false, items = selected().map(row => row.item), action = ''} = {}) {
+    const current = generation;
+    if (!state.active || state.running || !items.length) return;
+    Object.assign(state, {running: true, action, done: 0, total: items.length, failed: 0}); onChange();
+    for (const [index, item] of items.entries()) {
       if (gap && index) { await pause(); if (current !== generation) return; }
-      const ok = await operation(row);
+      const ok = await operation(item);
       if (current !== generation) return;
-      if (!ok) state.failed++; else if (!keep) state.keys.delete(cardKey(row.item));
+      if (!ok) state.failed++; else if (!keep) state.keys.delete(cardKey(item));
       state.done++; onChange();
     }
     state.running = false; onChange();
   }
-  const moveTo = groupId => run(async row => !await favorites.move(row.item, groupId));
-  const subscribe = () => run(row => subscriptions.add(row.item), {keep: true});
-  const unsubscribe = () => run(row => subscriptions.remove(row.item), {keep: true});
+  const moveTo = groupId => run(async item => !await favorites.move(item, groupId));
+  const subscribe = () => run(item => subscriptions.add(item), {keep: true});
+  const unsubscribe = () => run(item => subscriptions.remove(item), {keep: true});
   // Refresh queries the source for each card, so it keeps the same pace as "Refresh all".
-  const refresh = () => run(async row => {
-    await favorites.refresh(row.item);
-    return favorites.state.messages.get(cardKey(row.item)) === 'favorite_updated';
+  const refresh = () => run(async item => {
+    await favorites.refresh(item);
+    return favorites.state.messages.get(cardKey(item)) === 'favorite_updated';
   }, {keep: true, gap: true});
-  const remove = () => run(async row => {
-    await favorites.toggle(row.item);
-    return !favorites.find(row.item);
+  const remove = () => run(async item => {
+    await favorites.toggle(item);
+    return !favorites.find(item);
   });
-  return {state, selected, clear, setActive, toggle, setAll, prune, moveTo, remove, subscribe, unsubscribe, refresh};
+  // This action targets the current filtered list, including unchecked cards.
+  const maximize = (matches, add) => run(add, {items: matches, keep: true, action: 'maximize'});
+  return {state, selected, clear, setActive, toggle, setAll, prune, moveTo, remove, subscribe, unsubscribe, refresh, maximize};
 }

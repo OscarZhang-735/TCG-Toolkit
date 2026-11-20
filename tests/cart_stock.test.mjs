@@ -19,8 +19,10 @@ test('fetch is explicit, refreshes cached results, and distinguishes zero and un
   });
   assert.equal(stock.get(target('1')).status, 'idle'); assert.equal(urls.length, 0);
   for (const [value, status] of [[25, 'in_stock'], [0, 'out_of_stock'], [null, 'unknown']]) {
-    quantity = value; stock.fetch(target('1')); await settle();
-    assert.deepEqual(stock.get(target('1')), {status: 'done', quantity: value, stockStatus: status});
+    quantity = value;
+    const result = await stock.fetch(target('1'));
+    assert.deepEqual(result, {status: 'done', quantity: value, stockStatus: status});
+    assert.deepEqual(stock.get(target('1')), result);
   }
   assert.equal(urls.length, 3); assert.match(urls[0], /kizu=0&stock=true/);
 });
@@ -37,10 +39,10 @@ test('storefronts use the exact product URL, share duplicate displays, and prese
       : {stock_status: 'in_stock', stock_quantity: null, stock_text: '在庫数：◯', game: 'ws', card_number: 'WS-W125-070S'});
   });
   stock.fetchAll([hs, {...hs, product_url: hs.product_url + '/'}, cm]);
-  stock.fetch(hs);
-  await settle();
+  const result = await stock.fetch(hs);
   const hsEntry = {status: 'done', stockStatus: 'in_stock', quantity: null, stockText: '在庫数：◯',
     game: 'ws', card_number: 'WS-W125-070S'};
+  assert.deepEqual(result, hsEntry);
   assert.deepEqual(stock.get(hs), hsEntry);
   assert.deepEqual(stock.get(cm), {status: 'done', stockStatus: 'in_stock', quantity: 5, rarity: 'PR'});
   assert.equal(requests.length, 2);
@@ -64,16 +66,22 @@ test('batch deduplicates products, respects conditions and bounds concurrency', 
   await settle(); assert.equal(count, 6); assert.equal(peak, 3);
 });
 test('failed rows retry independently and stale account replies are discarded', async () => {
-  const stock = createCartStock(); let fail = true;
+  const stock = createCartStock(undefined, 1); let fail = true;
   stock.activate(async () => fail ? new Response('{}', {status: 502}) : new Response('{"stock_quantity":2}'));
-  stock.fetch(target('1')); await settle(); assert.equal(stock.get(target('1')).status, 'failed');
-  fail = false; stock.fetch(target('1')); await settle(); assert.equal(stock.get(target('1')).quantity, 2);
-  let resolve;
-  stock.activate(() => new Promise(r => {resolve = r;})); stock.fetch(target('1'));
+  assert.equal((await stock.fetch(target('1'))).status, 'failed');
+  fail = false; assert.equal((await stock.fetch(target('1'))).quantity, 2);
+  let resolve, started;
+  const pending = new Promise(r => {started = r;});
+  stock.activate(() => new Promise(r => {resolve = r; started();}));
+  const active = stock.fetch(target('1')), queued = stock.fetch(target('2'));
+  await pending;
   stock.activate(async () => new Response('{"stock_quantity":7}'));
-  resolve(new Response('{"stock_quantity":99}')); await settle();
-  assert.equal(stock.get(target('1')).status, 'idle');
-  stock.fetch(target('1')); await settle(); assert.equal(stock.get(target('1')).quantity, 7);
+  for (const result of await Promise.all([active, queued])) assert.equal(result.status, 'idle');
+  const fresh = stock.fetch(target('1'));
+  resolve(new Response('{"stock_quantity":99}'));
+  assert.equal((await fresh).quantity, 7);
+  assert.equal(stock.get(target('1')).quantity, 7);
+  assert.equal(stock.get(target('2')).status, 'idle');
 });
 
 import {readFile as read} from 'node:fs/promises';

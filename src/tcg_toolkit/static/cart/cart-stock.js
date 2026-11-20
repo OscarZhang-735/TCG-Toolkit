@@ -9,9 +9,10 @@ function stockKey(target) {
 // Explicit fresh product-page queries, deduplicated by product and condition.
 export function createCartStock(onChange = () => {}, concurrency = 3) {
   let request = null, generation = 0, active = 0;
-  const entries = new Map(), queue = [];
+  const entries = new Map(), queue = [], waiting = new Map();
   function get(target) { return entries.get(stockKey(target)) ?? {status: 'idle'}; }
   async function load(target, current, send) {
+    const key = stockKey(target);
     try {
       const response = await send(cartProductUrl(target, true), {cache: 'no-store'});
       if (!response.ok) throw new Error('stock_failed');
@@ -25,11 +26,13 @@ export function createCartStock(onChange = () => {}, concurrency = 3) {
           if (data[field]) entry[field] = data[field];
         }
       }
-      entries.set(stockKey(target), entry);
+      entries.set(key, entry);
     } catch {
       if (current !== generation) return;
-      entries.set(stockKey(target), {status: 'failed'});
+      entries.set(key, {status: 'failed'});
     }
+    waiting.get(key)?.resolve(entries.get(key));
+    waiting.delete(key);
     onChange();
   }
   function pump() {
@@ -50,7 +53,21 @@ export function createCartStock(onChange = () => {}, concurrency = 3) {
     }
     onChange(); pump();
   }
-  function clear() { generation++; request = null; entries.clear(); queue.length = 0; }
-  return {get, fetch: target => fetchAll([target]), fetchAll, clear,
+  function fetch(target) {
+    if (!request) return Promise.resolve({status: 'idle'});
+    const key = stockKey(target);
+    if (waiting.has(key)) return waiting.get(key).promise;
+    const read = {};
+    read.promise = new Promise(resolve => { read.resolve = resolve; });
+    waiting.set(key, read);
+    fetchAll([target]);
+    return read.promise;
+  }
+  function clear() {
+    generation++; request = null; entries.clear(); queue.length = 0;
+    for (const read of waiting.values()) read.resolve({status: 'idle'});
+    waiting.clear();
+  }
+  return {get, fetch, fetchAll, clear,
     activate(send) { clear(); request = send; }};
 }

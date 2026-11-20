@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from test_yuyutei_cart import client, upstream
+from test_favorites import card, group
 
 
 @pytest.mark.skipif(os.getenv('TCG_BROWSER_TEST') != '1', reason='Set TCG_BROWSER_TEST=1 for Chromium acceptance.')
@@ -64,8 +65,11 @@ def test_stock_and_quantity_controls_on_all_cart_routes(client):
             if url.path.endswith('/cart') and req.method == 'POST':
                 body = req.post_data_json
                 adds.append((shop, body.get('product_url')))
-                rows[shop][0]['quantity'] += body['counter']
-                return route.fulfill(json={'after_quantity': rows[shop][0]['quantity'], 'cart': cart(shop)})
+                row = next(row for row in rows[shop] if row['product_url'] == body['product_url'])
+                before = row['quantity']
+                row['quantity'] += body['counter']
+                return route.fulfill(json={'before_quantity': before, 'after_quantity': row['quantity'],
+                                           'verification': 'verified', 'cart': cart(shop)})
             if url.path.endswith('/product'):
                 return route.fulfill(json={'card_number': 'TEST-' + url.params['cid'], 'rarity': 'R'})
         if url.path == '/api/currency/convert':
@@ -159,5 +163,36 @@ def test_stock_and_quantity_controls_on_all_cart_routes(client):
         unavailable.clear()
         page.locator('#cart-page-refresh').click()
         expect(page.locator('#cart-kinds')).to_have_text('2')
+        # Every filtered favorite in the current group is included, even with no card checkboxes checked.
+        group_id = group(client, 'Deck')['id']
+        for number, name, group_for_card in [('401', 'Want A', group_id), ('402', 'Want B', group_id),
+                                             ('403', 'Spare', group_id), ('404', 'Want C', None)]:
+            saved = client.post('/api/favorites', json={**card().to_dict(), 'game': 'ws', 'name': name,
+                                'group_id': group_for_card, 'product_url': f'https://www.cardmax.jp/shopdetail/{number}'})
+            assert saved.status_code == 200
+        page.goto('https://testserver/?batch#favorites')
+        maximize = page.locator('#favorites-bulk-maximize')
+        expect(maximize).to_be_hidden()
+        page.locator('#favorite-groups button[title="Deck"]').click()
+        page.locator('#favorites-select').click()
+        expect(maximize).to_be_disabled()  # All source chips are checked, even though every card here is Card Max.
+        for shop in ('yuyutei', 'hobbystation'):
+            page.locator(f'#favorites-panel label:has(input[data-role=source][value={shop}])').click()
+        text_filter = page.locator('#favorites-panel input[data-role=text]')
+        text_filter.fill('no match')
+        expect(maximize).to_be_disabled()
+        text_filter.fill('Want')
+        expect(maximize).to_be_enabled()
+        expect(maximize).to_contain_text('(2)')
+        before = len(adds)
+        maximize.click()
+        expect(page.locator('#favorites-selection-count')).to_have_text('0 selected · Last run filled 2 of 2 cards to the limit')
+        assert sorted(adds[before:]) == [('cardmax', row['product_url']) for row in rows['cardmax']]
+        assert [row['quantity'] for row in rows['cardmax']] == [5, 5]
+        page.evaluate("location.hash = '#account'")
+        page.locator('#cm-cart-toggle').click()
+        page.locator('#cm-cart-clear').click()
+        page.evaluate("location.hash = '#favorites'")
+        expect(maximize).to_be_disabled()
         assert not errors
         browser.close()
