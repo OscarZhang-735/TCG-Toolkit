@@ -9,6 +9,9 @@ from html import escape
 import os
 from urllib.parse import urlsplit
 
+from ..catalog.identity import favorite_source
+from ..catalog.models import SearchSource
+
 FONT = "-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',Arial,sans-serif"
 TEXT, MUTED, BORDER, SURFACE = '#2b2b2b', '#757575', '#e6e6e6', '#fafafa'
 BETTER, WORSE = '#15803d', '#b45309'
@@ -93,36 +96,57 @@ def stock_label(item):
     return '有货 In stock' if item['stock_status'] == 'in_stock' else '缺货 Out of stock'
 
 
-def digest_html(run_date, changes):
-    zh_title, en_title = digest_titles(len(changes))
-    checked = datetime.fromtimestamp(max(change['checked_at'] for change in changes)).astimezone().strftime('%Y-%m-%d %H:%M')
-    cards = []
-    for index, change in enumerate(changes):
-        before, after = change['before'], change['after']
-        rarity = after.get('rarity')
-        badge = (f'<span style="display:inline-block;margin-right:6px;padding:0 6px;border:1px solid {BORDER};border-radius:4px;'
-                 f'background:{SURFACE};font-size:11px;font-weight:bold;line-height:18px;color:{TEXT}">{escape(rarity)}</span>') if rarity else ''
-        old_stock, new_stock = before['stock_quantity'], after['stock_quantity']
-        improved = None
-        if old_stock is not None and new_stock is not None:
-            improved = new_stock > old_stock
-        elif before['stock_status'] != after['stock_status']:
-            improved = after['stock_status'] == 'in_stock'
-        merchant = {'www.hobbystation-single.jp': '在 Hobby Station 查看 View on Hobby Station',
-                    'www.cardmax.jp': '在 Card Max 查看 View on Card Max'}.get(
-                        urlsplit(after['product_url']).hostname, '在游游亭查看 View on YuYu-Tei')
-        rows = (_change_row('价格 Price', f"{before['price']:,} JPY", f"{after['price']:,} JPY", after['price'] < before['price'])
-                + _change_row('库存 Stock', stock_label(before), stock_label(after), improved))
-        divider = f'border-top:1px solid {BORDER};' if index else ''
-        cards.append(f'''<tr><td style="{divider}padding:16px 0">
+DIGEST_SHOPS = {
+    SearchSource.YUYUTEI: ('游游亭 · YuYu-Tei', '在游游亭查看 View on YuYu-Tei'),
+    SearchSource.HOBBYSTATION: ('Hobby Station', '在 Hobby Station 查看 View on Hobby Station'),
+    SearchSource.CARDMAX: ('Card Max', '在 Card Max 查看 View on Card Max'),
+}
+
+
+def digest_sections(changes):
+    groups = {source: [] for source in DIGEST_SHOPS}
+    for change in changes:
+        groups[favorite_source(change['after']['product_url'])].append(change)
+    for source, items in groups.items():
+        if items:
+            name, link_text = DIGEST_SHOPS[source]
+            yield f'{name} ({len(items)})', link_text, items
+
+
+def _digest_card(change, link_text, divider):
+    before, after = change['before'], change['after']
+    rarity = after.get('rarity')
+    badge = (f'<span style="display:inline-block;margin-right:6px;padding:0 6px;border:1px solid {BORDER};border-radius:4px;'
+             f'background:{SURFACE};font-size:11px;font-weight:bold;line-height:18px;color:{TEXT}">{escape(rarity)}</span>') if rarity else ''
+    old_stock, new_stock = before['stock_quantity'], after['stock_quantity']
+    improved = None
+    if old_stock is not None and new_stock is not None:
+        improved = new_stock > old_stock
+    elif before['stock_status'] != after['stock_status']:
+        improved = after['stock_status'] == 'in_stock'
+    rows = (_change_row('价格 Price', f"{before['price']:,} JPY", f"{after['price']:,} JPY", after['price'] < before['price'])
+            + _change_row('库存 Stock', stock_label(before), stock_label(after), improved))
+    border = f'border-top:1px solid {BORDER};' if divider else ''
+    return f'''<tr><td style="{border}padding:16px 0">
 <a href="{escape(after['product_url'], quote=True)}" style="font-size:15px;font-weight:bold;line-height:1.5;color:{TEXT};text-decoration:none;overflow-wrap:anywhere">{escape(after['name'])}</a>
 <div style="margin:4px 0 8px;font-size:12px;line-height:20px;color:{MUTED}">{badge}{escape(after['card_number'])}</div>
 <table role="presentation" cellspacing="0" cellpadding="0">{rows}</table>
-<a href="{escape(after['product_url'], quote=True)}" style="display:inline-block;margin-top:8px;font-size:13px;color:{TEXT};text-decoration:underline">{merchant}</a>
-</td></tr>''')
+<a href="{escape(after['product_url'], quote=True)}" style="display:inline-block;margin-top:8px;font-size:13px;color:{TEXT};text-decoration:underline">{link_text}</a>
+</td></tr>'''
+
+
+def digest_html(run_date, changes):
+    zh_title, en_title = digest_titles(len(changes))
+    checked = datetime.fromtimestamp(max(change['checked_at'] for change in changes)).astimezone().strftime('%Y-%m-%d %H:%M')
+    sections = []
+    for heading, link_text, items in digest_sections(changes):
+        cards = ''.join(_digest_card(change, link_text, divider=index > 0) for index, change in enumerate(items))
+        sections.append(f'<h2 style="margin:20px 0 0;padding:8px 12px;background:{SURFACE};'
+                        f'border-left:3px solid {TEXT};font-size:16px;line-height:1.5">{heading}</h2>'
+                        f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0">{cards}</table>')
     content = f'''<h1 style="margin:0;font-size:20px;line-height:1.4">{zh_title}</h1>{_en(en_title, 14)}
 <p style="margin:12px 0 8px;font-size:14px;line-height:1.7;color:{MUTED}">检查时间 Checked at：{escape(checked)}</p>
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0">{''.join(cards)}</table>'''
+{''.join(sections)}'''
     footer = ('按你设置的查询间隔检查订阅卡牌，仅在价格或库存变化时发送。<br>'
               'Subscribed cards are checked at your chosen interval; emails are sent only when price or stock changes.<br>'
               f'<a href="{escape(favorites_url(), quote=True)}" style="color:{TEXT};font-weight:bold;text-decoration:underline">'

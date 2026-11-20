@@ -2,7 +2,7 @@
 from datetime import datetime
 from email.message import EmailMessage
 
-from ..mail.templates import digest_html, digest_subject, digest_titles, favorites_url, stock_label
+from ..mail.templates import digest_html, digest_sections, digest_subject, digest_titles, favorites_url, stock_label
 
 
 def digest_message(recipient, email_id, run_date, changes):
@@ -13,14 +13,16 @@ def digest_message(recipient, email_id, run_date, changes):
     # Bilingual like the HTML part: Chinese first, then English, line by line.
     zh_title, en_title = digest_titles(len(changes))
     text = [f'{run_date} {zh_title}', f'{run_date} {en_title}', '']
-    for change in changes:
-        before, after = change['before'], change['after']
-        title = ' · '.join(filter(None, [after['name'], after.get('rarity'), after['card_number']]))
-        price = f"价格 Price：{before['price']:,} → {after['price']:,} JPY"
-        quantity = f"库存 Stock：{stock_label(before)} → {stock_label(after)}"
-        checked = '检查时间 Checked at：' + datetime.fromtimestamp(change['checked_at']).astimezone().isoformat(timespec='seconds')
-        url = after['product_url']
-        text.extend([title, price, quantity, checked, url, ''])
+    for heading, _, items in digest_sections(changes):
+        text.extend([heading, ''])
+        for change in items:
+            before, after = change['before'], change['after']
+            title = ' · '.join(filter(None, [after['name'], after.get('rarity'), after['card_number']]))
+            price = f"价格 Price：{before['price']:,} → {after['price']:,} JPY"
+            quantity = f"库存 Stock：{stock_label(before)} → {stock_label(after)}"
+            checked = '检查时间 Checked at：' + datetime.fromtimestamp(change['checked_at']).astimezone().isoformat(timespec='seconds')
+            url = after['product_url']
+            text.extend([title, price, quantity, checked, url, ''])
     text.append(f'前往 TCG Toolkit 查看 · Open TCG Toolkit：{favorites_url()}')
     message.set_content('\n'.join(text))
     message.add_alternative(digest_html(run_date, changes), subtype='html')

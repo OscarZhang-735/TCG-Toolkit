@@ -1,9 +1,11 @@
 from datetime import date, datetime
 
 import pytest
+from bs4 import BeautifulSoup
 
 from tcg_toolkit.mail.templates import (BETTER, VERIFICATION_SUBJECT, WORSE, digest_html, favorites_url,
                                          verification_html, verification_text)
+from tcg_toolkit.subscriptions.messages import digest_message
 
 
 def card(**values):
@@ -51,6 +53,28 @@ def test_digest_shows_unchanged_value_without_arrow():
     item = card(stock_quantity=5, stock_status='in_stock')
     html = digest_html(date(2026, 11, 1), [dict(before=item, after={**item, 'price': 100}, checked_at=1_800_000_000)])
     assert '>5</span></td>' in html and '>5</span><span' not in html
+    assert [h.text for h in BeautifulSoup(html, 'html.parser').select('h2')] == ['游游亭 · YuYu-Tei (1)']
+
+
+def test_digest_groups_mixed_sources_in_both_parts():
+    changes = []
+    for name, url in [('HS first', 'https://www.hobbystation-single.jp/ws/product/detail/1'),
+                      ('CM card', 'https://www.cardmax.jp/shopdetail/2'),
+                      ('YYT card', 'https://yuyu-tei.jp/sell/ws/card/set/3'),
+                      ('HS second', 'https://www.hobbystation-single.jp/ws/product/detail/4')]:
+        before = card(name=name, product_url=url)
+        changes.append(dict(before=before, after={**before, 'price': 300}, checked_at=1_800_000_000))
+    message = digest_message('reader@example.com', 'test', date(2026, 11, 1), changes)
+    expected = [('游游亭 · YuYu-Tei (1)', ['YYT card']), ('Hobby Station (2)', ['HS first', 'HS second']),
+                ('Card Max (1)', ['CM card'])]
+    html = BeautifulSoup(message.get_body(preferencelist=('html',)).get_content(), 'html.parser')
+    groups = [(h.text, [row.find('a').text for row in h.find_next_sibling('table').find_all('tr', recursive=False)])
+              for h in html.select('h2')]
+    assert groups == expected
+    text = message.get_body(preferencelist=('plain',)).get_content()
+    labels = [label for heading, names in expected for label in [heading, *names]]
+    assert all(text.count(label) == 1 for label in labels)
+    assert [text.index(label) for label in labels] == sorted(text.index(label) for label in labels)
 
 
 def test_digest_omits_badge_without_rarity():
