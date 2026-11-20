@@ -24,9 +24,10 @@ export function createCartPage({carts, stock, details, amountDisplay, gameLabel,
       return row.card_number ? row : details.get(target);
     }
     const entry = stock.get(target), fetched = entry.status === 'done' ? entry : entry.last;
-    const known = details.peek(target) ?? {};
     const pathGame = row.gid === 'hs' && row.product_url?.match(/\.jp\/([^/]+)\/product\//)?.[1];
-    return {card_number: fetched?.card_number ?? known.card_number ?? row.card_number,
+    const known = fetched?.card_number || !row.product_url || (row.card_number && row.rarity && (row.game || pathGame))
+      ? details.peek(target) ?? {} : details.get(target);
+    return {status: known.status, card_number: fetched?.card_number ?? known.card_number ?? row.card_number,
       rarity: fetched?.rarity ?? known.rarity ?? row.rarity, game: fetched?.game ?? known.game ?? (row.game || pathGame)};
   }
   function item(row) {
@@ -135,7 +136,7 @@ export function createCartPage({carts, stock, details, amountDisplay, gameLabel,
     const has = rows.length > 0;
     const shopLabel = {shop: t(shop.label)};
     $('cart-page-title').textContent = t('shop_cart_title', shopLabel);
-    $('cart-stats').hidden = !state.configured || (!has && !state.complete);
+    $('cart-stats').hidden = !state.configured || (!has && (state.totalQuantity == null || !state.complete));
     const checkout = cardLink({name: t('shop_cart_title', shopLabel), product_url: shop.cartUrl}, 'cart-checkout');
     const logo = document.createElement('img');
     logo.src = shop.icon; logo.alt = ''; logo.className = 'cart-checkout-logo'; logo.setAttribute('aria-hidden', 'true');
@@ -168,7 +169,7 @@ export function createCartPage({carts, stock, details, amountDisplay, gameLabel,
   function close() { pendingRemove = null; $('cart-remove-dialog').close(); }
   $('cart-get-stock').addEventListener('click', () => stock.fetchAll(cart.state.rows.map(targetOf)));
   $('cart-page-refresh').addEventListener('click', () => {
-    if (shop.source === 'yuyutei') details.retryFailed();
+    details.retryFailed();
     cart.refresh();
   });
   $('cart-remove-cancel').addEventListener('click', close);

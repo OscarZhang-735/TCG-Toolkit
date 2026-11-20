@@ -1,15 +1,9 @@
-import {productKey} from '../catalog/product-identity.js';
+import {cartProductUrl, productKey} from '../catalog/product-identity.js';
 
 const storefront = {hs: 'hobbystation', cm: 'cardmax'};
 
 function stockKey(target) {
   return storefront[target.gid] ? target.product_url.replace(/\/$/, '') : productKey(target);
-}
-
-function stockUrl({gid, ver, cid, kizu, product_url}) {
-  const source = storefront[gid];
-  if (source) return `/api/${source}/product/stock?${new URLSearchParams({product_url})}`;
-  return `/api/yuyutei/product?${new URLSearchParams({gid, ver, cid, kizu, stock: 'true'})}`;
 }
 
 // Explicit fresh product-page queries, deduplicated by product and condition.
@@ -19,7 +13,7 @@ export function createCartStock(onChange = () => {}, concurrency = 3) {
   function get(target) { return entries.get(stockKey(target)) ?? {status: 'idle'}; }
   async function load(target, current, send) {
     try {
-      const response = await send(stockUrl(target), {cache: 'no-store'});
+      const response = await send(cartProductUrl(target, true), {cache: 'no-store'});
       if (!response.ok) throw new Error('stock_failed');
       const data = await response.json();
       if (current !== generation) return;

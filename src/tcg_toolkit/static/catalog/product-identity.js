@@ -1,4 +1,11 @@
 const GAME_IDS = {ws: 7, chaos: 8, pm: 11, lycee: 34, sev: 47, wsr: 56};
+export function cartProductUrl({gid, ver, cid, kizu, product_url}, stock = false) {
+  if (gid === 'hs' || gid === 'cm') {
+    const source = gid === 'hs' ? 'hobbystation' : 'cardmax';
+    return `/api/${source}/product/stock?${new URLSearchParams({product_url})}`;
+  }
+  return `/api/yuyutei/product?${new URLSearchParams({gid, ver, cid, ...(stock ? {kizu, stock: 'true'} : {})})}`;
+}
 export const GAME_PATHS = {ws: 'ws', chaos: 'chaos', pm: 'pm', lycee: 'lo', sev: 'sev', wsr: 'wsr'};
 
 // Search offers carry cart fields, while product snapshots identify the normal

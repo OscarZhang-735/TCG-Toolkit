@@ -782,6 +782,8 @@ Content-Type: application/json
 
 三个购物车页均可在列表或网格中单张获取库存，也可以点页首的“获取库存”查询当前店铺整车。游游亭通过 `/api/yuyutei/product?gid=…&ver=…&cid=…&stock=true&kizu=…` 读取指定品相的当前库存。Hobby Station 和 Card Max 分别通过 `GET /api/hobbystation/product/stock` 和 `GET /api/cardmax/product/stock` 查询，参数 `product_url` 取自购物车行。这两个只读接口使用本站 Bearer 登录，复用订阅的商品详情查询，无需店铺购物车凭据。批量查询最多并发三项，按商品去重，游游亭区分品相。查询失败可单独重试。库存查询保留购物车原有数量。
 
+首次打开购物车时，页面优先使用已有的商品信息。Hobby Station 和 Card Max 缺少卡号、稀有度或游戏时，会从各自的商品详情补全。搜索页按勾选的店铺分别显示购物车数量和小计，每个摘要可以打开或刷新对应的购物车。
+
 Hobby Station 的搜索结果和购物车在有货时统一显示“有货”。悬停可看详情页给出的具体张数或库存标记。Card Max 和游游亭有确切数量时直接展示数量。三家都区分售罄和未知。
 
 

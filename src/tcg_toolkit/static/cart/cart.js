@@ -79,13 +79,18 @@ export function createCart(client, onView = () => {}, newKey = randomKey,
   async function refresh() {
     const current = generation, read = ++reads;
     state.configured = configured(); state.error = '';
-    if (!state.configured) { state.rows = []; state.totalQuantity = state.subtotal = null; onChange(); return; }
+    if (!state.configured) { state.loading = false; state.rows = []; state.totalQuantity = state.subtotal = null; onChange(); return; }
     state.loading = true; onChange();
     try {
       const cart = await client.query();
       if (current === generation && read === reads) apply(cart);
     } catch (error) {
-      if (current === generation && read === reads && error.name !== 'AbortError') state.error = errorKey(error);
+      if (current === generation && read === reads) {
+        state.loading = false;
+        if (error.name !== 'AbortError') state.error = errorKey(error);
+        onChange();
+      }
+      return error;
     }
     if (current === generation && read === reads) { state.loading = false; onChange(); }
   }

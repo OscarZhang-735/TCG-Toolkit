@@ -1,6 +1,6 @@
 import {t, getLanguage} from '../i18n.js';
 
-export function bindStorefrontSettings(client, {prefix, keys, fields, errorKey, prepareCredentials = values => values}, {onCart = () => {}} = {}) {
+export function bindStorefrontSettings(client, {prefix, keys, fields, errorKey, prepareCredentials = values => values}, cart) {
   const node = id => document.getElementById(prefix + '-cart-' + id);
   // expanded: null follows the state (open until verified); true/false is the user's choice.
   let statusKey = '', parameters = {}, verifying = false, verified = false, rejected = false, expanded = null, run = 0;
@@ -33,16 +33,15 @@ export function bindStorefrontSettings(client, {prefix, keys, fields, errorKey, 
     verifying = true; verified = false; rejected = false; statusKey = keys.verifying; parameters = {};
     render();
     try {
-      const cart = await client.query();
+      const error = await cart.refresh();
       if (current !== run) return;
+      if (error) throw error;
       verified = true; expanded = null; statusKey = keys.verified;
-      onCart(cart);
-      parameters = {quantity: (cart.total_quantity ?? 0).toLocaleString(getLanguage())};
+      parameters = {quantity: (cart.state.totalQuantity ?? 0).toLocaleString(getLanguage())};
     } catch (error) {
       if (current !== run || error?.name === 'AbortError') return;
       statusKey = errorKey(error); expanded = true;
       rejected = statusKey === keys.rejected;
-      onCart(null);
     } finally {
       if (current === run) { verifying = false; render(); }
     }
@@ -58,12 +57,13 @@ export function bindStorefrontSettings(client, {prefix, keys, fields, errorKey, 
       render(); return;
     }
     for (const [id] of fields) node(id).value = '';
+    cart.clear({syncCredentials: true});
     verify();
   });
   node('toggle').addEventListener('click', () => { expanded = node('body').hidden; render(); });
   node('clear').addEventListener('click', () => {
     try { client.clearCredentials(); } catch { /* signed out */ }
-    reset(); statusKey = 'cart_cleared'; render(); onCart(null);
+    reset(); statusKey = 'cart_cleared'; cart.clear(); render();
   });
   // Signing out or switching account must not leave the previous status behind.
   function reset() {

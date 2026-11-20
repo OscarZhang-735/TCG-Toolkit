@@ -91,7 +91,11 @@ function settingsSetup(query) {
   let saved = null;
   const client = {hasCredentials: () => Boolean(saved), saveCredentials(value) { saved = value; },
     clearCredentials() { saved = null; }, query};
-  const settings = bindHobbystationSettings(client);
+  const cart = {state: {}, clear() {}, async refresh() {
+    try { this.state.totalQuantity = (await client.query()).total_quantity; }
+    catch (error) { return error; }
+  }};
+  const settings = bindHobbystationSettings(client, cart);
   return {settings, el: id => document.getElementById(id), saved: () => saved};
 }
 const submit = el => el('hs-cart-form').handlers.submit({preventDefault() {}});

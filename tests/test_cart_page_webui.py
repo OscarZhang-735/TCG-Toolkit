@@ -31,9 +31,10 @@ def test_stock_and_quantity_controls_on_all_cart_routes(client):
             else:
                 url = f'https://www.cardmax.jp/shopdetail/{num}'
                 identity = {'brandcode': num}
-            rows[shop].append({**identity, 'name': f'{shop} {num}', 'product_url': url, 'card_number': num,
+            rows[shop].append({**identity, 'name': f'{shop} {num}', 'product_url': url,
                                'unit_price': 50, 'image_url': None, 'quantity': 1, 'removable': True})
-    reads, adds = Counter(), []
+    reads, queries, adds = Counter(), Counter(), []
+    unavailable = set()
 
     def cart(shop):
         count = sum(row['quantity'] for row in rows[shop])
@@ -48,11 +49,15 @@ def test_stock_and_quantity_controls_on_all_cart_routes(client):
         shop = url.path.split('/')[2] if url.path.startswith('/api/') else None
         if shop in paths:
             if url.path.endswith('/cart/query'):
+                queries[shop] += 1
+                if shop in unavailable:
+                    return route.fulfill(status=403, json={'detail': {'type': shop + '_credentials_rejected'}})
                 return route.fulfill(json=cart(shop))
             if url.path.endswith('/product/stock') or url.params.get('stock') == 'true':
                 product = url.params['cid'] if shop == 'yuyutei' else url.params['product_url']
                 reads[shop, product] += 1
-                stock = {'stock_status': 'in_stock', 'stock_quantity': 5}
+                stock = {'stock_status': 'in_stock', 'stock_quantity': 5, 'game': 'ws', 'rarity': 'RR',
+                         'card_number': 'TEST-' + product.rsplit('/', 1)[-1]}
                 if shop == 'hobbystation' and product == rows[shop][1]['product_url']:
                     stock.update(stock_quantity=None, stock_text='在庫数：◯')
                 return route.fulfill(json=stock)
@@ -62,7 +67,7 @@ def test_stock_and_quantity_controls_on_all_cart_routes(client):
                 rows[shop][0]['quantity'] += body['counter']
                 return route.fulfill(json={'after_quantity': rows[shop][0]['quantity'], 'cart': cart(shop)})
             if url.path.endswith('/product'):
-                return route.fulfill(json={'card_number': '401', 'rarity': 'R'})
+                return route.fulfill(json={'card_number': 'TEST-' + url.params['cid'], 'rarity': 'R'})
         if url.path == '/api/currency/convert':
             return route.fulfill(json={'from': 'JPY', 'to': url.params['to'], 'amount': 1, 'result': 1})
         result = client.request(req.method, req.url, content=req.post_data_buffer,
@@ -82,15 +87,18 @@ def test_stock_and_quantity_controls_on_all_cart_routes(client):
         page.add_init_script("localStorage.setItem('tcg.session'," + json.dumps(client.headers['Authorization'][7:])
                              + "); for (const [key,value] of Object.entries(" + json.dumps(saved)
                              + ")) sessionStorage.setItem(key,JSON.stringify(value));")
-        page.goto('https://testserver/#cart')
         for shop, fragment in paths.items():
-            page.evaluate('(hash) => location.hash = hash', fragment)
+            page.goto(f'https://testserver/?shop={shop}{fragment}')
             expect(page.locator('#cart-kinds')).to_have_text('2')
             page.locator('[data-view=list]:visible').click()
             expect(page.locator('#cart-table')).to_be_visible()
             single = page.locator('.cart-stock-fetch:visible')
             expect(single).to_have_count(2)
             expect(page.locator('.product-summary:visible, .card-name:visible').first).to_contain_text(shop)
+            expect(page.locator('#cart-rows')).to_contain_text('TEST-402')
+            if shop != 'yuyutei':
+                expect(page.locator('#cart-rows')).to_contain_text('RR')
+            expect(page.locator('.cart-stock-control .in_stock:visible')).to_have_count(0)
             single.first.click()
             badges = page.locator('.cart-stock-control .in_stock:visible')
             expect(badges).to_have_count(1)
@@ -110,11 +118,35 @@ def test_stock_and_quantity_controls_on_all_cart_routes(client):
                 expect(badges.nth(1)).to_have_attribute('title', re.compile('在庫数：◯'))
             for index, row in enumerate(rows[shop]):
                 key = row['cid'] if shop == 'yuyutei' else row['product_url']
-                assert reads[shop, key] == (2 if index == 0 else 1)
+                assert reads[shop, key] == (2 if index == 0 else 1) + int(shop != 'yuyutei')
             if shop != 'yuyutei':
                 control = page.locator('.cart-stepper:visible').first
                 control.locator('button').last.click()
                 expect(control.locator('input')).to_have_value('2')
                 assert adds[-1] == (shop, rows[shop][0]['product_url'])
+            page.evaluate("location.hash = '#search'")
+            for merchant in paths:
+                selector = f'input[name=merchant][value={merchant}]'
+                if not page.locator(selector).is_checked():
+                    page.locator(f'label:has({selector})').click()
+            summaries = page.locator('#cart-summary .cart-summary:visible')
+            expect(summaries).to_have_count(3)
+            summary = page.locator(f'#cart-summary [data-source="{shop}"]')
+            expect(summary).to_contain_text('Cart ' + str(cart(shop)['total_quantity']))
+            expect(summary.locator('a')).to_have_attribute('href', fragment)
+            before = queries.copy()
+            rows[shop][0]['quantity'] += 1
+            summary.locator('button').click()
+            expect(summary).to_contain_text('Cart ' + str(cart(shop)['total_quantity']))
+            assert queries - before == Counter({shop: 1})
+            page.locator(f'label:has(input[name=merchant][value={shop}])').click()
+            expect(summaries).to_have_count(2)
+        unavailable.add('cardmax')
+        page.goto('https://testserver/?retry#cart-cardmax')
+        expect(page.locator('#cart-empty h3')).to_contain_text('cookies')
+        expect(page.locator('#cart-stats')).to_be_hidden()
+        unavailable.clear()
+        page.locator('#cart-page-refresh').click()
+        expect(page.locator('#cart-kinds')).to_have_text('2')
         assert not errors
         browser.close()

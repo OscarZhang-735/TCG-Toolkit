@@ -889,8 +889,8 @@ td.owned-cell.muted { font-weight: 400; color: var(--color-text-subtle); }
 .chip-logo { height: 16px; width: auto; margin-left: 2px; padding: 1px 3px; background: var(--color-surface); border-radius: var(--radius-sm); }
 
 /* YuYu-Tei cart: search-result steppers, heading summary, user-centre credentials */
-.cart-bar { display: flex; align-items: center; gap: 2px; }
-.cart-summary { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cart-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.cart-summary { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 .cart-summary a { color: var(--color-text); }
 th.cart-col, td.cart-col { width: 1%; white-space: nowrap; }
 .cart-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
