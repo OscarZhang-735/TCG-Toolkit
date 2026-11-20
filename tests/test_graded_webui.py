@@ -16,7 +16,8 @@ from fastapi import HTTPException
 
 from auth_helpers import install_mailbox, register_user
 from card_photos import corner_error, photo
-from tcg_toolkit import grading
+from tcg_toolkit.grading import adapters, lookup as grading
+from tcg_toolkit.grading.concurrency import cancellable_client
 from tcg_toolkit.web import app
 
 pytestmark = pytest.mark.skipif(os.getenv('TCG_BROWSER_TEST') != '1', reason='Set TCG_BROWSER_TEST=1 for Chromium acceptance.')
@@ -36,8 +37,8 @@ def test_graded_webui(monkeypatch, tmp_path):
         def raise_for_status(self):
             pass
 
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', lambda url, content, **kwargs: (bucket.__setitem__(url, content), Stored())[1])
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.delete', lambda url, **kwargs: (removed.append(url), bucket.pop(url, None), Stored())[2])
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.put', lambda url, content, **kwargs: (bucket.__setitem__(url, content), Stored())[1])
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.delete', lambda url, **kwargs: (removed.append(url), bucket.pop(url, None), Stored())[2])
     slab, slab_corners = photo('slab', 'busy', 9, .06, (1600, 1200), 21)
     (tmp_path / 'slab.jpg').write_bytes(slab)
     flat, _ = photo('card', 'dark', -4, .03, (1200, 1600), 22)
@@ -47,7 +48,7 @@ def test_graded_webui(monkeypatch, tmp_path):
     blocking, released = '11111111', threading.Event()
     for provider, number in [('psa', '98428602'), ('cgc', '6091052028'), ('ars', '047088950114'), ('pcgcn', '10198854')]:
         source = (FIXTURES / f'{provider}_certificate.{"json" if provider == "pcgcn" else "html"}').read_text(encoding='utf-8')
-        parsed = getattr(grading, f'parse_{provider}')(json.loads(source) if provider == 'pcgcn' else source, number)
+        parsed = getattr(adapters, f'parse_{provider}')(json.loads(source) if provider == 'pcgcn' else source, number)
         titles[provider] = grading.present(provider, parsed['certificate'])[0]
 
         def fetch(requested, result=parsed):
@@ -58,7 +59,7 @@ def test_graded_webui(monkeypatch, tmp_path):
                     event_hooks = {'request': []}
                     def close(self):
                         released.set()
-                grading._cancellable(Upstream())
+                cancellable_client(Upstream())
                 assert released.wait(timeout=30)
                 raise HTTPException(502, detail=f"{result['provider']}_unavailable")
             if state['fail']:

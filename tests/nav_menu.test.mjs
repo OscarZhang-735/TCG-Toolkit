@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-const source = await readFile(new URL('../src/tcg_toolkit/static/nav-menu.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/shared/nav-menu.js', import.meta.url), 'utf8');
 const {syncNavMenus, closeNavMenus, bindNavMenus} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 function fakeNav() {
@@ -17,7 +17,7 @@ function fakeNav() {
     return g;
   }
   const shop = group('shop', ['搜索', '收藏夹', '购物车']), local = group('local', ['卡牌库']);
-  const root = {addEventListener(n, f) { handlers[n] = f; }, querySelectorAll: () => [shop, local],
+  const root = {addEventListener(n, f) { handlers[n] = f; }, querySelectorAll: selector => selector.includes('.nav-submenu') ? [] : [shop, local],
     querySelector: () => [shop, local].find(g => g.classes.has('open')) ?? null};
   win.addEventListener = (n, f) => { handlers['win:' + n] = f; };
   return {root, win, shop, local, handlers};

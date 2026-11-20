@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
 
-from ..db_models import User
+from ..persistence.models import User
 from .avatar import AVATAR_LIMIT, AVATAR_TYPES, save_avatar
 from .dependencies import bearer_token, credentials_guard, current_user, require_trusted_origin, service, write_guard
 from .schemas import (BindingCodeRequest, CodeInput, CodeRequest, Credentials, NicknameInput,

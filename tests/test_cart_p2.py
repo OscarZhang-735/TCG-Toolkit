@@ -1,5 +1,5 @@
 from sqlalchemy import select
-from tcg_toolkit.db_models import CartOperation
+from tcg_toolkit.persistence.models import CartOperation
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import json
@@ -8,10 +8,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from tcg_toolkit import cart_operations
-from tcg_toolkit.auth.store import UserStore
+from tcg_toolkit.cart import operations as cart_operations
+from tcg_toolkit.persistence.runtime import open_database
 from tcg_toolkit.web import app
-from tcg_toolkit.yuyutei_cart import CartInput
+from tcg_toolkit.cart.yuyutei import CartInput
 from test_yuyutei_cart import (client, upstream, login, cart_html, cart_sequence,
                               ORIGIN, BASE, CARD, SECRETS, CART_META, EMPTY_CART)
 
@@ -109,7 +109,7 @@ def test_replay_normalized_request_after_restart_with_changed_credentials(client
     assert replay.headers['idempotency-replayed'] == 'true'
     assert replay.headers['cache-control'] == 'no-store'
     assert sum(r.method == 'POST' for r in upstream[0]) == 1
-    with UserStore(app.state.auth.store.conninfo) as store, store.session() as db:
+    with open_database(app.state.database.conninfo) as store, store.session() as db:
         row = db.scalar(select(CartOperation))
         assert row.state == 'complete'
         assert SECRETS['cookie'] not in row.response_json and SECRETS['csrf_token'] not in row.response_json
@@ -168,7 +168,7 @@ def test_crash_after_post_does_not_reissue_on_restart(client, upstream, monkeypa
 
 def test_durable_reservation_survives_restart_before_post(client, upstream):
     user = client.get('/api/auth/me').json()
-    store = UserStore(app.state.auth.store.conninfo)
+    store = open_database(app.state.database.conninfo)
     assert cart_operations.reserve(store, user['id'], KEY['Idempotency-Key'], CartInput(**CARD).model_dump()) is None
     with TestClient(app, base_url=ORIGIN, headers=dict(client.headers)) as restarted:
         assert restarted.post(BASE + '/cart', json={**CARD, 'credentials': SECRETS}, headers=KEY).status_code == 409

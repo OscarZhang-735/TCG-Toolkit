@@ -46,21 +46,22 @@ def test_encrypted_proxy_roundtrip(monkeypatch, tmp_path, failure, endpoint):
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize('host', ['yuyu-tei.jp', 'www.hobbystation-single.jp'])
 @pytest.mark.parametrize('endpoint,key_configured', [
     ('http://relay.example/encrypted-proxy', False),
     ('http://relay.example/proxy', True),
 ])
-def test_invalid_proxy_config_never_sends_plaintext(monkeypatch, tmp_path, endpoint, key_configured):
+def test_invalid_proxy_config_never_sends_plaintext(monkeypatch, tmp_path, endpoint, key_configured, host):
     from tcg_toolkit.external.search_proxy import YuYuTeiProxyTransport
     key = tmp_path / 'key'
     key.write_bytes(bytes(range(32)))
     monkeypatch.setenv('TCG_SEARCH_PROXY_URL', endpoint)
     monkeypatch.setenv('TCG_PROXY_KEY_FILE', str(key) if key_configured else '')
     calls = []
-    with httpx.Client(transport=YuYuTeiProxyTransport(transport=httpx.MockTransport(
+    with httpx.Client(transport=YuYuTeiProxyTransport(relay_host=host, transport=httpx.MockTransport(
             lambda r: calls.append(r)))) as client:
         with pytest.raises(httpx.TransportError):
-            client.get('https://yuyu-tei.jp/')
+            client.get(f'https://{host}/')
     assert calls == []
 
 

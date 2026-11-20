@@ -3,10 +3,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const code = asModule(await readFile(new URL('email-code.js',base),'utf8'));
+const code = asModule(await readFile(new URL('account/email-code.js',base),'utf8'));
 const i18n = asModule(`export const t = key => key; export const getLanguage = () => 'en';`);
-const source = (await readFile(new URL('password-ui.js',base),'utf8'))
-  .replace("'./email-code.js'",JSON.stringify(code)).replace("'./i18n.js'",JSON.stringify(i18n));
+const source = (await readFile(new URL('account/password-ui.js',base),'utf8'))
+  .replace("'./email-code.js'",JSON.stringify(code)).replace("'../i18n.js'",JSON.stringify(i18n));
 const {createPasswordUI} = await import(asModule(source));
 const reply = (status, body) => ({status, ok:status < 300, headers:{get:()=>null},
   json:async()=>{assert.notEqual(status,204); return body;}});

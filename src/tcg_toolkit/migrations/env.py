@@ -1,8 +1,8 @@
 """Alembic uses the application's connection configuration and ORM metadata."""
 from alembic import context
 
-from tcg_toolkit.database import Database
-from tcg_toolkit.db_models import Base
+from tcg_toolkit.persistence.database import Database
+from tcg_toolkit.persistence.models import Base
 
 
 def run(connection):

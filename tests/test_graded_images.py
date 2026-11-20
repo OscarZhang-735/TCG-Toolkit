@@ -9,7 +9,7 @@ from PIL import Image
 from auth_helpers import register_user
 from card_photos import _background, corner_error, photo
 from test_graded_cards import PATH, add, client  # noqa: F401  (fixture)
-from tcg_toolkit import card_detect, card_enhance, graded_cards
+from tcg_toolkit.collection import card_detect, card_enhance, graded_cards
 
 BUCKET = 'https://cards.example.com'
 
@@ -98,8 +98,8 @@ def cos(monkeypatch):
         objects.pop(url, None)
         return Reply(204)
 
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.put', put)
-    monkeypatch.setattr('tcg_toolkit.auth.avatar.httpx.delete', delete)
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.put', put)
+    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.delete', delete)
     return objects, deleted
 
 

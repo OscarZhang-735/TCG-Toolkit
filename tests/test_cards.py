@@ -1,4 +1,4 @@
-from tcg_toolkit.db_models import OwnedCard
+from tcg_toolkit.persistence.models import OwnedCard
 from io import BytesIO
 from zipfile import ZipFile
 from xml.etree import ElementTree as ET
@@ -7,8 +7,8 @@ from auth_helpers import register_user
 import pytest
 from fastapi.testclient import TestClient
 
-from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.card_transfer import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
+from tcg_toolkit.persistence.runtime import open_database
+from tcg_toolkit.collection.transfer import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -194,7 +194,7 @@ def test_crud_duplicates_persistence(client):
     edited = client.put('/api/cards/' + row['id'], json={**CARD, 'quantity': 0, 'notes': ''}).json()
     assert edited['quantity'] == 0 and edited['notes'] == ''
     assert [r['id'] for r in client.get('/api/cards').json()['items']] == [other['id'], row['id']]
-    with UserStore(app.state.auth.store.conninfo).session() as db:
+    with open_database(app.state.database.conninfo).session() as db:
         assert db.get(OwnedCard, row['id']).quantity == 0
     assert client.request('DELETE', '/api/cards/' + row['id'], json={}).status_code == 204
     assert client.request('DELETE', '/api/cards/' + row['id'], json={}).status_code == 404
@@ -254,7 +254,7 @@ def test_image_persistence_update_and_clear(client):
     saved = client.post('/api/cards', json={**CARD, 'image_url': image}).json()
     assert saved['image_url'] == image
     assert client.get('/api/cards').json()['items'][0]['image_url'] == image
-    with UserStore(app.state.auth.store.conninfo).session() as db:
+    with open_database(app.state.database.conninfo).session() as db:
         assert db.get(OwnedCard, saved['id']).image_url == image
     response = client.put('/api/cards/' + saved['id'], json={**CARD, 'image_url': None})
     assert response.status_code == 200 and response.json()['image_url'] == ''

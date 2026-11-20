@@ -9,9 +9,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from auth_helpers import register_user
-from tcg_toolkit import grading
-from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.db_models import GradedCard
+from tcg_toolkit.grading import adapters, lookup as grading
+from tcg_toolkit.grading.concurrency import LookupRegistry, LookupSlots, cancellable_client
+from tcg_toolkit.persistence.runtime import open_database
+from tcg_toolkit.persistence.models import GradedCard
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -28,7 +29,7 @@ def certificate(number, provider='psa', grade='10'):
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv('TCG_TRUSTED_ORIGINS', ORIGIN)
-    monkeypatch.setattr(grading, 'LOOKUP_SLOTS', grading.LookupSlots())
+    monkeypatch.setattr(grading, 'LOOKUP_SLOTS', LookupSlots())
     for provider in grading.PROVIDERS.values():
         monkeypatch.setitem(grading.PROVIDERS, provider.id,
                             replace(provider, fetch=lambda number, id=provider.id: certificate(number, id)))
@@ -71,7 +72,7 @@ def test_registry_and_saved_snapshots_persist_for_all_providers(client):
     response = client.get(PATH)
     assert response.headers['cache-control'] == 'no-store'
     assert response.json()['items'] == saved
-    with UserStore() as reopened, reopened.session() as db:
+    with open_database() as reopened, reopened.session() as db:
         assert {row.id for row in db.scalars(select(GradedCard))} == {row['id'] for row in saved}
 
 
@@ -186,7 +187,7 @@ def test_refresh_does_not_hold_a_connection_or_resurrect_deleted_card(client, mo
         future = pool.submit(client.post, f"{PATH}/{saved['id']}/refresh", json={})
         try:
             assert entered.wait(timeout=10)
-            assert app.state.auth.store.engine.pool.checkedout() == 0
+            assert app.state.database.engine.pool.checkedout() == 0
             assert client.request('DELETE', f"{PATH}/{saved['id']}", json={}).status_code == 204
         finally:
             release.set()
@@ -195,7 +196,7 @@ def test_refresh_does_not_hold_a_connection_or_resurrect_deleted_card(client, mo
 
 
 def test_lookup_limits_are_shared_and_released_after_failure(client, monkeypatch):
-    slots = grading.LookupSlots(per_user=1, total=1)
+    slots = LookupSlots(per_user=1, total=1)
     monkeypatch.setattr(grading, 'LOOKUP_SLOTS', slots)
     with slots.hold('other-user'):
         for response in (add(client), client.get('/api/grading/psa/certificates/00123')):
@@ -204,7 +205,7 @@ def test_lookup_limits_are_shared_and_released_after_failure(client, monkeypatch
     with pytest.raises(RuntimeError), slots.hold('alice'):
         raise RuntimeError('provider failed')
     assert add(client).status_code == 201
-    per_user = grading.LookupSlots(per_user=1, total=2)
+    per_user = LookupSlots(per_user=1, total=2)
     with per_user.hold('alice'):
         with pytest.raises(HTTPException) as error, per_user.hold('alice'):
             pytest.fail('same user exceeded cap')
@@ -244,7 +245,7 @@ def slow_fetch(started, closed):
             event_hooks = {'request': []}
             def close(self):
                 closed.set()
-        grading._cancellable(Client())
+        cancellable_client(Client())
         started.set()
         assert closed.wait(timeout=10)
         raise HTTPException(502, detail='psa_unavailable')
@@ -302,7 +303,7 @@ def test_cancel_before_start_after_save_and_from_another_account(client, monkeyp
 
 def test_registry_forgets_outcomes_after_a_while():
     now = [0.0]
-    registry = grading.LookupRegistry(clock=lambda: now[0])
+    registry = LookupRegistry(clock=lambda: now[0])
     assert registry.cancel('alice', 'early-0001') == 'cancelled'
     with registry.track('alice', 'early-0001') as token:
         assert token.cancelled
@@ -337,7 +338,7 @@ def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch, provider)
 
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Slow)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    monkeypatch.setattr(grading, 'ARS_URL', f'http://127.0.0.1:{server.server_port}/')
+    monkeypatch.setattr(adapters, 'ARS_URL', f'http://127.0.0.1:{server.server_port}/')
     monkeypatch.setenv('ZYTE_API_KEY', 'test-cancel-zyte-key')
     real_post = httpx.Client.post
 
@@ -346,8 +347,8 @@ def test_cancelling_closes_a_real_http_client_mid_request(monkeypatch, provider)
         return real_post(client, f'http://127.0.0.1:{server.server_port}/', **kwargs)
 
     monkeypatch.setattr(httpx.Client, 'post', local_zyte)
-    monkeypatch.setattr(grading, 'LOOKUP_SLOTS', grading.LookupSlots())
-    registry = grading.LookupRegistry()
+    monkeypatch.setattr(grading, 'LOOKUP_SLOTS', LookupSlots())
+    registry = LookupRegistry()
 
     def lookup():
         with registry.track('alice', 'real-00001'):

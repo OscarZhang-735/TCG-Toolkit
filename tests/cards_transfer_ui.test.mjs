@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const exportsURL = asModule(await readFile(new URL('cards-export.js', base), 'utf8'));
-const source = (await readFile(new URL('cards-transfer-ui.js', base), 'utf8'))
-  .replace("import {t, getLanguage} from './i18n.js';", "const t = key => key, getLanguage = () => 'en';")
+const exportsURL = asModule(await readFile(new URL('collection/cards-export.js', base), 'utf8'));
+const source = (await readFile(new URL('collection/cards-transfer-ui.js', base), 'utf8'))
+  .replace("import {t, getLanguage} from '../i18n.js';", "const t = key => key, getLanguage = () => 'en';")
   .replace("'./cards-export.js'", JSON.stringify(exportsURL));
 const {createCardTransfers} = await import(asModule(source));
 

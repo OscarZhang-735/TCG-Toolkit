@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const source = await readFile(new URL('../src/tcg_toolkit/static/card-sources.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/catalog/card-sources.js', import.meta.url), 'utf8');
 const {lookupSource, lookupItems} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 test('ChaosTCG uses the existing authenticated marketplace search', () => {
   const config = lookupSource('ChaosTCG', 'AB/001');

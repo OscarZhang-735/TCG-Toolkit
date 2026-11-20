@@ -1,34 +1,42 @@
-import {createProxySettings} from './proxy-settings.js';
-import {clearCards, activateCards, ownedQuantity, setCardsCurrency} from './cards-ui.js';
-import {clearGraded, activateGraded, setGradedCurrency} from './graded-cards-ui.js';
-import {createFavorites, cardKey} from './favorites.js';
-import {bindFavoriteGroups} from './favorite-groups-ui.js';
-import {createSelection} from './favorite-selection.js';
-import {createSubscriptions, subscriptionKey} from './subscriptions.js';
+import {createProxySettings} from './catalog/proxy-settings.js';
+import {clearCards, activateCards, ownedQuantity, setCardsCurrency} from './collection/cards-ui.js';
+import {clearGraded, activateGraded, setGradedCurrency} from './collection/graded-cards-ui.js';
+import {createFavorites, cardKey} from './collection/favorites.js';
+import {bindFavoriteGroups} from './collection/favorite-groups-ui.js';
+import {createSelection} from './collection/favorite-selection.js';
+import {createSubscriptions, subscriptionKey} from './subscriptions/subscriptions.js';
 import {t, applyLanguage, setLanguage, getLanguage} from './i18n.js';
-import {loadResults} from './logic.js';
-import {rarityBadge, cardImage} from './card-view.js';
-import {numberButton} from './copy-number.js';
-import {setNavCount} from './nav-count.js';
-import {createFilterPanel} from './filters.js';
-import {readHistory, appendHistory, saveHistory} from './history.js';
-import {fetchRate, formatPrice} from './currency.js';
-import {yuyuteiClient} from './yuyutei-client.js';
-import {createCart} from './cart.js';
-import {cartTarget} from './product-identity.js';
-import {bindCartSettings} from './cart-settings.js';
-import {cartStepper, createCartPage} from './cart-page.js';
-import {createProductDetails} from './product-details.js';
-import {showFeedback, markDot} from './feedback.js';
-import {messageTier} from './notices.js';
-import {createCartStock} from './cart-stock.js';
+import {loadResults} from './catalog/logic.js';
+import {rarityBadge, cardImage} from './catalog/card-view.js';
+import {stockBadge} from './catalog/stock-badge.js';
+import {numberButton} from './shared/copy-number.js';
+import {setNavCount} from './shared/nav-count.js';
+import {createFilterPanel} from './catalog/filters.js';
+import {readHistory, appendHistory, saveHistory} from './catalog/history.js';
+import {fetchRate, formatPrice} from './shared/currency.js';
+import {yuyuteiClient} from './cart/yuyutei-client.js';
+import {createCart} from './cart/cart.js';
+import {cartTarget} from './catalog/product-identity.js';
+import {bindCartSettings} from './cart/cart-settings.js';
+import {cardmaxClient} from './cart/cardmax-client.js';
+import {bindCardmaxSettings, createCardmaxCart, cardmaxTarget} from './cart/cardmax-cart.js';
+import {hobbystationClient} from './cart/hobbystation-client.js';
+import {bindHobbystationSettings} from './cart/hs-cart-settings.js';
+import {createHobbystationCart, hobbystationTarget} from './cart/hs-cart.js';
+import {SHOP_CART_PAGES} from './cart/shop-cart-page.js';
+import {createCartPage} from './cart/cart-page.js';
+import {cartStepper} from './cart/cart-stepper.js';
+import {createProductDetails} from './catalog/product-details.js';
+import {showFeedback, markDot} from './shared/feedback.js';
+import {messageTier} from './shared/notices.js';
+import {createCartStock} from './cart/cart-stock.js';
+import {SEARCH_SOURCES, searchTargets, searchParams} from './catalog/search-sources.js';
 const $ = id => document.getElementById(id);
 const checked = name => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(el => el.value);
 const gameKeys = {"wsr": "wsr", "lycee": "lycee", "chaos": "chaostcg", "ws": "ws", "pm": "pm", "sev": "sev", "sev_en": "sev_en"};
 const gameLabel = game => t(gameKeys[game]);
+const sourceLabel = source => t(SEARCH_SOURCES[source]?.label ?? source);
 let items = [], limit = 100, controller = null, batch = 0, started = false;
-const stockKeys = {"in_stock": "in_stock", "out_of_stock": "out_of_stock", "unknown": "unknown"};
-const stockIcons = {in_stock: 'bi-check-circle-fill', out_of_stock: 'bi-x-circle', unknown: 'bi-question-circle'};
 let view = localStorage.getItem('view') === 'grid' ? 'grid' : 'list';
 const el = (tag, className = '', text = '') => {const node = document.createElement(tag); node.className = className; node.textContent = text; return node;};
 const icon = name => el('i', `bi ${name}`);
@@ -43,11 +51,11 @@ function amountDisplay(amount) {
 const priceDisplay = item => amountDisplay(item.price);
 const money = price => formatPrice(price, displayCurrency, exchangeRate, getLanguage());
 const searchFilters = createFilterPanel($('search-filters'), {onChange: () => {limit = 100; render();}, formatPrice: money});
-const favoriteFilters = createFilterPanel($('favorites-filters'), {onChange: () => renderFavorites(), formatPrice: money,
+const favoriteFilters = createFilterPanel($('favorites-filters'), {onChange: () => renderFavorites(), formatPrice: money, sources: true,
   isSubscribed: item => Boolean(subscriptions.find(item))});
 function renderCurrencyStatus() { $('currency-status').hidden = !currencyStatus; $('currency-status').textContent = t('currency_fetched_at', {time: currencyStatus ? new Date(currencyStatus * 1000).toLocaleString(getLanguage()) : '—'}); }
 function renderCurrency() {
-  renderCurrencyStatus(); render(); renderFavorites(); cartPage.render();
+  renderCurrencyStatus(); render(); renderFavorites(); renderCartSummary(); cartPage.render();
   setCardsCurrency(displayCurrency, exchangeRate);
   setGradedCurrency(displayCurrency, exchangeRate);
 }
@@ -74,7 +82,8 @@ let userId = null, requestAPI = fetch, notificationEmail = null;
 let history = [];
 const favorites = createFavorites(removedItem => {
   if (removedItem) subscriptions.forget(removedItem);
-  render(); renderFavorites();
+  for (const {item} of favorites.state.records) rememberProduct(item);
+  render(); renderFavorites(); cartPage?.render();
 });
 const favoriteGroups = bindFavoriteGroups(favorites);
 const subscriptions = createSubscriptions(() => {render(); renderFavorites(); renderNotice();});
@@ -82,47 +91,75 @@ const selection = createSelection(favorites, subscriptions, () => renderFavorite
 let cartPage = null;
 const cartStock = createCartStock(() => cartPage?.render());
 const productDetails = createProductDetails(() => cartPage?.render());
-const cart = createCart(yuyuteiClient, () => {render(); renderFavorites(); renderCartSummary(); cartPage?.render(); renderNotice();});
+const renderShopCart = () => {render(); renderFavorites(); renderCartSummary(); renderNotice(); renderCartNav(); cartPage?.render();};
+const cart = createCart(yuyuteiClient, () => { renderShopCart(); cartSettings.render(); });
+const hsCart = createHobbystationCart(hobbystationClient, renderShopCart);
+const cmCart = createCardmaxCart(cardmaxClient, renderShopCart);
 // Account-level problems (credentials, notification email) would hit every card the same way,
 // so they appear once, here, until dismissed or the next successful request.
 function renderNotice() {
-  const notice = cart.state.notice || subscriptions.state.notice;
+  const notice = cart.state.notice || hsCart.state.notice || cmCart.state.notice || subscriptions.state.notice;
   $('page-notice').hidden = !notice || location.hash === '#account';
   $('page-notice-text').textContent = notice ? t(notice) : '';
 }
-const dismissNotice = () => { cart.dismissNotice(); subscriptions.dismissNotice(); };
+const dismissNotice = () => { cart.dismissNotice(); hsCart.dismissNotice(); cmCart.dismissNotice(); subscriptions.dismissNotice(); };
 $('page-notice-close').addEventListener('click', dismissNotice);
 $('page-notice-action').addEventListener('click', dismissNotice);
 const cartSettings = bindCartSettings(yuyuteiClient, cart);
-function renderCartSummary() {
-  const state = cart.state, box = $('cart-summary');
-  const content = [icon('bi-cart3')];
-  if (!state.configured) {
-    const link = el('a', 'cart-setup', t('cart_setup')); link.href = '#account';
-    content.push(link);
-  } else if (state.loading && !state.rows.length) content.push(t('cart_loading'));
-  else if (state.error) content.push(t(state.error));
-  else content.push(state.totalQuantity === null ? t('cart_summary_incomplete')
-    : t('cart_summary', {quantity: state.totalQuantity.toLocaleString(getLanguage()), subtotal: money(state.subtotal)}));
-  box.replaceChildren(...content);
-  $('cart-refresh').hidden = !state.configured;
-  $('cart-refresh').disabled = state.loading;
-  $('cart-refresh').querySelector('.bi').classList.toggle('spin', state.loading);
-  setNavCount($('cart-nav-count'), state.configured ? state.totalQuantity : 0);
-  cartSettings.render();
+const hobbystationSettings = bindHobbystationSettings(hobbystationClient, hsCart);
+const cardmaxSettings = bindCardmaxSettings(cardmaxClient, cmCart);
+const shopCarts = {yuyutei: cart, hobbystation: hsCart, cardmax: cmCart};
+const cartTargets = {yuyutei: cartTarget, hobbystation: hobbystationTarget, cardmax: cardmaxTarget};
+function rememberProduct(item) {
+  const target = cartTargets[item.source ?? 'yuyutei'];
+  productDetails.remember(target(item), item);
 }
-$('cart-refresh').addEventListener('click', () => cart.refresh());
-cartPage = createCartPage({cart, stock: cartStock, details: productDetails, amountDisplay, gameLabel, cardLink, currentView: () => view});
+const summaryRows = Object.entries(SHOP_CART_PAGES).map(([href, {source}]) => {
+  const row = el('div', 'cart-summary'), link = el('a'), status = el('span'), refresh = el('button', 'icon-button');
+  row.dataset.source = source;
+  refresh.type = 'button'; refresh.append(icon('bi-arrow-clockwise'));
+  refresh.addEventListener('click', () => shopCarts[source].refresh());
+  row.append(link, status, refresh); $('cart-summary').append(row);
+  return {source, href, row, link, status, refresh};
+});
+function renderCartSummary() {
+  const selected = checked('merchant');
+  for (const {source, href, row, link, status, refresh} of summaryRows) {
+    row.hidden = !selected.includes(source);
+    if (row.hidden) continue;
+    const state = shopCarts[source].state;
+    link.href = state.configured ? href : '#account';
+    link.textContent = state.configured ? sourceLabel(source) : sourceLabel(source) + ' · ' + t('cart_setup');
+    status.textContent = !state.configured ? '' : state.loading && !state.rows.length ? t('cart_loading')
+      : state.error ? t(state.error) : state.totalQuantity == null || state.subtotal == null ? t('cart_summary_incomplete')
+      : t('cart_summary', {quantity: state.totalQuantity.toLocaleString(getLanguage()), subtotal: money(state.subtotal)});
+    refresh.hidden = !state.configured; refresh.disabled = state.loading;
+    refresh.title = t('cart_refresh') + ' · ' + sourceLabel(source);
+    refresh.setAttribute('aria-label', refresh.title);
+    refresh.firstChild.classList.toggle('spin', state.loading);
+  }
+}
+cartPage = createCartPage({carts: shopCarts,
+  stock: cartStock, details: productDetails, amountDisplay, gameLabel, cardLink, currentView: () => view});
 document.addEventListener('viewchange', () => cartPage.render());
-// +1 / −1 against the real YuYu-Tei cart; the count shown is what the shop reported.
+// Sidebar cart menu: each shop's count on its entry, their sum on the menu itself.
+function renderCartNav() {
+  const counts = [[cart, 'cart-nav-count'], [hsCart, 'hs-cart-nav-count'], [cmCart, 'cm-cart-nav-count']].map(([shop, id]) => {
+    const count = shop.state.configured ? shop.state.totalQuantity ?? 0 : 0;
+    setNavCount($(id), count); return count;
+  });
+  setNavCount($('cart-nav-total'), counts.reduce((sum, count) => sum + count, 0));
+}
+// The displayed quantity comes from the corresponding merchant's cart.
 function cartControls(item) {
-  const target = cartTarget(item);
+  const source = item.source ?? 'yuyutei', cart = shopCarts[source];
+  const target = cartTargets[source](item);
   if (!target || !cart.state.configured) { const box = el('div', 'cart-controls'); box.append(el('span', 'muted', '—')); return box; }
   const quantity = cart.quantity(target);
   const soldOut = item.stock_status === 'out_of_stock' || (item.stock_quantity != null && quantity >= item.stock_quantity);
   // Stock is the cart's upper bound here; typed numbers are clamped to it.
   const stock = item.stock_status === 'out_of_stock' ? 0 : item.stock_quantity ?? null, limits = cart.range(target, {stock});
-  return cartStepper(cart, target, {quantity, canIncrease: !soldOut, increaseKey: soldOut ? 'cart_no_stock' : 'cart_increase',
+  return cartStepper(cart, target, {shop: sourceLabel(source), quantity, canIncrease: !soldOut, increaseKey: soldOut ? 'cart_no_stock' : 'cart_increase',
     canEdit: limits.min < limits.max, onSet: value => cart.setTo(target, value, {stock, item}),
     onDecrease: () => cart.decrease(target), onIncrease: () => cart.increase(target, item)});
 }
@@ -178,7 +215,10 @@ function setStatus(key, iconName = '') {
   $('status').replaceChildren(...(iconName ? [icon(iconName)] : []), text);
 }
 function validateSearch() {
-  const message = !$('keyword').value.trim() ? t('enter_a_keyword') : !checked('source').length ? t('select_at_least_one_game') : '';
+  const games = checked('source'), sources = checked('merchant');
+  $('cardmax-stock-option').hidden = !sources.includes('cardmax');
+  const message = !$('keyword').value.trim() ? t('enter_a_keyword') : !games.length ? t('select_at_least_one_game')
+    : !searchTargets(games, sources).length ? t('no_supported_source') : '';
   $('search-button').title = message;
   $('search-button').disabled = Boolean(message);
 }
@@ -189,14 +229,17 @@ function setView(next) {
   // Other pages (My cards) re-render on this instead of relying on click-handler order.
   document.dispatchEvent(new CustomEvent('viewchange', {detail: view}));
 }
+const linkShops = new Map(Object.values(SHOP_CART_PAGES).map(({cartUrl, source}) => [new URL(cartUrl).hostname, source]));
 function cardLink(item, className = '') {
   const link = el('a', className, item.name);
   const url = new URL(item.product_url, location.origin);
-  if (url.protocol === 'https:' && url.hostname === 'yuyu-tei.jp') link.href = url.href;
+  const source = linkShops.get(url.hostname);
+  if (url.protocol === 'https:' && source) link.href = url.href;
   link.target = '_blank'; link.rel = 'noopener noreferrer';
   const confirm = event => {
     event.preventDefault();
     if (!link.hasAttribute('href')) return;
+    $('detail-description').textContent = t('detail_description', {shop: sourceLabel(source)});
     $('detail-name').textContent = item.name;
     $('detail-url').textContent = link.href;
     $('detail-confirm').href = link.href;
@@ -205,14 +248,6 @@ function cardLink(item, className = '') {
   link.addEventListener('click', confirm);
   link.addEventListener('auxclick', event => {if (event.button === 1) confirm(event);});
   return link;
-}
-function stockBadge(item) {
-  const badge = el('span', `badge ${item.stock_status}`);
-  // The source shows ◯ instead of a count when there are 10 or more in stock.
-  const quantity = item.stock_quantity ?? null;
-  badge.append(icon(stockIcons[item.stock_status]),
-    t(stockKeys[item.stock_status]) + (quantity === null ? '' : ` (${quantity})`));
-  return badge;
 }
 function favoriteToggle(item) {
   const saved = favorites.find(item), subscribed = saved && subscriptions.find(item);
@@ -392,19 +427,47 @@ $('favorites-retry').addEventListener('click', () => {
 });
 window.addEventListener('hashchange', () => {
   render(); renderFavorites(); renderNotice();
-  // Each visit reads the shop again: the cart may have changed on YuYu-Tei itself.
-  if (location.hash === '#cart' && userId) cart.refresh();
+  const shop = cartPage.current();
+  if (shop && userId && !shopCarts[shop].state.loading) shopCarts[shop].refresh();
+  cartPage.render();
 });
 document.addEventListener('inventorychange', () => {render(); renderFavorites();});
+// Round badge with the merchant's site icon; the name is in the tooltip and accessible label.
+function sourceBadge(source) {
+  const badge = el('span', `source-tag source-${source}`), label = sourceLabel(source);
+  badge.title = label; badge.setAttribute('role', 'img'); badge.setAttribute('aria-label', label);
+  const iconUrl = SEARCH_SOURCES[source]?.icon;
+  if (iconUrl) { const image = el('img'); image.src = iconUrl; image.alt = ''; image.setAttribute('aria-hidden', 'true'); badge.append(image); }
+  else badge.textContent = label.slice(0, 1);
+  return badge;
+}
+// Search results carry their merchant; saved items (favorites) have none and show only the game.
+function gameTags(item) {
+  const tags = [el('span', 'game-tag', gameLabel(item.game))];
+  if (item.source) tags.push(sourceBadge(item.source));
+  return tags;
+}
+function tagStack(item) { const box = el('span', 'tag-stack'); box.append(...gameTags(item)); return box; }
+function ownedIndicator(item, inFavorites, badge = false) {
+  const quantity = ownedQuantity(item);
+  const hsSearch = !inFavorites && item.source === 'hobbystation';
+  if (quantity === undefined || (!quantity && !hsSearch)) return null;
+  const count = (quantity ?? 0).toLocaleString(getLanguage());
+  const value = el('span', badge ? 'owned-badge' : '');
+  if (badge) value.append(icon('bi-collection'), t('cards_owned_badge', {quantity: count}));
+  else value.textContent = count;
+  if (quantity === null) value.title = t('hs_owned_unmatched');
+  return value;
+}
 function tableRow(item, inFavorites = false) {
   const row = document.createElement('tr');
   const cell = (child, className = '') => {const td = el('td', className); td.append(child); row.append(td);};
   if (inFavorites) { cell(selectBox(item), 'select-col'); row.classList.toggle('selected', selection.state.keys.has(cardKey(item))); }
   const product = el('div', 'product-summary'); product.append(cardImage(item), cardLink(item));
-  cell(el('span', 'game-tag', gameLabel(item.game))); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
-  const owned = ownedQuantity(item);
+  cell(tagStack(item)); cell(rarityBadge(item)); cell(numberButton(item.card_number)); cell(product);
+  const owned = ownedIndicator(item, inFavorites);
   cell(priceDisplay(item), 'numeric'); cell(stockBadge(item));
-  cell(owned ? owned.toLocaleString(getLanguage()) : '—', `numeric owned-cell${owned ? '' : ' muted'}`);
+  cell(owned ?? '—', `numeric owned-cell${owned ? '' : ' muted'}`);
   cell(cartControls(item), 'cart-col');
   if (inFavorites) cell(groupTag(item) ?? el('span', 'muted', '—'), 'group-col');
   cell(favoriteCell(item), 'action-col');
@@ -412,15 +475,15 @@ function tableRow(item, inFavorites = false) {
 }
 function gridCard(item, inFavorites = false) {
   const card = el('article', `card ${item.stock_status}`);
-  const tags = el('div', 'card-tags'); tags.append(el('span', 'game-tag', gameLabel(item.game)), rarityBadge(item));
+  const tags = el('div', 'card-tags'); tags.append(tagStack(item), rarityBadge(item));
   const top = el('div', 'card-top'); top.append(tags, numberButton(item.card_number));
   const bottom = el('div', 'card-bottom'); bottom.append(priceDisplay(item), stockBadge(item));
   const image = cardImage(item); image.append(favoriteToggle(item));
   if (inFavorites && selection.state.active) {
     image.append(selectBox(item)); card.classList.toggle('selected', selection.state.keys.has(cardKey(item)));
   }
-  const owned = ownedQuantity(item);
-  if (owned) { const badge = el('span', 'owned-badge'); badge.append(icon('bi-collection'), t('cards_owned_badge', {quantity: owned.toLocaleString(getLanguage())})); image.append(badge); }
+  const owned = ownedIndicator(item, inFavorites, true);
+  if (owned) image.append(owned);
   card.append(top, image, cardLink(item, 'card-name'), bottom);
   const cartRow = el('div', 'card-cart');
   cartRow.append(el('span', 'card-cart-label', t('cart_column')), cartControls(item));
@@ -466,9 +529,10 @@ $('search-form').addEventListener('submit', async event => {
   const active = new AbortController(); controller = active;
   items = []; started = true; searchFilters.reset(); errors = []; renderErrors();
   setStatus('searching', 'bi-arrow-repeat'); $('stop').hidden = false;
-  const failed = await loadResults({games: checked('source'), keyword: $('keyword').value.trim(), signal: active.signal,
-    fetchPage: async (game, keyword, page, signal) => {
-      const response = await requestAPI(`/api/search?${new URLSearchParams({game, keyword, page})}`, {signal});
+  const cardmaxStock = $('cardmax-stock').checked;
+  const failed = await loadResults({targets: searchTargets(checked('source'), checked('merchant')), keyword: $('keyword').value.trim(), signal: active.signal,
+    fetchPage: async (target, keyword, page, signal) => {
+      const response = await requestAPI(`/api/search?${searchParams(target, keyword, page, {cardmaxStock})}`, {signal});
       const data = await response.json();
       if (!response.ok) {
         const key = response.status === 504 ? 'the_source_timed_out' : response.status === 422 ? 'invalid_search_parameters' : ['SearchParseError', 'SearchPaginationError'].includes(data.detail?.type) ? 'could_not_read_the_source_results' : 'could_not_retrieve_results_from_the_source';
@@ -477,11 +541,12 @@ $('search-form').addEventListener('submit', async event => {
       return data;
     },
     onPage: result => {if (current === batch) {
-      items.push(...result.items);
-      for (const item of result.items) productDetails.remember(cartTarget(item), item);
+      const found = result.items.map(item => ({...item, source: result.source}));
+      items.push(...found);
+      for (const item of found) rememberProduct(item);
       render();
     }},
-    onError: (game, error) => {if (current === batch) {errors.push({game, key: error.translationKey || 'unable_to_search_this_game'}); renderErrors();}}, wait});
+    onError: ({game, source}, error) => {if (current === batch) {errors.push({game, source, key: error.translationKey || 'unable_to_search_this_game'}); renderErrors();}}, wait});
   if (current !== batch) return;
   controller = null; $('stop').hidden = true;
   if (active.signal.aborted) setStatus('stopped', 'bi-stop-circle'); else if (failed) setStatus('incomplete', 'bi-exclamation-triangle'); else setStatus('done', 'bi-check2');
@@ -489,17 +554,34 @@ $('search-form').addEventListener('submit', async event => {
 });
 $('stop').addEventListener('click', () => {controller?.abort(); setStatus('stopped', 'bi-stop-circle'); $('stop').hidden = true;});
 $('keyword').addEventListener('input', validateSearch);
-document.querySelectorAll('[name="source"]').forEach(el => el.addEventListener('change', validateSearch));
+document.querySelectorAll('[name="source"], [name="merchant"]').forEach(el => el.addEventListener('change', validateSearch));
+document.querySelectorAll('[name="merchant"]').forEach(el => el.addEventListener('change', renderCartSummary));
 $('more').addEventListener('click', () => {limit += 100; render();});
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => setView(button.dataset.view)));
 function renderErrors() {
-  $('errors').replaceChildren(...errors.map(({game, key}) => {
-    const p = el('p'); p.append(icon('bi-exclamation-triangle'), t('game_error', {game: gameLabel(game), message: t(key)})); return p;
+  $('errors').replaceChildren(...errors.map(({game, source, key}) => {
+    const message = source && source !== 'yuyutei' ? t('source_error', {source: sourceLabel(source), game: gameLabel(game), message: t(key)})
+      : t('game_error', {game: gameLabel(game), message: t(key)});
+    const p = el('p'); p.append(icon('bi-exclamation-triangle'), message); return p;
   }));
 }
+// Hovering or focusing a source chip lists the games that merchant sells.
+function renderSourceTips() {
+  const allGames = [...document.querySelectorAll('input[name="source"]')].map(input => input.value);
+  document.querySelectorAll('input[name="merchant"]').forEach(input => {
+    const chip = input.closest('.chip'), supported = SEARCH_SOURCES[input.value]?.games;
+    const games = allGames.filter(game => !supported || supported.includes(game));
+    let tip = chip.querySelector('.tip');
+    if (!tip) {
+      tip = el('span', 'tip'); tip.id = `source-tip-${input.value}`; tip.setAttribute('role', 'tooltip');
+      chip.append(tip); input.setAttribute('aria-describedby', tip.id);
+    }
+    tip.textContent = t('source_supports', {games: games.map(gameLabel).join(t('list_separator'))});
+  });
+}
 function refreshLanguage() {
-  applyLanguage(document); $('language').value = getLanguage();
-  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); cartPage.render(); renderNotice();
+  applyLanguage(document); $('language').value = getLanguage(); renderSourceTips();
+  setStatus(statusKey, statusIcon); renderErrors(); renderCurrencyStatus(); validateSearch(); render(); renderFavorites(); renderCartSummary(); renderCartNav(); cartSettings.render(); cartPage.render(); renderNotice(); hobbystationSettings.render(); cardmaxSettings.render();
 }
 $('language').addEventListener('change', () => {setLanguage($('language').value); refreshLanguage();});
 $('detail-cancel').addEventListener('click', () => $('detail-dialog').close());
@@ -509,7 +591,7 @@ refreshLanguage(); setView(view);
 
 export function clearUser() {
   ++batch; ++currencyRequest; controller?.abort(); controller = null;
-  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
+  proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); hobbystationSettings.reset(); cardmaxSettings.reset(); hobbystationSettings.render(); cardmaxSettings.render(); hsCart.clear(); cmCart.clear(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
   userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
   $('currency').value = 'JPY'; $('keyword').value = ''; $('stop').hidden = true;
@@ -524,6 +606,12 @@ export function activateUser(id, request, email = null) {
   history = readHistory(localStorage, userId); $('search').inert = false;
   proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); activateGraded(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
   refreshLanguage();
+  // Credentials kept in this tab across a reload are re-checked once, like the YuYu-Tei cart.
+  for (const [shop, settings] of [[hobbystationClient, hobbystationSettings], [cardmaxClient, cardmaxSettings]]) {
+    let saved = false;
+    try { saved = shop.hasCredentials(); } catch { /* not activated */ }
+    if (saved) settings.verify();
+  }
 }
 // The account page reports the effective address after loading or changing it.
 export function setNotificationEmail(email) {

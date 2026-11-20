@@ -5,7 +5,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-import tcg_toolkit.external.yuyutei_products as module
+import tcg_toolkit.catalog.providers.yuyutei_products as module
+from tcg_toolkit.catalog.providers import storefront_details
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -87,6 +88,36 @@ def test_upstream_failures_are_not_cached(client, reply, status):
 def test_requires_sign_in(client):
     client.headers.pop('Authorization')
     assert client.get('/api/yuyutei/product', params={'gid': 56, 'ver': 'OS01', 'cid': '1'}).status_code == 401
+
+
+@pytest.mark.parametrize('source,url,html,expected', [
+    ('hobbystation', 'https://www.hobbystation-single.jp/lo/product/detail/305273', '''
+        <div class="detailWrap"><div class="detail"><div>LO-LO-4899</div><div class="itemName"><h2>カード(SR)</h2></div>
+        <dl class="price"><dd class="stock">在庫数：◎</dd></dl></div></div>''', ('in_stock', None, 'lycee', 'LO-4899', 'SR')),
+    ('cardmax', 'https://www.cardmax.jp/shopdetail/000000160917', '''
+        <div class="product-info"><h2>(GCR) カード(PR)(BD/W125-P05S)◇PR【ヴァイスシュヴァルツ】 NM</h2></div>
+        <div id="M_itemInfo"><span class="M_item-stock-small">残りあと5個</span></div>''',
+        ('in_stock', 5, 'ws', 'BD/W125-P05S', 'PR')),
+    ('cardmax', 'https://www.cardmax.jp/shopdetail/000000235105', '''
+        <div class="product-info"><h2>Other edition</h2></div>
+        <div id="M_itemInfo"><span class="M_item-stock-soldout">売り切れ</span></div>''',
+        ('out_of_stock', 0, None, None, None)),
+])
+def test_merchant_stock_reads_the_cart_url_without_credentials_or_game(client, monkeypatch, source, url, html, expected):
+    monkeypatch.setattr(storefront_details, 'HobbyStationClient', FakeClient)
+    monkeypatch.setattr(storefront_details.CardMaxSearcher, 'client_type', FakeClient)
+    FakeClient.reply = f'<link rel="canonical" href="{url}">' + html
+    path = f'/api/{source}/product/stock'
+    response = client.get(path, params={'product_url': url + '/'})
+    assert response.status_code == 200
+    fields = ('stock_status', 'stock_quantity', 'game', 'card_number', 'rarity')
+    assert tuple(response.json()[field] for field in fields) == expected
+    assert response.headers['cache-control'] == 'no-store'
+    assert client.get(path, params={'product_url': 'https://example.org/shopdetail/1'}).status_code == 422
+    assert client.get(path, params={'product_url': url + '?other=1'}).status_code == 422
+    client.headers.pop('Authorization')
+    assert client.get(path, params={'product_url': url}).status_code == 401
+    assert FakeClient.calls == [url]
 
 def stock_html(value, kizu=0):
     return FIXTURE + f'<div class="counter"><input class="cart_kizu" value="{kizu}"><input class="cart_active" value="{value}"></div>'

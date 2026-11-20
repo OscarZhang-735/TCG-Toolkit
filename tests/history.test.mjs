@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const source = await readFile(new URL('../src/tcg_toolkit/static/history.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/catalog/history.js', import.meta.url), 'utf8');
 const {readHistory, appendHistory, saveHistory} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 test('keeps last ten unique searches and moves repeats to newest', () => {
   let history = [];

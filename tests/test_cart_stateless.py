@@ -4,7 +4,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from tcg_toolkit.auth.store import UserStore
+from tcg_toolkit.persistence.runtime import open_database
 from tcg_toolkit.web import app
 from test_yuyutei_cart import client, upstream, BASE, CARD, SECRETS, ORIGIN
 
@@ -46,5 +46,5 @@ def test_idempotency_excludes_credentials_and_still_requires_valid_envelope(clie
     assert second.headers['idempotency-replayed'] == 'true'
     assert client.post(BASE + '/cart', json=CARD, headers=headers).status_code == 422
     assert sum(r.method == 'POST' for r in upstream[0]) == 1
-    raw = persisted_data(app.state.auth.store)
+    raw = persisted_data(app.state.database)
     assert not any(value.encode() in raw for value in SECRETS.values())

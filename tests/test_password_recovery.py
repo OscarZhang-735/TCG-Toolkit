@@ -1,5 +1,5 @@
 from sqlalchemy import select, func, update
-from tcg_toolkit.db_models import EmailChallenge, User
+from tcg_toolkit.persistence.models import EmailChallenge, User
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import smtplib
@@ -19,7 +19,7 @@ def account(client, name='alice'):
     result = register_user(client, name).json()
     client.headers['Authorization'] = 'Bearer ' + result['token']
     # Registration and password recovery intentionally share the email quota.
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         db.execute(update(EmailChallenge).values(created_at=EmailChallenge.created_at-61))
     return result
 
@@ -59,7 +59,7 @@ def test_email_password_flow_persists_and_consumes_code(client, mode):
     assert response.status_code == 204 and response.headers['Cache-Control'] == 'no-store'
     assert app.state.auth.current_user(original['token']) is None
     assert app.state.auth.login('alice@example.com', 'password123') is None
-    user, token = AuthService(app.state.auth.store).login('alice@example.com', NEW['new_password'])
+    user, token = AuthService(app.state.database).login('alice@example.com', NEW['new_password'])
     assert user['id'] == original['user']['id']
     if mode == 'change': client.headers['Authorization'] = 'Bearer ' + token
     assert client.post(f'/api/auth/password/{mode}', json=body).json()['detail'] == 'invalid_code'
@@ -67,7 +67,7 @@ def test_email_password_flow_persists_and_consumes_code(client, mode):
 
 def test_unknown_and_unverified_email_use_generic_success_without_mail(client):
     legacy_user()
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         db.execute(update(User).values(email="unverified@example.com"))
     for email in ['unknown@example.com', 'unverified@example.com']:
         response = client.post('/api/auth/password/reset/email-code', json={'email': email})
@@ -139,7 +139,7 @@ def test_inflight_email_cannot_reactivate_after_password_change(client):
                                        'password', 'password123')
     app.state.auth.verification.mailer.send_code = delivery
     assert client.post('/api/auth/password/reset/email-code', json={'email':'alice@example.com'}).status_code == 503
-    with app.state.auth.store.session() as db:
+    with app.state.database.session() as db:
         assert db.scalar(select(func.count()).select_from(EmailChallenge).where(EmailChallenge.state == "active")) == 0
 
 

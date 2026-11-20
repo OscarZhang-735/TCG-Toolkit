@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const source = await readFile(new URL('../src/tcg_toolkit/static/rarities.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/catalog/rarities.js', import.meta.url), 'utf8');
 const {rarityTier, rarityDescription} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('badge tier follows the per-game category and defaults to normal', () => {

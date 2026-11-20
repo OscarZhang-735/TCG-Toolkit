@@ -1,13 +1,16 @@
 import {apiRequest, getToken, setToken, TOKEN_KEY} from './api.js';
 import {t, applyLanguage, setLanguage, getLanguage} from './i18n.js';
 import {createAuthenticatedRequest} from './auth-client.js';
-import {yuyuteiClient} from './yuyutei-client.js';
-import {bindNavMenus, syncNavMenus} from './nav-menu.js';
-import {createEmailChallenge, authError} from './email-code.js';
-import {createPasswordUI} from './password-ui.js';
-import {createSubscriptionSettingsUI} from './subscription-settings-ui.js';
-import {createNotificationEmailUI} from './notification-email-ui.js';
-import {createAvatarCropper, loadImage} from './avatar-crop-ui.js';
+import {yuyuteiClient} from './cart/yuyutei-client.js';
+import {cardmaxClient} from './cart/cardmax-client.js';
+import {hobbystationClient} from './cart/hobbystation-client.js';
+import {bindNavMenus, syncNavMenus} from './shared/nav-menu.js';
+import {createEmailChallenge, authError} from './account/email-code.js';
+import {createPasswordUI} from './account/password-ui.js';
+import {createSubscriptionSettingsUI} from './subscriptions/subscription-settings-ui.js';
+import {createNotificationEmailUI} from './account/notification-email-ui.js';
+import {createAvatarCropper} from './account/avatar-crop-ui.js';
+import {loadImage} from './shared/load-image.js';
 const $ = id => document.getElementById(id);
 let user = null, searchApp = null, registering = false, errorKey = '';
 let bindError = '', authGeneration = 0, forgotten = false;
@@ -47,13 +50,14 @@ function resetEmails() {
   registrationEmail.reset(); bindingEmail.reset(); bindError = '';
   for (const id of ['auth-email', 'auth-code', 'bind-email', 'bind-code', 'bind-password']) $(id).value = '';
 }
+const CART_HASHES = ['#cart', '#cart-hobbystation', '#cart-cardmax'];
 function showPage() {
   const cards = Boolean(user) && location.hash === '#cards';
   $('cards-panel').hidden = !cards;
   const graded = Boolean(user) && location.hash === '#graded';
   $('graded-panel').hidden = !graded;
   const favorites = Boolean(user) && location.hash === '#favorites';
-  const cart = Boolean(user) && location.hash === '#cart';
+  const cart = Boolean(user) && CART_HASHES.includes(location.hash);
   $('cart-panel').hidden = !cart;
   $('favorites-panel').hidden = !favorites;
   const account = Boolean(user) && location.hash === '#account';
@@ -67,7 +71,7 @@ function showPage() {
   $('app-nav').hidden = !user;
   $('app-settings').hidden = !user;
   document.querySelectorAll('#app-nav a, #account-link').forEach(a => {
-    if (a.hash === (cards ? '#cards' : graded ? '#graded' : cart ? '#cart' : account ? '#account' : favorites ? '#favorites' : '#search')) a.setAttribute('aria-current', 'page');
+    if (a.hash === (cards ? '#cards' : graded ? '#graded' : cart ? location.hash : account ? '#account' : favorites ? '#favorites' : '#search')) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
   syncNavMenus();
@@ -163,7 +167,7 @@ function signedOut(message = '', clearToken = true) {
   forgotten = false;
   subscriptionSettingsUI.reset();
   authGeneration++; resetEmails();
-  yuyuteiClient.deactivate({clear: clearToken});
+  yuyuteiClient.deactivate({clear: clearToken}); hobbystationClient.deactivate({clear: clearToken}); cardmaxClient.deactivate({clear: clearToken});
   if (clearToken) setToken(null);
   api.invalidate(); searchApp?.clearUser(); user = null;
   avatarBusy = false; avatarStatus = ''; avatarCropError = ''; $('avatar-crop-dialog').close();
@@ -178,7 +182,7 @@ async function signedIn(value) {
   searchApp ??= await import('./app.js');
   if (getToken() !== expectedToken) return;
   // The cart client must know the account before the search app reads its cart.
-  user = value; yuyuteiClient.activateUser(user.id, api.fetch);
+  user = value; yuyuteiClient.activateUser(user.id, api.fetch); hobbystationClient.activateUser(user.id, api.fetch); cardmaxClient.activateUser(user.id, api.fetch);
   avatarBusy = false; avatarStatus = '';
   authGeneration++; resetEmails();
   searchApp.activateUser(user.id, api.fetch, user.email_verified ? user.email : null);
@@ -186,7 +190,7 @@ async function signedIn(value) {
   $('account-status').textContent = '';
   resetNicknameEditor(); renderDisplayName();
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = '';
-  if (!['#account', '#favorites', '#cards', '#graded', '#cart'].includes(location.hash)) location.hash = '#search';
+  if (!['#account', '#favorites', '#cards', '#graded', ...CART_HASHES].includes(location.hash)) location.hash = '#search';
   showPage(); refresh();
 }
 $('auth-form').addEventListener('submit', async event => {
@@ -338,7 +342,7 @@ $('avatar-crop-form').addEventListener('submit', async event => {
 });
 $('logout').addEventListener('click', async () => {
   const token = getToken();
-  yuyuteiClient.clearCredentials();
+  yuyuteiClient.clearCredentials(); hobbystationClient.clearCredentials(); cardmaxClient.clearCredentials();
   $('logout').disabled = true;
   api.invalidate(); searchApp?.clearUser();
   try {
@@ -361,7 +365,7 @@ async function restoreSession() {
   const token = getToken();
   const destination = location.hash;
   signedOut('', false);
-  if (!token) { yuyuteiClient.deactivate(); $('auth-submit').disabled = false; return; }
+  if (!token) { yuyuteiClient.deactivate(); hobbystationClient.deactivate(); cardmaxClient.deactivate(); $('auth-submit').disabled = false; return; }
   $('auth-submit').disabled = true;
   try {
     const response = await apiRequest('/api/auth/me', {cache: 'no-store'});
@@ -375,7 +379,7 @@ async function restoreSession() {
 }
 window.addEventListener('storage', event => {
   if (event.key === TOKEN_KEY || event.key === null) {
-    yuyuteiClient.deactivate();
+    yuyuteiClient.deactivate(); hobbystationClient.deactivate(); cardmaxClient.deactivate();
     restoreSession();
   }
 });

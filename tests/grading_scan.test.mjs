@@ -2,14 +2,14 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const asModule = value => `data:text/javascript;base64,${Buffer.from(value).toString('base64')}`;
-const source = (await readFile(new URL('../src/tcg_toolkit/static/grading-scan.js', import.meta.url), 'utf8'))
-  .replace("import {loadImage} from './avatar-crop-ui.js';", 'const loadImage = async file => file;');
+const source = (await readFile(new URL('../src/tcg_toolkit/static/collection/grading-scan.js', import.meta.url), 'utf8'))
+  .replace("import {loadImage} from '../shared/load-image.js';", 'const loadImage = async file => file;');
 const {parseScan, cropBox, soften, frameFrom, createDecoder, decodeSource, decodePhoto, cameraError, cameraSupported,
   startCamera, PHOTO_ATTEMPTS, CAMERA_ATTEMPTS} = await import(asModule(source));
 
 // The registry's own patterns, as /api/grading/providers sends them: this also proves the
 // Python patterns compile and match in a JavaScript RegExp.
-const registry = await readFile(new URL('../src/tcg_toolkit/grading.py', import.meta.url), 'utf8');
+const registry = await readFile(new URL('../src/tcg_toolkit/grading/lookup.py', import.meta.url), 'utf8');
 const PROVIDERS = [...registry.matchAll(/GradingProvider\('(\w+)', '([^']+)', \w+, (\d+), \(\s*r'([^']+)'/g)]
   .map(([, id, name, timeout, pattern]) => ({id, name, timeout_seconds: Number(timeout), scan_patterns: [pattern]}));
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };

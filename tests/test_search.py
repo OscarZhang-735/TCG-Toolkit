@@ -93,7 +93,7 @@ def test_page_navigation(source, cls, page, next_page):
 
 def test_iteration_lazy_order_interval_and_preserves_duplicate_numbers(monkeypatch):
     calls, sleeps = [], []
-    monkeypatch.setattr("tcg_toolkit.search.time.sleep", sleeps.append)
+    monkeypatch.setattr("tcg_toolkit.catalog.pagination.time.sleep", sleeps.append)
     def respond(request):
         page = int(request.url.params.get("page", "1"))
         calls.append(page)
@@ -105,6 +105,7 @@ def test_iteration_lazy_order_interval_and_preserves_duplicate_numbers(monkeypat
         first = next(pages)
         assert calls == [1] and sleeps == []
         second = next(pages)
+        assert first.to_dict()['source'] == second.to_dict()['source'] == 'yuyutei'
         assert calls == [1, 2] and sleeps == [1.0]
         assert list(pages) == []
         assert list(searcher.iter_results("YZ")) == first.items + second.items

@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const source = await readFile(new URL('../src/tcg_toolkit/static/logic.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/catalog/logic.js', import.meta.url), 'utf8');
 const {selectItems, loadResults, priceSteps, sliderIndex, sliderBound, largeImageUrl} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const base = {games: ['wsr','chaos'], stock: '', min: null, max: null, text: '', sort: 'original'};
 const items = [
@@ -20,7 +20,7 @@ test('numeric sorting, stable ties and unknown quantities last', () => {
 });
 test('round robin, next links, failures and continued results', async () => {
  const calls=[],received=[],errors=[]; let waits=0;
- const failed=await loadResults({games:['wsr','lycee','chaos'],keyword:'x',signal:new AbortController().signal,
+ const failed=await loadResults({targets:['wsr','lycee','chaos'],keyword:'x',signal:new AbortController().signal,
   fetchPage:async(g,k,p)=>{calls.push([g,p]);if(g==='lycee')throw Error('failed');return {game:g,next_page:p===1?2:null};},
   onPage:r=>received.push(r),onError:g=>errors.push(g),wait:async()=>{waits++;}});
  assert.equal(failed,true);assert.deepEqual(errors,['lycee']);assert.equal(received.length,4);
@@ -28,7 +28,7 @@ test('round robin, next links, failures and continued results', async () => {
 });
 test('stop ignores in-flight response and prevents further requests',async()=>{
  const controller=new AbortController();let received=0,calls=0;
- await loadResults({games:['wsr','chaos'],keyword:'x',signal:controller.signal,
+ await loadResults({targets:['wsr','chaos'],keyword:'x',signal:controller.signal,
  fetchPage:async()=>{calls++;controller.abort();return {next_page:2};},
  onPage:()=>received++,onError:()=>assert.fail(),wait:async()=>assert.fail()});
  assert.equal(calls,1);assert.equal(received,0);
@@ -68,4 +68,12 @@ test('subscription filter uses the supplied predicate and combines with other fi
  assert.deepEqual(selectItems(items, {...base, subscription: 'unsubscribed', isSubscribed}), [items[1]]);
  assert.deepEqual(selectItems(items, {...base, subscription: 'subscribed', isSubscribed, text: 'other'}), [items[2]]);
  assert.deepEqual(selectItems(items, {...base, subscription: ''}), items);
+});
+
+test('source filter treats items without a source as YuYu-Tei', () => {
+  const mixed = [{...items[0], source: 'cardmax'}, items[2]];
+  assert.deepEqual(selectItems(mixed, {...base, sources: ['cardmax']}), [mixed[0]]);
+  assert.deepEqual(selectItems(mixed, {...base, sources: ['yuyutei', 'hobbystation']}), [items[2]]);
+  assert.equal(selectItems(mixed, {...base, sources: []}).length, 0);
+  assert.equal(selectItems(mixed, {...base, sources: null}).length, 2);
 });

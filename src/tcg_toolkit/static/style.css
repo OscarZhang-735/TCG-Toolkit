@@ -94,6 +94,32 @@ button:disabled:hover { background: var(--color-primary); border-color: var(--co
 .chip .bi { display: none; }
 .chip:has(input:checked) { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-on-primary); }
 .chip:has(input:checked) .bi { display: inline; }
+.source-chips { align-items: center; margin: 0 0 14px; }
+.source-option { display: inline-flex; align-items: center; gap: 2px; padding-left: 10px; margin-left: 2px; border-left: 1px solid var(--color-divider); }
+.source-option[hidden] { display: none; }
+.checkbox-option { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
+.checkbox-option input { width: 15px; height: 15px; margin: 0; accent-color: var(--color-primary); cursor: pointer; }
+.checkbox-option:has(input:checked) { color: var(--color-text); }
+.info-tip { position: relative; display: inline-flex; }
+.info-tip .icon-button { width: 28px; height: 28px; font-size: 14px; }
+.info-tip .tip, .chip .tip {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; white-space: normal; text-align: left;
+  width: max-content; max-width: min(320px, 80vw); padding: 8px 10px; border-radius: var(--radius-md);
+  background: var(--color-text); color: var(--color-surface); font-size: 12px; line-height: 1.5; font-weight: 400;
+  box-shadow: var(--shadow-sm); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .15s;
+}
+.info-tip:hover .tip, .info-tip:focus-within .tip, .chip:hover .tip, .chip:focus-within .tip { opacity: 1; visibility: visible; }
+.chip:has(.tip) { position: relative; }
+.chip .tip { right: auto; left: 0; }
+/* Same font size as .game-tag, so 1lh + 1px padding and border on each side is its exact height. */
+.badge.has-hint { cursor: help; }
+.tag-stack { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
+.source-tag {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; box-sizing: border-box;
+  font-size: 11px; width: calc(1lh + 4px); height: calc(1lh + 4px); border-radius: 50%; overflow: hidden;
+  border: 1px solid var(--color-border-strong); background: #fff; font-weight: 600; color: var(--color-text-secondary);
+}
+.source-tag img { display: block; width: 100%; height: 100%; object-fit: cover; }
 
 /* Results heading */
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 32px 0 14px; }
@@ -122,6 +148,7 @@ button:disabled:hover { background: var(--color-primary); border-color: var(--co
 .field > span, .price-head > span { display: block; font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
 .field select { margin-top: 6px; }
 .filters .chips { margin-top: 0; padding-top: 16px; border-top: 1px solid var(--color-divider); }
+.filters .chips[hidden] { display: none; }
 
 /* Dual-thumb price slider */
 .price-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -681,6 +708,12 @@ button.preview-close:hover { background: color-mix(in srgb, var(--gray-0) 28%, t
 .cards-form-grid .field .price-input input, .field.graded-price-field .price-input input { flex: 1; min-width: 0; margin-top: 0; }
 .card-dialog .field .price-input select, .field.graded-price-field .price-input select { width: auto; flex: none; margin-top: 0; }
 .card-dialog .price-input .price-lookup-button { flex: none; padding: 0 12px; gap: 6px; }
+.card-price-field { container-type: inline-size; }
+@container (max-width: 380px) {
+  .card-price-field .price-input { gap: 4px; }
+  .card-price-field .price-input :is(input, select, .price-lookup-button) { padding-inline: 4px; font-size: 13px; }
+  .card-price-field .price-lookup-button i { display: none; }
+}
 /* Price lookup results, below the quantity / price row. */
 .price-lookup { padding: 12px 14px; background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
 .price-lookup-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -750,6 +783,7 @@ button.row-action:hover { background: var(--color-hover); color: var(--color-tex
 
 /* Add / edit card dialog with official Lycee matches */
 .form-dialog.card-dialog { width: min(920px, 94vw); padding: 28px; }
+@media (max-width: 420px) { .form-dialog.card-dialog { padding-inline: 12px; } }
 .card-dialog .lookup-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
 .card-dialog .details-row { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
 .card-dialog .details-row .wide-2 { grid-column: span 2; }
@@ -851,12 +885,15 @@ td.owned-cell.muted { font-weight: 400; color: var(--color-text-subtle); }
   border-radius: var(--radius-pill); pointer-events: none;
 }
 
+.owned-cell > [title] { display: block; cursor: help; }
+.owned-badge[title] { pointer-events: auto; cursor: help; }
+
 /* Game logos in search and filter chips; a light backing keeps silver logos visible on checked (dark) chips. */
 .chip-logo { height: 16px; width: auto; margin-left: 2px; padding: 1px 3px; background: var(--color-surface); border-radius: var(--radius-sm); }
 
 /* YuYu-Tei cart: search-result steppers, heading summary, user-centre credentials */
-.cart-bar { display: flex; align-items: center; gap: 2px; }
-.cart-summary { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cart-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.cart-summary { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 .cart-summary a { color: var(--color-text); }
 th.cart-col, td.cart-col { width: 1%; white-space: nowrap; }
 .cart-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -869,10 +906,14 @@ button.cart-step:disabled:hover { background: transparent; }
 .card-cart { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .card-cart .cart-controls { align-items: flex-end; min-width: 0; }
 .card-cart-label { flex: none; font-size: 12px; line-height: 30px; color: var(--color-text-muted); }
-.cart-settings { display: flex; flex-direction: column; gap: 16px; padding: 20px; margin-bottom: 16px; }
+.cart-credentials { padding: 20px; margin-bottom: 16px; }
+.cart-credentials-head { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 18px; }
+.cart-settings { display: flex; flex-direction: column; gap: 16px; padding: 18px 0; border-top: 1px solid var(--color-border); }
+.cart-settings:last-child { padding-bottom: 0; }
 .cart-settings-head { display: flex; align-items: flex-start; gap: 14px; }
 .cart-settings-text { flex: 1; min-width: 0; }
 .cart-settings-text h2 { font-size: 15px; }
+.cart-settings-text h3 { font-size: 14px; }
 .cart-settings-text p { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--color-text-muted); }
 .cart-settings-meta { display: flex; flex: none; align-items: center; gap: 10px; }
 .cart-state, .email-state { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 10px; font-size: 12px; font-weight: 500; color: var(--color-text-muted); background: var(--color-surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
@@ -885,12 +926,12 @@ button.cart-step:disabled:hover { background: transparent; }
 .cart-help[open] summary { margin-bottom: 12px; }
 .cart-help ol { display: grid; gap: 18px; margin: 0; padding-left: 22px; line-height: 1.65; }
 .cart-settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-#cart-settings-status { flex: 1; margin: 0; font-size: 13px; color: var(--color-text-muted); }
-#cart-settings-status.error { color: var(--color-text); font-weight: 500; }
+#cart-settings-status, .cart-settings-status { flex: 1; margin: 0; font-size: 13px; color: var(--color-text-muted); }
+#cart-settings-status.error, .cart-settings-status.error { color: var(--color-text); font-weight: 500; }
 @media (max-width: 700px) {
   .cart-settings-fields { grid-template-columns: 1fr; }
   .cart-settings-actions { flex-wrap: wrap; }
-  #cart-settings-status { flex-basis: 100%; }
+  #cart-settings-status, .cart-settings-status { flex-basis: 100%; }
 }
 /* One rhythm inside each step: text, command, screenshot, notes. */
 .cart-help li > * + * { margin-top: 10px; }
@@ -931,7 +972,7 @@ button.cart-step:disabled:hover { background: transparent; }
 
 /* Credential routes: recommended Cookie + CSRF first, cURL import as the alternative */
 .cart-settings-body[hidden] { display: none; }
-#cart-settings-form { display: flex; flex-direction: column; gap: 16px; }
+#cart-settings-form, .cart-settings-form { display: flex; flex-direction: column; gap: 16px; }
 .cart-route { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
 .cart-route.recommended { border-color: var(--color-border-strong); box-shadow: var(--shadow-sm); }
 .cart-route-head { display: flex; align-items: center; gap: 8px; }
@@ -952,7 +993,7 @@ button.cart-step:disabled:hover { background: transparent; }
 button.cart-settings-toggle, button.panel-toggle { flex: none; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; }
 button.cart-settings-toggle:hover, button.panel-toggle:hover { background: var(--color-hover); }
 /* No icon for neutral states: drop the empty element so the gap does not offset the text. */
-#cart-settings-state-icon:not([class~="bi"]) { display: none; }
+.cart-state > i:not(.bi) { display: none; }
 
 /* Narrow screens and high zoom: headings wrap instead of squeezing their actions. */
 @media (max-width: 700px) {
@@ -1416,4 +1457,49 @@ button.graded-image-menu-item:hover, button.graded-image-menu-item:focus-visible
   .graded-filter-row, .graded-form-grid, .graded-detail { grid-template-columns: 1fr; }
   .graded-side .card-image { height: 160px; }
   .graded-detail-images .card-image { height: 260px; }
+}
+.account-icon-image { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
+
+/* Sidebar cart menu: an expandable "Cart" entry with one page per shop (nav-menu.js). */
+.nav-submenu { display: flex; flex-direction: column; gap: 4px; }
+button.nav-submenu-toggle {
+  justify-content: flex-start; gap: 10px; width: 100%; height: auto; padding: 10px 12px;
+  font-weight: 500; color: var(--color-text-secondary); background: transparent; border: 0; border-radius: var(--radius-md);
+}
+button.nav-submenu-toggle:hover { background: var(--color-hover); border: 0; }
+.nav-submenu.has-current .nav-submenu-toggle { color: var(--color-text); font-weight: 600; }
+.nav-submenu-chevron { margin-left: auto; font-size: 12px; transition: transform .15s; }
+.nav-submenu-toggle .nav-count:not([hidden]) + .nav-submenu-chevron { margin-left: 6px; }
+.nav-submenu.open .nav-submenu-chevron { transform: rotate(180deg); }
+/* The menu's total is only needed while the per-shop counts are folded away. */
+.nav-submenu.open .nav-submenu-toggle .nav-count { display: none; }
+.nav-submenu.open .nav-submenu-toggle .nav-submenu-chevron { margin-left: auto; }
+.nav-submenu-items { display: flex; flex-direction: column; gap: 4px; }
+.nav-submenu:not(.open) .nav-submenu-items { display: none; }
+.nav-submenu-items a { padding: 8px 12px 8px 40px; font-size: 14px; white-space: nowrap; }
+/* Counts keep their full width; a squeezed bubble pushes its digits off-centre. */
+#app-nav .nav-count { flex: none; }
+/* One row of links: the shop list drops down under the cart entry. */
+@media (max-width: 700px) {
+  .nav-submenu { position: relative; }
+  button.nav-submenu-toggle { white-space: nowrap; }
+  .nav-submenu-items a { padding: 8px 12px; }
+  .nav-submenu.has-current .nav-submenu-toggle { color: var(--color-on-primary); background: var(--color-primary); }
+  .nav-submenu-items {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 190px; gap: 2px; padding: 6px;
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+  }
+}
+@media (max-width: 480px) {
+  button.nav-submenu-toggle { position: relative; flex-direction: column; justify-content: center; gap: 3px; padding: 7px 4px; font-size: 12px; }
+  .nav-submenu-chevron { display: none; }
+  .nav-submenu-toggle .nav-count { position: absolute; top: 3px; left: calc(50% + 3px); margin: 0; min-width: 16px; padding: 0 4px; font-size: 10px; line-height: 15px; }
+}
+/* Portrait phones: the group is already a dropdown, so the shop carts are listed in it directly. */
+@media (max-width: 700px) and (orientation: portrait) {
+  .nav-submenu { display: contents; }
+  button.nav-submenu-toggle { display: none; }
+  .nav-submenu .nav-submenu-items, .nav-submenu:not(.open) .nav-submenu-items {
+    display: contents; position: static; min-width: 0; padding: 0; background: none; border: 0; box-shadow: none;
+  }
 }

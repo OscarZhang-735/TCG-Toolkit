@@ -2,8 +2,8 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const source = (await readFile(new URL('../src/tcg_toolkit/static/yuyutei-client.js', import.meta.url), 'utf8'))
-  .replace("import {apiRequest, getToken} from './api.js';", "const apiRequest = () => {}; const getToken = () => null;");
+const source = (await readFile(new URL('../src/tcg_toolkit/static/cart/yuyutei-client.js', import.meta.url), 'utf8'))
+  .replace("import {apiRequest, getToken} from '../api.js';", "const apiRequest = () => {}; const getToken = () => null;");
 const {createYuyuteiClient, CREDENTIALS_KEY} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const secrets = {cookie: 'session-secret', csrf_token: 'csrf-secret'};
 const card = {gid: 56, ver: 'OS01', cid: '10044'};

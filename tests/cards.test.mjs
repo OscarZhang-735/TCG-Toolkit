@@ -1,10 +1,10 @@
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const source = await readFile(new URL('../src/tcg_toolkit/static/cards.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/tcg_toolkit/static/collection/cards.js', import.meta.url), 'utf8');
 const asModule = value => `data:text/javascript;base64,${Buffer.from(value).toString('base64')}`;
-const money = asModule(await readFile(new URL('../src/tcg_toolkit/static/card-money.js', import.meta.url), 'utf8'));
-const prices = (await readFile(new URL('../src/tcg_toolkit/static/card-prices.js', import.meta.url), 'utf8')).replace("'./card-money.js'", JSON.stringify(money));
+const money = asModule(await readFile(new URL('../src/tcg_toolkit/static/collection/card-money.js', import.meta.url), 'utf8'));
+const prices = (await readFile(new URL('../src/tcg_toolkit/static/collection/card-prices.js', import.meta.url), 'utf8')).replace("'./card-money.js'", JSON.stringify(money));
 const {createCards, filterCards, summarizeCards} = await import(asModule(source));
 const {yenPrice} = await import(money);
 const {priceGame, rankOffers, pickOffer, fetchPriceMerchants, lookupPrices} = await import(asModule(prices));

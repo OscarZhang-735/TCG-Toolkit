@@ -3,12 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const moduleURL = async name => `data:text/javascript;base64,${Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/'+name, import.meta.url))).toString('base64')}`;
 const {createAuthenticatedRequest} = await import(await moduleURL('auth-client.js'));
-const {loadResults} = await import(await moduleURL('logic.js'));
-const {readHistory, saveHistory} = await import(await moduleURL('history.js'));
+const {loadResults} = await import(await moduleURL('catalog/logic.js'));
+const {readHistory, saveHistory} = await import(await moduleURL('catalog/history.js'));
 test('401 aborts all subsequent search pages', async () => {
   const controller = new AbortController(); let calls = 0, expired = 0;
   const api = createAuthenticatedRequest(() => {expired++; controller.abort();}, async () => {calls++; return {status: 401};});
-  await loadResults({games: ['wsr','lycee'], keyword: 'test', signal: controller.signal,
+  await loadResults({targets: ['wsr','lycee'], keyword: 'test', signal: controller.signal,
     fetchPage: () => api.fetch('/api/search'), onPage: () => assert.fail('page after expiry'),
     onError: () => assert.fail('error after expiry'), wait: async () => {}});
   assert.equal(calls, 1); assert.equal(expired, 1);

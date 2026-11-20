@@ -8,9 +8,9 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from tcg_toolkit.auth.store import UserStore
-from tcg_toolkit.card_transfer import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
-from tcg_toolkit.db_models import CardGroup, OwnedCard
+from tcg_toolkit.persistence.runtime import open_database
+from tcg_toolkit.collection.transfer import EXPORT_COLUMNS, XLSX_MEDIA_TYPE
+from tcg_toolkit.persistence.models import CardGroup, OwnedCard
 from tcg_toolkit.web import app
 from test_cards import CARD, client, exported, login, spreadsheet_rows
 
@@ -30,8 +30,8 @@ def add(client, **fields):
 @pytest.mark.parametrize('created_at', [(100, 100, 100), (100, 101, 102)])
 def test_group_lifecycle_and_name_rules(client, monkeypatch, created_at):
     timestamps, ids = iter(created_at), iter([3, 2, 1])
-    monkeypatch.setattr('tcg_toolkit.cards.time', SimpleNamespace(time=lambda: next(timestamps)))
-    monkeypatch.setattr('tcg_toolkit.cards.uuid', SimpleNamespace(uuid4=lambda: UUID(int=next(ids))))
+    monkeypatch.setattr('tcg_toolkit.collection.groups.time', SimpleNamespace(time=lambda: next(timestamps)))
+    monkeypatch.setattr('tcg_toolkit.collection.groups.uuid', SimpleNamespace(uuid4=lambda: UUID(int=next(ids))))
     assert client.get('/api/cards/groups').json() == {'items': []}
     for name in ['', ' \t\n', 'x' * 101, None, 42]:
         assert client.post('/api/cards/groups', json={'name': name}).status_code == 422
@@ -85,7 +85,7 @@ def test_membership_filter_move_delete_and_edit_preserve_cards(client):
     response = client.put(edit, json={**CARD, 'card_number': 'ABC-002', 'group_id': None})
     assert response.status_code == 409
     assert client.get('/api/cards', params={'group_id': custom['id']}).json()['items'][-1]['id'] == saved['id']
-    with UserStore(app.state.auth.store.conninfo) as store, store.session() as db:
+    with open_database(app.state.database.conninfo) as store, store.session() as db:
         assert db.get(OwnedCard, saved['id']).group_id == custom['id']
         assert db.get(CardGroup, custom['id']).name == custom['name']
     assert client.request('DELETE', f"/api/cards/groups/{custom['id']}", json={}).status_code == 204
@@ -129,10 +129,10 @@ def test_group_ownership_and_database_constraints(client):
         response = client.put(f'/api/cards/{card_id}/group', json={'group_id': bob_group['id']})
         assert response.status_code == 404 and response.json()['detail'] == 'card_not_found'
     with pytest.raises(IntegrityError):
-        with app.state.auth.store.session() as db:
+        with app.state.database.session() as db:
             db.execute(update(OwnedCard).where(OwnedCard.id == saved['id']).values(group_id=bob_group['id']))
     with pytest.raises(IntegrityError):
-        with app.state.auth.store.session() as db:
+        with app.state.database.session() as db:
             db.add(CardGroup(id='duplicate', user_id=db.get(CardGroup, bob_group['id']).user_id,
                              name=bob_group['name'], created_at=1))
 

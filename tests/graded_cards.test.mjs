@@ -8,7 +8,7 @@ const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const asModule = value => `data:text/javascript;base64,${Buffer.from(value).toString('base64')}`;
 const {createGradedCards, gradingError, gradeValue, formatElapsed, filterGraded, slabImages, ERROR_KEYS, MAX_CONCURRENT,
   fullCorners, clampCorner, cornersParam, imageError, IMAGE_ERROR_KEYS} =
-  await import(asModule(await readFile(new URL('graded-cards.js', base), 'utf8')));
+  await import(asModule(await readFile(new URL('collection/graded-cards.js', base), 'utf8')));
 const {messages} = await import(asModule(await readFile(new URL('locales.js', base), 'utf8')));
 
 const reply = (data, status = 200) => ({ok: status < 400, status, json: async () => data});
@@ -86,7 +86,7 @@ test('error details map to one message per kind, and only number problems are fi
 });
 
 test('UI string keys used by the graded-card modules exist in both languages', async () => {
-  const sources = await Promise.all(['graded-cards.js', 'graded-cards-ui.js', 'grading-scan.js']
+  const sources = await Promise.all(['collection/graded-cards.js', 'collection/graded-cards-ui.js', 'collection/grading-scan.js']
     .map(name => readFile(new URL(name, base), 'utf8')));
   // Server detail codes share the prefix but are not messages.
   const codes = new Set(['graded_card_duplicate', 'graded_card_not_found', 'graded_lookup_finished',

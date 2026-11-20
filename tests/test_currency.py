@@ -1,6 +1,6 @@
 from sqlalchemy import select
-from tcg_toolkit.db_models import CurrencyRate
-from tcg_toolkit.database import Database
+from tcg_toolkit.persistence.models import CurrencyRate
+from tcg_toolkit.persistence.database import Database
 import httpx
 import pytest
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from tcg_toolkit.external import CurrencyClient, CurrencyConfigError, CurrencyRequestError, TargetCurrency
 from tcg_toolkit.web import app
-from tcg_toolkit.external import currency as currency_module
+from tcg_toolkit.currency import client as currency_module
 
 
 @pytest.fixture(autouse=True)

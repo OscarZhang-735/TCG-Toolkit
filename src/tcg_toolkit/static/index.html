@@ -17,7 +17,7 @@
 <body class="signed-out">
 <aside>
 <a class="brand" href="./"><i class="bi bi-stack"></i><span data-i18n="tcg"></span><span data-i18n="toolkit"></span></a>
-<nav id="app-nav" hidden><div class="nav-group" role="group" aria-labelledby="nav-group-shop"><button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="nav-group-shop-items"><span class="nav-group-name" data-i18n="nav_group_shop"></span><span class="nav-group-current"></span><i class="bi bi-chevron-down" aria-hidden="true"></i></button><span class="nav-group-label" id="nav-group-shop" data-i18n="nav_group_shop"></span><div class="nav-group-items" id="nav-group-shop-items"><a aria-current="page" href="#search"><i class="bi bi-search"></i><span data-i18n="search"></span></a><a href="#favorites"><i class="bi bi-star"></i><span data-i18n="favorites"></span><span id="favorites-nav-count" class="nav-count" hidden></span></a><a href="#cart"><i class="bi bi-cart3"></i><span data-i18n="cart_title"></span><span id="cart-nav-count" class="nav-count" hidden></span></a></div></div><div class="nav-group" role="group" aria-labelledby="nav-group-local"><button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="nav-group-local-items"><span class="nav-group-name" data-i18n="nav_group_local"></span><span class="nav-group-current"></span><i class="bi bi-chevron-down" aria-hidden="true"></i></button><span class="nav-group-label" id="nav-group-local" data-i18n="nav_group_local"></span><div class="nav-group-items" id="nav-group-local-items"><a href="#cards"><i class="bi bi-collection"></i><span data-i18n="cards_title"></span><span id="cards-nav-count" class="nav-count" hidden></span></a><a href="#graded"><i class="bi bi-award"></i><span data-i18n="graded_title"></span><span id="graded-nav-count" class="nav-count" hidden></span></a></div></div></nav>
+<nav id="app-nav" hidden><div class="nav-group" role="group" aria-labelledby="nav-group-shop"><button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="nav-group-shop-items"><span class="nav-group-name" data-i18n="nav_group_shop"></span><span class="nav-group-current"></span><i class="bi bi-chevron-down" aria-hidden="true"></i></button><span class="nav-group-label" id="nav-group-shop" data-i18n="nav_group_shop"></span><div class="nav-group-items" id="nav-group-shop-items"><a aria-current="page" href="#search"><i class="bi bi-search"></i><span data-i18n="search"></span></a><a href="#favorites"><i class="bi bi-star"></i><span data-i18n="favorites"></span><span id="favorites-nav-count" class="nav-count" hidden></span></a><div class="nav-submenu" id="cart-nav"><button type="button" class="nav-submenu-toggle" aria-expanded="false" aria-controls="cart-nav-items"><i class="bi bi-cart3"></i><span data-i18n="cart_title"></span><span id="cart-nav-total" class="nav-count" hidden></span><i class="bi bi-chevron-down nav-submenu-chevron" aria-hidden="true"></i></button><div class="nav-submenu-items" id="cart-nav-items"><a href="#cart"><span data-i18n="source_yuyutei"></span><span id="cart-nav-count" class="nav-count" hidden></span></a><a href="#cart-hobbystation"><span data-i18n="source_hobbystation"></span><span id="hs-cart-nav-count" class="nav-count" hidden></span></a><a href="#cart-cardmax"><span data-i18n="source_cardmax"></span><span id="cm-cart-nav-count" class="nav-count" hidden></span></a></div></div></div></div><div class="nav-group" role="group" aria-labelledby="nav-group-local"><button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="nav-group-local-items"><span class="nav-group-name" data-i18n="nav_group_local"></span><span class="nav-group-current"></span><i class="bi bi-chevron-down" aria-hidden="true"></i></button><span class="nav-group-label" id="nav-group-local" data-i18n="nav_group_local"></span><div class="nav-group-items" id="nav-group-local-items"><a href="#cards"><i class="bi bi-collection"></i><span data-i18n="cards_title"></span><span id="cards-nav-count" class="nav-count" hidden></span></a><a href="#graded"><i class="bi bi-award"></i><span data-i18n="graded_title"></span><span id="graded-nav-count" class="nav-count" hidden></span></a></div></div></nav>
 <div id="app-settings" class="sidebar-settings" hidden>
 <label class="setting" data-i18n-title="language"><i class="bi bi-globe2"></i><select data-i18n-aria-label="language" id="language"><option data-i18n="english" value="en"></option><option data-i18n="chinese" value="zh-CN"></option></select></label>
 <label class="setting" data-i18n-title="display_currency"><i class="bi bi-currency-exchange"></i><select id="currency" data-i18n-aria-label="display_currency"><option value="JPY" data-i18n="currency_jpy"></option><option value="CNY" data-i18n="currency_cny"></option><option value="CAD" data-i18n="currency_cad"></option></select></label>
@@ -152,8 +152,10 @@
 <div class="proxy-text"><h2 id="proxy-title" data-i18n="proxy_title"></h2><p id="proxy-help" data-i18n="proxy_help"></p></div>
 <button type="button" id="proxy-enabled" class="switch" role="switch" aria-checked="true" aria-describedby="proxy-help"><span class="switch-label" data-i18n="proxy_enabled"></span><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></button>
 </section>
-<section class="panel cart-settings" id="cart-settings" aria-labelledby="cart-settings-title">
-<div class="cart-settings-head"><span class="account-icon"><i class="bi bi-cart3"></i></span><div class="cart-settings-text"><h2 id="cart-settings-title" data-i18n="cart_settings_title"></h2><p><strong data-i18n="cart_settings_intro_lead"></strong> <span data-i18n="cart_settings_intro"></span></p></div>
+<section class="panel cart-credentials" aria-labelledby="cart-credentials-title">
+<div class="cart-credentials-head"><span class="account-icon"><i class="bi bi-key"></i></span><div class="cart-settings-text"><h2 id="cart-credentials-title" data-i18n="cart_credentials_title"></h2><p data-i18n="cart_settings_intro"></p></div></div>
+<section class="cart-settings" id="cart-settings" aria-labelledby="cart-settings-title">
+<div class="cart-settings-head"><span class="account-icon"><img class="account-icon-image" src="./yuyutei-logo.webp" alt="" aria-hidden="true"/></span><div class="cart-settings-text"><h3 id="cart-settings-title" data-i18n="cart_settings_title"></h3><p data-i18n="cart_settings_intro_lead"></p></div>
 <div class="cart-settings-meta"><span id="cart-settings-state" class="cart-state" role="status"><i id="cart-settings-state-icon" aria-hidden="true"></i><span id="cart-settings-state-label"></span></span><button type="button" id="cart-settings-toggle" class="icon-button cart-settings-toggle" aria-controls="cart-settings-body" hidden><i id="cart-settings-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div></div>
 <div id="cart-settings-body" class="cart-settings-body">
 <form id="cart-settings-form" autocomplete="off" novalidate>
@@ -198,6 +200,67 @@
 </div>
 </form>
 </div>
+</section>
+<section class="cart-settings" id="hs-cart-settings" aria-labelledby="hs-cart-title">
+<div class="cart-settings-head"><span class="account-icon"><img class="account-icon-image" src="./source-hobbystation.png" alt="" aria-hidden="true"/></span><div class="cart-settings-text"><h3 id="hs-cart-title" data-i18n="hs_cart_title"></h3><p data-i18n="hs_cart_intro_lead"></p></div>
+<div class="cart-settings-meta"><span id="hs-cart-state" class="cart-state" role="status"><i id="hs-cart-state-icon" aria-hidden="true"></i><span id="hs-cart-state-label"></span></span><button type="button" id="hs-cart-toggle" class="icon-button cart-settings-toggle" aria-controls="hs-cart-body"><i id="hs-cart-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div></div>
+<div id="hs-cart-body" class="cart-settings-body">
+<form id="hs-cart-form" class="cart-settings-form" autocomplete="off" novalidate>
+<section class="cart-route recommended" aria-labelledby="hs-cart-route-title">
+<div class="cart-route-head"><h3 id="hs-cart-route-title" data-i18n="hs_cart_route"></h3></div>
+<p class="cart-route-desc" data-i18n="hs_cart_route_desc"></p>
+<div class="cart-settings-fields">
+<label class="field"><span>eccube</span><input id="hs-cart-eccube" type="password" autocomplete="off" spellcheck="false" maxlength="600" required data-i18n-placeholder="hs_cart_eccube_placeholder"/></label>
+<label class="field"><span>eccube_bot_check</span><input id="hs-cart-bot-check" type="password" autocomplete="off" spellcheck="false" maxlength="600" required data-i18n-placeholder="hs_cart_bot_check_placeholder"/></label>
+</div>
+<details class="cart-help"><summary data-i18n="cart_help_title"></summary>
+<ol>
+<li data-i18n="hs_cart_help_1"></li>
+<li><span data-i18n="hs_cart_help_2"></span>
+<figure class="cart-help-figure"><a href="./hs-help-cookies.webp" target="_blank" rel="noopener"><img src="./hs-help-cookies.webp" width="2000" height="1243" loading="lazy" decoding="async" data-i18n-alt="hs_cart_figure_alt"/></a><figcaption data-i18n="hs_cart_figure"></figcaption></figure>
+<span class="cart-help-note" data-i18n="hs_cart_help_2_note"></span></li>
+<li data-i18n="hs_cart_help_3"></li>
+</ol></details>
+<div class="cart-route-actions"><button type="submit" id="hs-cart-save"><i class="bi bi-check-lg"></i><span data-i18n="cart_save"></span></button></div>
+</section>
+<div class="cart-settings-actions">
+<p id="hs-cart-status" class="cart-settings-status" role="status" aria-live="polite"></p>
+<button type="button" id="hs-cart-clear" class="secondary"><i class="bi bi-trash3"></i><span data-i18n="cart_clear"></span></button>
+</div>
+</form>
+</div>
+</section>
+<section class="cart-settings" id="cm-cart-settings" aria-labelledby="cm-cart-title">
+<div class="cart-settings-head"><span class="account-icon"><img class="account-icon-image" src="./source-cardmax.png" alt="" aria-hidden="true"/></span><div class="cart-settings-text"><h3 id="cm-cart-title" data-i18n="cm_cart_title"></h3><p data-i18n="cm_cart_intro_lead"></p></div>
+<div class="cart-settings-meta"><span id="cm-cart-state" class="cart-state" role="status"><i id="cm-cart-state-icon" aria-hidden="true"></i><span id="cm-cart-state-label"></span></span><button type="button" id="cm-cart-toggle" class="icon-button cart-settings-toggle" aria-controls="cm-cart-body"><i id="cm-cart-toggle-icon" class="bi bi-chevron-down" aria-hidden="true"></i></button></div></div>
+<div id="cm-cart-body" class="cart-settings-body">
+<form id="cm-cart-form" class="cart-settings-form" autocomplete="off" novalidate>
+<section class="cart-route recommended" aria-labelledby="cm-cart-route-title">
+<div class="cart-route-head"><h3 id="cm-cart-route-title" data-i18n="cm_cart_route"></h3></div>
+<p class="cart-route-desc" data-i18n="cm_cart_route_desc"></p>
+<div class="cart-settings-fields">
+<label class="field"><span>tempid</span><input id="cm-cart-tempid" type="password" autocomplete="off" spellcheck="false" maxlength="530" required/></label>
+<label class="field"><span>login_id</span><input id="cm-cart-login-id" type="password" autocomplete="off" spellcheck="false" maxlength="530" required/></label>
+<label class="field"><span data-i18n="cm_cart_member_name"></span><input id="cm-cart-member-name" type="text" autocomplete="off" spellcheck="false" maxlength="36" required data-i18n-placeholder="cm_cart_member_placeholder"/></label>
+<label class="field"><span data-i18n="cm_cart_member_value"></span><input id="cm-cart-member-value" type="password" autocomplete="off" spellcheck="false" maxlength="512" required/></label>
+</div>
+<details class="cart-help"><summary data-i18n="cart_help_title"></summary>
+<ol>
+<li data-i18n="cm_cart_help_1"></li>
+<li><span data-i18n="cm_cart_help_2"></span>
+<figure class="cart-help-figure"><a href="./cm-help-cookies.webp" target="_blank" rel="noopener"><img src="./cm-help-cookies.webp" width="2190" height="1650" loading="lazy" decoding="async" data-i18n-alt="cm_cart_figure_alt"/></a><figcaption data-i18n="cm_cart_figure"></figcaption></figure>
+<span class="cart-help-note" data-i18n="cm_cart_help_2_note"></span></li>
+<li data-i18n="cm_cart_help_3"></li>
+</ol></details>
+<div class="cart-route-actions"><button type="submit" id="cm-cart-save"><i class="bi bi-check-lg"></i><span data-i18n="cart_save"></span></button></div>
+</section>
+<div class="cart-settings-actions">
+<p id="cm-cart-status" class="cart-settings-status" role="status" aria-live="polite"></p>
+<button type="button" id="cm-cart-clear" class="secondary"><i class="bi bi-trash3"></i><span data-i18n="cart_clear"></span></button>
+</div>
+</form>
+</div>
+</section>
 </section>
 
 <footer class="account-footer">
@@ -293,7 +356,7 @@
 </section>
 </main>
 <main id="cart-panel" hidden>
-<header><h1 data-i18n="cart_title"></h1></header>
+<header><h1 id="cart-page-title"></h1></header>
 <section id="cart-stats" class="panel cart-overview" hidden>
 <div class="stat-tiles">
 <div class="stat-tile"><span class="stat-label" data-i18n="cart_kinds"></span><span class="stat-value" id="cart-kinds"></span></div>
@@ -307,7 +370,7 @@
 <div class="heading-left"><h2 data-i18n="cart_items"></h2><span class="count" id="cart-count" hidden></span><span id="cart-status" role="status" aria-live="polite"></span></div>
 <div class="heading-actions"><button id="cart-get-stock" type="button" class="secondary compact"><i class="bi bi-box-seam"></i><span data-i18n="cart_get_stock"></span></button><button id="cart-page-refresh" type="button" class="secondary compact"><i class="bi bi-arrow-clockwise"></i><span data-i18n="cart_refresh"></span></button><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
-<p id="cart-warning" class="cart-warning" role="status" hidden><i class="bi bi-exclamation-triangle"></i><span data-i18n="cart_incomplete_warning"></span></p>
+<p id="cart-warning" class="cart-warning" role="status" hidden><i class="bi bi-exclamation-triangle"></i><span id="cart-warning-text"></span></p>
 <div class="panel table-panel" id="cart-table" hidden><div class="table-scroll"><table><thead><tr><th data-i18n="game"></th><th data-i18n="rarity"></th><th data-i18n="number"></th><th data-i18n="name"></th><th class="numeric" data-i18n="cart_unit_price"></th><th data-i18n="stock"></th><th class="cart-col" data-i18n="cart_quantity"></th><th class="numeric" data-i18n="cart_line_subtotal"></th><th class="action-col"><span class="sr-only" data-i18n="cards_actions"></span></th></tr></thead><tbody id="cart-rows"></tbody></table></div></div>
 <div id="cart-grid" class="card-grid" hidden></div>
 <div id="cart-empty" class="empty" hidden><i class="bi bi-cart3"></i><h3></h3><p id="cart-empty-action"></p></div>
@@ -317,6 +380,15 @@
 <header><h1 data-i18n="search"></h1></header>
 <section class="panel">
 <form id="search-form">
+<div class="chips source-chips" data-i18n-aria-label="sources_to_search" role="group">
+<label class="chip"><input checked="" name="merchant" type="checkbox" value="yuyutei"/><i class="bi bi-check-lg"></i><span data-i18n="source_yuyutei"></span></label>
+<label class="chip"><input name="merchant" type="checkbox" value="hobbystation"/><i class="bi bi-check-lg"></i><span data-i18n="source_hobbystation"></span></label>
+<label class="chip"><input name="merchant" type="checkbox" value="cardmax"/><i class="bi bi-check-lg"></i><span data-i18n="source_cardmax"></span></label>
+<span class="source-option" id="cardmax-stock-option" hidden>
+<label class="checkbox-option"><input id="cardmax-stock" type="checkbox" aria-describedby="cardmax-stock-tip"/><span data-i18n="cardmax_stock"></span></label>
+<span class="info-tip"><button type="button" class="icon-button" data-i18n-aria-label="cardmax_stock_about" aria-describedby="cardmax-stock-tip"><i class="bi bi-info-circle"></i></button><span class="tip" role="tooltip" id="cardmax-stock-tip" data-i18n="cardmax_stock_hint"></span></span>
+</span>
+</div>
 <div class="search-line">
 <div class="input-icon" id="keyword-wrapper">
 <i class="bi bi-search"></i>
@@ -344,7 +416,7 @@
 <span class="count" id="counts">0 / 0</span>
 <span aria-live="polite" id="status" role="status"></span>
 </div>
-<div class="heading-actions"><div class="cart-bar"><span id="cart-summary" class="cart-summary" aria-live="polite"></span><button type="button" id="cart-refresh" class="icon-button" data-i18n-aria-label="cart_refresh" data-i18n-title="cart_refresh" hidden><i class="bi bi-arrow-clockwise"></i></button></div><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
+<div class="heading-actions"><div id="cart-summary" class="cart-bar" aria-live="polite"></div><div class="view-toggle" data-i18n-aria-label="view" role="group"><button type="button" class="icon-button" data-view="list" data-i18n-aria-label="list_view" data-i18n-title="list_view"><i class="bi bi-list-ul"></i></button><button type="button" class="icon-button" data-view="grid" data-i18n-aria-label="grid_view" data-i18n-title="grid_view"><i class="bi bi-grid-3x3-gap"></i></button></div></div>
 </div>
 <div id="errors" role="alert"></div>
 <div id="search-filters"></div>
@@ -402,6 +474,11 @@
 </div>
 </div>
 </div>
+<div class="chips" data-role="source-chips" data-i18n-aria-label="sources_to_show" role="group" hidden>
+<label class="chip"><input checked="" data-role="source" type="checkbox" value="yuyutei"/><i class="bi bi-check-lg"></i><span data-i18n="source_yuyutei"></span></label>
+<label class="chip"><input checked="" data-role="source" type="checkbox" value="hobbystation"/><i class="bi bi-check-lg"></i><span data-i18n="source_hobbystation"></span></label>
+<label class="chip"><input checked="" data-role="source" type="checkbox" value="cardmax"/><i class="bi bi-check-lg"></i><span data-i18n="source_cardmax"></span></label>
+</div>
 <div class="chips" data-i18n-aria-label="games_to_show" role="group">
 <label class="chip"><input checked="" data-role="game" type="checkbox" value="chaos"/><i class="bi bi-check-lg"></i><span data-i18n="chaostcg"></span><img class="chip-logo" src="./game-chaos.webp" alt="" aria-hidden="true"/></label>
 <label class="chip"><input checked="" data-role="game" type="checkbox" value="lycee"/><i class="bi bi-check-lg"></i><span data-i18n="lycee"></span><img class="chip-logo" src="./game-lycee.webp" alt="" aria-hidden="true"/></label>
@@ -430,7 +507,15 @@
 <label class="field wide-2"><span data-i18n="name"></span><input id="card-name" required type="text" autocomplete="off"/></label>
 <label class="field wide-2"><span data-i18n="rarity"></span><select id="card-rarity" required></select><input id="card-rarity-custom" type="text" autocomplete="off" hidden disabled/></label>
 <label class="field"><span data-i18n="cards_quantity"></span><input id="card-quantity" required type="number" min="0" step="1" max="9007199254740991" value="1"/></label>
-<label class="field wide-2 card-price-field"><span data-i18n="cards_price"></span><span class="price-input"><input id="card-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/><select id="card-currency" data-i18n-aria-label="cards_currency" data-i18n-title="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select><button id="card-price-lookup" type="button" class="secondary price-lookup-button"><i class="bi bi-tag"></i><span data-i18n="price_lookup"></span></button></span></label>
+<div class="field wide-2 card-price-field">
+<label for="card-price" data-i18n="cards_price"></label>
+<div class="price-input">
+<input id="card-price" type="number" min="0" step="0.01" max="999999999999.99" inputmode="decimal" autocomplete="off"/>
+<select id="card-currency" data-i18n-aria-label="cards_currency" data-i18n-title="cards_currency"><option value="JPY">JPY</option><option value="CNY">CNY</option><option value="CAD">CAD</option></select>
+<select id="card-price-source" data-i18n-aria-label="cards_bulk_price_source" data-i18n-title="cards_bulk_price_source"></select>
+<button id="card-price-lookup" type="button" class="secondary price-lookup-button"><i class="bi bi-tag"></i><span data-i18n="price_lookup"></span></button>
+</div>
+</div>
 <label class="field" id="card-group-field" hidden><span data-i18n="favorite_group_column"></span><select id="card-group"></select></label>
 <section id="price-lookup-panel" class="price-lookup wide" aria-live="polite" hidden>
 <div class="price-lookup-head"><h3><i class="bi bi-shop"></i><span data-i18n="price_lookup_title"></span></h3><span id="price-lookup-status"></span></div>
@@ -746,7 +831,7 @@
 </dialog>
 <dialog id="detail-dialog" aria-labelledby="detail-title" aria-describedby="detail-description">
 <h2 id="detail-title" data-i18n="detail_title"></h2>
-<p id="detail-description" data-i18n="detail_description"></p>
+<p id="detail-description"></p>
 <p id="detail-name"></p><p id="detail-url"></p>
 <div class="dialog-actions">
 <button type="button" id="detail-cancel" class="secondary" autofocus data-i18n="detail_cancel"></button>

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-const source = (await readFile(new URL('../src/tcg_toolkit/static/copy-number.js', import.meta.url), 'utf8'))
-  .replace("import {t} from './i18n.js';", 'const t = (key, p = {}) => key + (p.number ? ":" + p.number : "");');
+const source = (await readFile(new URL('../src/tcg_toolkit/static/shared/copy-number.js', import.meta.url), 'utf8'))
+  .replace("import {t} from '../i18n.js';", 'const t = (key, p = {}) => key + (p.number ? ":" + p.number : "");');
 const {copyText, bindCopy} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 function fakeDoc(execResult = true) {

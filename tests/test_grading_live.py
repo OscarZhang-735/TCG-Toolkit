@@ -33,7 +33,7 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
     certificate_path = f'/api/grading/{provider}/certificates/{number}'
     monkeypatch.setenv('TCG_SUBSCRIPTIONS_ENABLED', 'false')
     monkeypatch.setenv('TCG_AVATAR_COS_URL', '')
-    caplog.set_level(logging.INFO, logger='tcg_toolkit.grading')
+    caplog.set_level(logging.INFO, logger='tcg_toolkit.grading.adapters')
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(('127.0.0.1', 0))
@@ -102,7 +102,7 @@ def test_certificate_lookup_over_http(monkeypatch, caplog, provider, number, sou
                     assert image['alt']
 
                 proxy_messages = [record.getMessage() for record in caplog.records
-                                  if record.name == 'tcg_toolkit.grading'
+                                  if record.name == 'tcg_toolkit.grading.adapters'
                                   and record.getMessage().startswith(
                                       f'{provider.upper()} zyte target_status=')]
                 if provider == 'ars':

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const base = new URL('../src/tcg_toolkit/static/', import.meta.url);
 const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
-const parserURL = moduleURL(await readFile(new URL('curl-credentials.js', base), 'utf8'));
+const parserURL = moduleURL(await readFile(new URL('cart/curl-credentials.js', base), 'utf8'));
 const {parseCurlCredentials} = await import(parserURL);
 const good = "curl 'https://yuyu-tei.jp/api/cart_service' -b 'other=discard; laravel_session=session%3D' -H 'X-CSRF-TOKEN: token-123'";
 const expected = {cookie: 'session%3D', csrf_token: 'token-123'};
@@ -23,12 +23,12 @@ test('invalid, ambiguous and unsupported inputs fail without reflecting secrets'
     assert.throws(() => parseCurlCredentials(input), /^Error: cart_curl_invalid$/);
   }
 });
-const settingsSource = (await readFile(new URL('cart-settings.js', base), 'utf8'))
-  .replace("import {t, getLanguage} from './i18n.js';", "const t = key => key, getLanguage = () => 'en';")
+const settingsSource = (await readFile(new URL('cart/cart-settings.js', base), 'utf8'))
+  .replace("import {t, getLanguage} from '../i18n.js';", "const t = key => key, getLanguage = () => 'en';")
   .replace("'./curl-credentials.js'", JSON.stringify(parserURL));
 const {bindCartSettings} = await import(moduleURL(settingsSource));
-const clientSource = (await readFile(new URL('yuyutei-client.js', base), 'utf8'))
-  .replace("import {apiRequest, getToken} from './api.js';", "const apiRequest = () => {throw Error('unexpected network')}, getToken = () => 'login';");
+const clientSource = (await readFile(new URL('cart/yuyutei-client.js', base), 'utf8'))
+  .replace("import {apiRequest, getToken} from '../api.js';", "const apiRequest = () => {throw Error('unexpected network')}, getToken = () => 'login';");
 const {createYuyuteiClient, CREDENTIALS_KEY} = await import(moduleURL(clientSource));
 function setup() {
   const elements = new Map();

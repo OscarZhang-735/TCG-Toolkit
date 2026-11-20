@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from tcg_toolkit.email_templates import verification_html, digest_html
+from tcg_toolkit.mail.templates import verification_html, digest_html
 
 
 def main():
@@ -16,10 +16,10 @@ def main():
                   product_url='https://yuyu-tei.jp/sell/wsr/card/OS01/10240')
     after = {**before, 'price': 6480, 'stock_quantity': 3, 'stock_status': 'in_stock'}
     # Cover a drop, a rise with unchanged stock, and a sell-out.
-    rising = dict(name='バニーガール 詩織', card_number='OS03/R03-021R', rarity='R', price=380, stock_quantity=12,
-                  stock_status='in_stock', product_url='https://yuyu-tei.jp/sell/wsr/card/os03/10180')
-    selling = dict(name='真面目な幼馴染 黒木', card_number='OS03/R03-031SP', rarity='SP', price=2980, stock_quantity=1,
-                   stock_status='in_stock', product_url='https://yuyu-tei.jp/sell/wsr/card/os03/10193')
+    rising = dict(name='迷子のバンド 椎名立希', card_number='WS-W125-070S', rarity='SR', price=380, stock_quantity=12,
+                  stock_status='in_stock', product_url='https://www.hobbystation-single.jp/ws/product/detail/387566')
+    selling = dict(name='椎名立希', card_number='BD/W125-P05S', rarity='PR', price=2980, stock_quantity=1,
+                   stock_status='in_stock', product_url='https://www.cardmax.jp/shopdetail/000000160917')
     now = int(datetime.now().timestamp())
     changes = [dict(before=before, after=after, checked_at=now),
                dict(before=rising, after={**rising, 'price': 480}, checked_at=now),

@@ -5,8 +5,9 @@ import json
 import sys
 import unicodedata
 
-from .errors import SearchError
-from .search import SEARCHERS
+from .catalog.errors import SearchError
+from .catalog.models import Game, SearchSource
+from .catalog.search import create_searcher, get_searcher_type
 
 
 def _width(text: str) -> int:
@@ -15,7 +16,7 @@ def _width(text: str) -> int:
 
 
 def print_table(game, page) -> None:
-    print(f"{game} | {len(page.items)} results")
+    print(f"{page.source} | {game} | {len(page.items)} results")
     if not page.items:
         print("No results found.")
         return
@@ -35,15 +36,23 @@ def print_table(game, page) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="搜索游游亭卡牌，输出 JSON")
+    parser = argparse.ArgumentParser(description="按来源和游戏搜索卡牌，输出 JSON")
     parser.add_argument("keyword", help="关键词")
-    parser.add_argument("-g", "--game", action="append", required=True, choices=tuple(SEARCHERS),
+    parser.add_argument("--source", choices=tuple(SearchSource), default=SearchSource.YUYUTEI,
+                        help="搜索来源（默认 yuyutei）")
+    parser.add_argument("-g", "--game", action="append", required=True, choices=tuple(Game),
                         help="搜索器，可重复指定；多个搜索器使用同一关键词")
     parser.add_argument("--clean", action="store_true", help="以易读表格输出结果")
+    parser.add_argument("--stock", action="store_true", help="逐张查询 Card Max 详情页库存")
     parser.add_argument("--page", type=int, default=1, help="页码或遍历起始页（默认 1）")
     parser.add_argument("--all", action="store_true", help="从指定页遍历至末页，每页输出一行 JSON")
     args = parser.parse_args(argv)
     games = list(dict.fromkeys(args.game))
+    try:
+        for game in games:
+            get_searcher_type(args.source, game)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not args.keyword.strip():
         parser.error("Keyword must not be empty" if args.clean else "关键词不能为空")
     if args.page < 1:
@@ -52,9 +61,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     status = 0
     for game in games:
-        searcher_type = SEARCHERS[game]
         try:
-            with searcher_type() as searcher:
+            with create_searcher(args.source, game, stock=args.stock) as searcher:
                 pages = (searcher.iter_pages(args.keyword, start_page=args.page) if args.all
                          else [searcher.search_page(args.keyword, page=args.page)])
                 for page in pages:

@@ -1,11 +1,11 @@
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const noticesModule = 'data:text/javascript;base64,' + Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/notices.js', import.meta.url), 'utf8')).toString('base64');
-const source = Buffer.from((await readFile(new URL('../src/tcg_toolkit/static/favorites.js', import.meta.url), 'utf8')).replace("'./notices.js'", JSON.stringify(noticesModule)));
-const {createFavorites, cardKey} = await import(`data:text/javascript;base64,${source.toString('base64')}`);
-const item = {game: 'wsr', product_url: 'https://yuyu-tei.jp/sell/wsr/card/a'};
-const row = {id: 'one', item, refreshed_at: null};
+const noticesModule = 'data:text/javascript;base64,' + Buffer.from(await readFile(new URL('../src/tcg_toolkit/static/shared/notices.js', import.meta.url), 'utf8')).toString('base64');
+const source = Buffer.from((await readFile(new URL('../src/tcg_toolkit/static/collection/favorites.js', import.meta.url), 'utf8')).replace("'../shared/notices.js'", JSON.stringify(noticesModule)));
+const {createFavorites, cardKey, savedImageUrl} = await import(`data:text/javascript;base64,${source.toString('base64')}`);
+const item = {game: 'wsr', product_url: 'https://yuyu-tei.jp/sell/wsr/card/a', source: 'yuyutei'};
+const row = {id: 'one', source: 'yuyutei', item, refreshed_at: null};
 const response = (data, status = 200) => ({ok: status < 400, status, json: async () => data});
 
 test('add/remove share state; repeated clicks cannot duplicate requests', async () => {
@@ -132,4 +132,20 @@ test('adding with a group sends group_id; plain add stays ungrouped', async () =
   await model.toggle(item, 'deck'); await model.toggle(other);
   assert.deepEqual(bodies.map(body => body.group_id), ['deck', undefined]);
   assert.equal(model.find(item).group_id, 'deck'); assert.equal(model.find(other).group_id, null);
+});
+
+test('records copy their merchant onto the item; older records default to YuYu-Tei', async () => {
+  const hobby = {id: 'hs', source: 'hobbystation', item: {game: 'ws', product_url: 'https://www.hobbystation-single.jp/ws/product/detail/1'}};
+  const legacy = {id: 'old', item: {game: 'wsr', product_url: 'https://yuyu-tei.jp/sell/wsr/card/b'}};
+  const model = createFavorites(() => {});
+  await model.activate(async () => response({items: [hobby, legacy]}));
+  assert.deepEqual(model.state.records.map(row => row.item.source), ['hobbystation', 'yuyutei']);
+  assert.equal(model.find({...hobby.item, product_url: hobby.item.product_url + '/'}).id, 'hs');
+});
+
+test('Hobby Station favorites save the shop image instead of the relay URL', () => {
+  const relayed = {source: 'hobbystation', image_url: 'http://localhost:8768/api/images/hobbystation/ws/a%20b.jpg'};
+  assert.equal(savedImageUrl(relayed), 'https://www.hobbystation-single.jp/html/upload/save_image/ws/a%20b.jpg');
+  assert.equal(savedImageUrl({source: 'cardmax', image_url: 'https://www.cardmax.jp/x.jpg'}), 'https://www.cardmax.jp/x.jpg');
+  assert.equal(savedImageUrl({source: 'hobbystation', image_url: null}), null);
 });

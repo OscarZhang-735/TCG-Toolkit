@@ -1,7 +1,7 @@
 from pathlib import Path
 import httpx
 import pytest
-from tcg_toolkit.official import parse_lycee, search
+from tcg_toolkit.catalog.providers.official import parse_lycee
 from test_cards import client
 
 def test_lo1606():
@@ -30,7 +30,7 @@ def test_api(client, monkeypatch):
 
 def test_ws_versions():
     import json
-    from tcg_toolkit.official import parse_ws
+    from tcg_toolkit.catalog.providers.official import parse_ws
     data = json.loads(Path('tests/fixtures/official_ws.json').read_text(encoding='utf-8'))
     items = parse_ws(data)
     assert [x['card_number'] for x in items] == ['BD/WE49-56', 'BD/WE49-56BDR', 'BD/WE49-56SP']
@@ -43,7 +43,7 @@ def test_ws_versions():
 
 
 def test_ws_api(client, monkeypatch):
-    from tcg_toolkit.official import WS_SEARCH
+    from tcg_toolkit.catalog.providers.official import WS_SEARCH
     def get(self, url, **kwargs):
         assert url == WS_SEARCH and kwargs['params'] == {'keyword': 'WE49-56'}
         return httpx.Response(200, text=Path('tests/fixtures/official_ws.json').read_text(encoding='utf-8'), request=httpx.Request('GET', url))
@@ -66,7 +66,7 @@ def test_ws_failure(client, monkeypatch, failure, status):
 
 
 def test_wsr_parsing():
-    from tcg_toolkit.official import parse_wsr, wsrose_rarity
+    from tcg_toolkit.catalog.providers.official import parse_wsr, wsrose_rarity
     items, total = parse_wsr(Path('tests/fixtures/official_wsr.html').read_text(encoding='utf-8'))
     assert total == 3 and len(items) == 3
     assert items[0]['card_number'] == 'OS13/R13-001' and items[0]['game'] == 'WSR'
@@ -80,7 +80,7 @@ def test_wsr_parsing():
 
 
 def test_wsr_api(client, monkeypatch):
-    from tcg_toolkit.official import WSR_SEARCH, WSR_DETAIL
+    from tcg_toolkit.catalog.providers.official import WSR_SEARCH, WSR_DETAIL
     detail = Path('tests/fixtures/official_wsr_detail.html').read_text(encoding='utf-8')
     calls = []
     def get(self, url, **kwargs):
@@ -114,7 +114,7 @@ def test_wsr_failure(client, monkeypatch, failure, status):
 
 
 def test_pm_metadata_and_duplicate_numbers():
-    from tcg_toolkit.official import parse_pm
+    from tcg_toolkit.catalog.providers.official import parse_pm
     items = parse_pm(Path('tests/fixtures/official_pm.html').read_text(encoding='utf-8'))
     assert len(items) == 6
     assert all(x['game'] == 'PM' and x['card_number'] == '01-001' for x in items)
@@ -127,7 +127,7 @@ def test_pm_metadata_and_duplicate_numbers():
 
 
 def test_pm_api(client, monkeypatch):
-    from tcg_toolkit.official import PM_SEARCH
+    from tcg_toolkit.catalog.providers.official import PM_SEARCH
     def get(self, url, **kwargs):
         assert url == PM_SEARCH
         assert kwargs['params'] == {'s_flg': 'on', 'keyword_card': '01-001'}
@@ -150,7 +150,7 @@ def test_pm_failure(client, monkeypatch, failure, status):
 
 
 def test_sev_en_exact_detail():
-    from tcg_toolkit.official import parse_sev_en
+    from tcg_toolkit.catalog.providers.official import parse_sev_en
     html = Path('tests/fixtures/official_sev_en.html').read_text(encoding='utf-8')
     item = parse_sev_en(html, 'CP04-021EN')[0]
     assert (item['game'], item['name'], item['rarity']) == ('SEV EN', 'Christina', 'L')
@@ -176,7 +176,7 @@ def test_sev_en_api(client, monkeypatch):
 
 
 def test_sev_japanese_exact_detail():
-    from tcg_toolkit.official import parse_sev
+    from tcg_toolkit.catalog.providers.official import parse_sev
     html = Path('tests/fixtures/official_sev.html').read_text(encoding='utf-8')
     item = parse_sev(html, 'CP04-021')[0]
     assert (item['game'], item['name'], item['rarity']) == ('SEV', 'クリスティーナ', 'LG')
@@ -203,7 +203,7 @@ def test_sev_japanese_api(client, monkeypatch):
 
 
 def test_ws_en_real_results():
-    from tcg_toolkit.official import parse_ws_en
+    from tcg_toolkit.catalog.providers.official import parse_ws_en
     result = parse_ws_en(Path('tests/fixtures/official_ws_en.html').read_text(encoding='utf-8'))
     assert result['total'] == 97 and len(result['items']) == 5
     first = result['items'][0]

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-const raw=await readFile(new URL('../src/tcg_toolkit/static/proxy-settings.js',import.meta.url),'utf8');
-const source=raw.replace("import {apiRequest, isLocalFrontend, setDirectSearch} from './api.js';",'const apiRequest=(...args)=>globalThis.proxyTest.request(...args), isLocalFrontend=()=>globalThis.proxyTest.local, setDirectSearch=v=>globalThis.proxyTest.direct=v;');
+const raw=await readFile(new URL('../src/tcg_toolkit/static/catalog/proxy-settings.js',import.meta.url),'utf8');
+const source=raw.replace("import {apiRequest, isLocalFrontend, setDirectSearch} from '../api.js';",'const apiRequest=(...args)=>globalThis.proxyTest.request(...args), isLocalFrontend=()=>globalThis.proxyTest.local, setDirectSearch=v=>globalThis.proxyTest.direct=v;');
 const {createProxySettings}=await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 function setup(local,available,storage = new Map()) {
  globalThis.localStorage={getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)};

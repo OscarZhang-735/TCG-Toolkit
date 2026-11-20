@@ -20,7 +20,7 @@ class Mailbox:
 
 def install_mailbox():
     mailbox = Mailbox()
-    app.state.auth.verification = EmailVerification(app.state.auth.store, mailbox, TEST_SECRET)
+    app.state.auth.verification = EmailVerification(app.state.database, mailbox, TEST_SECRET)
     return mailbox
 
 
@@ -46,7 +46,7 @@ def persisted_data(store):
     """Inspect mapped application columns for request-scoped secrets."""
     import json
     from sqlalchemy import select
-    from tcg_toolkit.db_models import Base
+    from tcg_toolkit.persistence.models import Base
     contents = []
     with store.session() as db:
         for table in Base.metadata.sorted_tables:
