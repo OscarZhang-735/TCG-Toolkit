@@ -28,9 +28,19 @@ def test_guest_search_is_rate_limited_per_ip(monkeypatch):
     monkeypatch.setattr('tcg_toolkit.external.search_proxy.SearchProxyClient.get', lambda self, url, *, timeout:
                         httpx.Response(200, text=EMPTY_HOBBY, request=httpx.Request('GET', url)))
     params = {'source': 'hobbystation', 'game': 'lycee', 'keyword': 'abc'}
-    statuses = [client.get('/api/search', params=params).status_code for _ in range(121)]
-    assert statuses[:120] == [200] * 120
-    assert statuses[120] == 429
+    monkeypatch.delenv('TCG_GUEST_SEARCH_LIMIT', raising=False)
+    statuses = [client.get('/api/search', params=params).status_code for _ in range(31)]
+    assert statuses == [200] * 30 + [429]
+
+
+@pytest.mark.parametrize('value, allowed', [('5', 5), ('0', 30), ('many', 30)])
+def test_guest_search_limit_comes_from_the_environment(monkeypatch, value, allowed):
+    monkeypatch.setattr('tcg_toolkit.external.search_proxy.SearchProxyClient.get', lambda self, url, *, timeout:
+                        httpx.Response(200, text=EMPTY_HOBBY, request=httpx.Request('GET', url)))
+    monkeypatch.setenv('TCG_GUEST_SEARCH_LIMIT', value)
+    params = {'source': 'hobbystation', 'game': 'lycee', 'keyword': 'abc'}
+    statuses = [client.get('/api/search', params=params).status_code for _ in range(allowed + 1)]
+    assert statuses == [200] * allowed + [429]
 
 
 def test_search_rejects_an_invalid_token_instead_of_falling_back_to_guest(monkeypatch):

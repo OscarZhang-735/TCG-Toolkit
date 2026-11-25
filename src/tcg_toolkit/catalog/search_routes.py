@@ -43,7 +43,7 @@ def hobby_card_image(game_dir: str, filename: str):
     })
 
 
-@router.get("/api/search", dependencies=[Depends(guest_access("search", 120))])
+@router.get("/api/search", dependencies=[Depends(guest_access("search", 30, "TCG_GUEST_SEARCH_LIMIT"))])
 def search(request: Request, game: Game, keyword: Annotated[str, Query(min_length=1)],
            page: Annotated[int, Query(ge=1)] = 1, source: SearchSource = SearchSource.YUYUTEI,
            stock: bool = False):

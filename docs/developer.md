@@ -55,6 +55,7 @@ uvicorn tcg_toolkit.web:app --app-dir src --port 8000 --env-file .env
 | `TCG_POSTGRES_IMAGE` | 随后端一起发布的 PostgreSQL 镜像 | 固定 PostgreSQL 17 digest |
 | `TCG_DB_SUBNET` | 内部数据库网络 | `10.205.0.0/24` |
 | `TCG_PROXY_IPS` | 受信任的反向代理来源 IP，不要设为 `*` | `127.0.0.1` |
+| `TCG_GUEST_SEARCH_LIMIT` | 未登录访客每个 IP 每分钟可发起的 `/api/search` 请求数；一次搜索按游戏、店铺和分页各发一个请求。非正整数时使用默认值 | `30` |
 | `TCG_SUBNET` | Docker 网络子网，与本地网络冲突时修改 | `10.203.0.0/24` |
 | `TCG_SUBSCRIPTIONS_ENABLED` | 启动卡牌订阅每小时到期扫描及邮件重试线程 | 直接运行关闭；Compose 开启 |
 | `TCG_HOBBYSTATION_SUBSCRIPTIONS_DIRECT` | 为 `true` 时，后台定时任务直连 Hobby Station 商品页面。手动订阅使用当前网页选择的连接方式 | 本地和生产 Compose 均默认开启 |

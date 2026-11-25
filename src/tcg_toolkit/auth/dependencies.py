@@ -1,4 +1,6 @@
 """HTTP access dependencies, independent of account route registration."""
+import os
+
 from fastapi import HTTPException, Request
 
 
@@ -22,13 +24,24 @@ def client_ip(request: Request):
     return request.client.host if request.client else "unknown"
 
 
-def guest_access(action: str, limit: int):
-    """Allow signed-out visitors with a per-IP limit; a token that is sent must still be valid."""
+def env_limit(name: str, default: int):
+    """Positive per-minute limit from the environment; unset or invalid values use the default."""
+    try:
+        value = int(os.getenv(name, ""))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def guest_access(action: str, limit: int, env: str | None = None):
+    """Allow signed-out visitors with a per-IP, per-minute limit (overridable by `env`);
+    a token that is sent must still be valid."""
     def dependency(request: Request):
         token = bearer_token(request)
         if token is not None:
             return current_user(request)
-        request.app.state.auth_limiter.check((f"guest-{action}", client_ip(request)), limit)
+        allowed = env_limit(env, limit) if env else limit
+        request.app.state.auth_limiter.check((f"guest-{action}", client_ip(request)), allowed)
         return None
     return dependency
 
