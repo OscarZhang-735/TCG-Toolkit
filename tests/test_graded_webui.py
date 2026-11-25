@@ -516,6 +516,10 @@ def test_graded_webui(postgres_schema, monkeypatch, tmp_path):
                 expect(page.locator('#graded-rows tr[data-id]')).to_have_count(1)
                 page.locator('#account-link').click()
                 page.locator('#logout').click()
+                expect(page.locator('#search')).to_be_visible()
+                page.goto(origin + '/#graded')
+                expect(page.locator('#guest-panel')).to_be_visible()
+                page.locator('#guest-page-login').click()
                 expect(page.locator('#auth-panel')).to_be_visible()
                 expect(page.locator('#graded-grid article[data-id]')).to_have_count(0)
                 assert errors == []

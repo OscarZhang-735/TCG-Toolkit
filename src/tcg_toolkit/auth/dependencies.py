@@ -18,6 +18,21 @@ def current_user(request: Request):
     return user
 
 
+def client_ip(request: Request):
+    return request.client.host if request.client else "unknown"
+
+
+def guest_access(action: str, limit: int):
+    """Allow signed-out visitors with a per-IP limit; a token that is sent must still be valid."""
+    def dependency(request: Request):
+        token = bearer_token(request)
+        if token is not None:
+            return current_user(request)
+        request.app.state.auth_limiter.check((f"guest-{action}", client_ip(request)), limit)
+        return None
+    return dependency
+
+
 def require_trusted_origin(request: Request):
     if request.headers.get("origin") not in request.app.state.auth_origins:
         raise HTTPException(403, detail="untrusted_origin")
@@ -32,7 +47,6 @@ def write_guard(request: Request):
 def credentials_guard(request: Request):
     write_guard(request)
     action = request.url.path.rsplit("/", 1)[-1]
-    ip = request.client.host if request.client else "unknown"
-    request.app.state.auth_limiter.check((action, ip), 5 if action in ("email-code", "bind-code") else 10)
+    request.app.state.auth_limiter.check((action, client_ip(request)), 5 if action in ("email-code", "bind-code") else 10)
 
 

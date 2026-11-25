@@ -11,11 +11,34 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def authenticated_business_api():
+def authenticated_business_api(monkeypatch):
     from tcg_toolkit.auth.dependencies import current_user
+    from tcg_toolkit.auth.runtime import RateLimiter
     app.dependency_overrides[current_user] = lambda: {"id": "test-user"}
+    # Search without a token takes the guest path, which is rate limited per IP.
+    monkeypatch.setattr(app.state, 'auth_limiter', RateLimiter(), raising=False)
     yield
     app.dependency_overrides.pop(current_user, None)
+
+
+EMPTY_HOBBY = '<main><div class="ec-searchnavRole__counter">お探しの商品は見つかりませんでした</div></main>'
+
+
+def test_guest_search_is_rate_limited_per_ip(monkeypatch):
+    monkeypatch.setattr('tcg_toolkit.external.search_proxy.SearchProxyClient.get', lambda self, url, *, timeout:
+                        httpx.Response(200, text=EMPTY_HOBBY, request=httpx.Request('GET', url)))
+    params = {'source': 'hobbystation', 'game': 'lycee', 'keyword': 'abc'}
+    statuses = [client.get('/api/search', params=params).status_code for _ in range(121)]
+    assert statuses[:120] == [200] * 120
+    assert statuses[120] == 429
+
+
+def test_search_rejects_an_invalid_token_instead_of_falling_back_to_guest(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(app.state, 'auth', SimpleNamespace(current_user=lambda token: None), raising=False)
+    response = client.get('/api/search', params={'game': 'sev', 'keyword': 'x'}, headers={'Authorization': 'Bearer stale'})
+    assert response.status_code == 401
+    assert response.json()['detail'] == 'authentication_required'
 
 
 def test_unsupported_merchant_game():

@@ -14,6 +14,12 @@ import {loadImage} from './shared/load-image.js';
 const $ = id => document.getElementById(id);
 let user = null, searchApp = null, registering = false, errorKey = '';
 let bindError = '', authGeneration = 0, forgotten = false;
+// Page a signed-out visitor chose to sign in from, kept for this tab across reloads and opened
+// after signing in. `restoring` hides member pages while a saved session is still being checked.
+const RETURN_KEY = 'tcg.returnTo';
+let restoring = true;
+function setReturnTo(hash) { try { if (hash) sessionStorage.setItem(RETURN_KEY, hash); else sessionStorage.removeItem(RETURN_KEY); } catch { /* storage unavailable */ } }
+function takeReturnTo() { let hash = null; try { hash = sessionStorage.getItem(RETURN_KEY); } catch { /* storage unavailable */ } setReturnTo(''); return hash; }
 let avatarBusy = false, avatarStatus = '', avatarCropError = '', avatarPicking = false;
 let nicknameBusy = false, nicknameError = '';
 const api = createAuthenticatedRequest(() => signedOut('auth_expired'), apiRequest, getToken);
@@ -51,33 +57,65 @@ function resetEmails() {
   for (const id of ['auth-email', 'auth-code', 'bind-email', 'bind-code', 'bind-password']) $(id).value = '';
 }
 const CART_HASHES = ['#cart', '#cart-hobbystation', '#cart-cardmax'];
+// Everything except search needs an account.
+const MEMBER_HASHES = ['#account', '#favorites', '#cards', '#graded', ...CART_HASHES];
+// Names shown on the shared sign-in placeholder for each member page.
+const PAGE_NAMES = {'#account': 'auth_account', '#favorites': 'favorites', '#cards': 'cards_title', '#graded': 'graded_title'};
+const PAGE_ICONS = {'#account': 'bi-person-circle', '#favorites': 'bi-star', '#cards': 'bi-collection', '#graded': 'bi-award'};
+const pageName = hash => t(PAGE_NAMES[hash] ?? 'cart_title');
+function openLogin(register = false, destination = location.hash) {
+  setReturnTo(MEMBER_HASHES.includes(destination) || destination === '#search' ? destination : '');
+  authGeneration++; resetEmails();
+  forgotten = false; registering = register; errorKey = '';
+  $('auth-password').value = ''; $('auth-confirm-password').value = '';
+  if (location.hash !== '#login') location.hash = '#login';
+  showPage(); refresh();
+}
 function showPage() {
-  const cards = Boolean(user) && location.hash === '#cards';
+  const page = user ? location.hash : '';
+  const login = !user && location.hash === '#login';
+  // Signed-out visitors see a shared placeholder instead of a member page.
+  const placeholder = !user && MEMBER_HASHES.includes(location.hash);
+  $('guest-panel').hidden = !placeholder || restoring;
+  if (placeholder) {
+    $('guest-page-title').textContent = pageName(location.hash);
+    $('guest-page-heading').textContent = t('guest_page_heading', {page: pageName(location.hash)});
+    $('guest-page-icon').className = `bi ${PAGE_ICONS[location.hash] ?? 'bi-cart3'}`;
+  }
+  const cards = page === '#cards';
   $('cards-panel').hidden = !cards;
-  const graded = Boolean(user) && location.hash === '#graded';
+  const graded = page === '#graded';
   $('graded-panel').hidden = !graded;
-  const favorites = Boolean(user) && location.hash === '#favorites';
-  const cart = Boolean(user) && CART_HASHES.includes(location.hash);
+  const favorites = page === '#favorites';
+  const cart = CART_HASHES.includes(page);
   $('cart-panel').hidden = !cart;
   $('favorites-panel').hidden = !favorites;
-  const account = Boolean(user) && location.hash === '#account';
+  const account = page === '#account';
   // Subscriptions may have changed elsewhere; refresh the next-check estimate.
   if (account && $('account-panel').hidden) subscriptionSettingsUI.reload();
-  document.body.classList.toggle('signed-out', !user);
-  $('auth-panel').hidden = Boolean(user);
-  $('search').hidden = !user || account || favorites || cards || graded || cart;
+  document.body.classList.toggle('signed-out', login);
+  document.body.classList.toggle('guest', !user);
+  $('auth-panel').hidden = !login;
+  $('auth-guest').hidden = Boolean(user);
+  $('search').hidden = login || placeholder || account || favorites || cards || graded || cart;
   $('account-panel').hidden = !account;
   $('user-bar').hidden = !user;
-  $('app-nav').hidden = !user;
-  $('app-settings').hidden = !user;
+  $('guest-bar').hidden = Boolean(user);
+  $('app-nav').hidden = false;
+  $('app-settings').hidden = false;
+  const current = placeholder ? location.hash : cards ? '#cards' : graded ? '#graded' : cart ? location.hash : account ? '#account' : favorites ? '#favorites' : '#search';
   document.querySelectorAll('#app-nav a, #account-link').forEach(a => {
-    if (a.hash === (cards ? '#cards' : graded ? '#graded' : cart ? location.hash : account ? '#account' : favorites ? '#favorites' : '#search')) a.setAttribute('aria-current', 'page');
+    if (a.hash === current) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
   syncNavMenus();
 }
 function refresh() {
   applyLanguage(document);
+  if (!user && MEMBER_HASHES.includes(location.hash)) {
+    $('guest-page-title').textContent = pageName(location.hash);
+    $('guest-page-heading').textContent = t('guest_page_heading', {page: pageName(location.hash)});
+  }
   renderNicknameEditor();
   renderAvatarUpload();
   syncNavMenus();  // page names in the dropdown toggles follow the language
@@ -163,7 +201,8 @@ function renderAvatarUpload() {
   $('avatar-crop-confirm-label').textContent = t(avatarBusy ? 'avatar_uploading' : 'avatar_crop_confirm');
   $('avatar-crop-error').textContent = avatarCropError ? t(avatarCropError) : '';
 }
-function signedOut(message = '', clearToken = true) {
+// Guests get the search page; `destination` is where a signed-out visitor lands.
+function signedOut(message = '', clearToken = true, destination = message ? '#login' : '#search') {
   forgotten = false;
   subscriptionSettingsUI.reset();
   authGeneration++; resetEmails();
@@ -174,7 +213,14 @@ function signedOut(message = '', clearToken = true) {
   registering = false; $('account-status').textContent = '';
   resetNicknameEditor(); renderDisplayName(); $('account-created').textContent = '';
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = message;
-  location.hash = '#login'; showPage(); refresh();
+  if (location.hash !== destination) location.hash = destination;
+  showPage(); refresh();
+  enterGuest();
+}
+async function enterGuest() {
+  const generation = authGeneration;
+  try { searchApp ??= await import('./app.js'); } catch { return; }
+  if (generation === authGeneration && !user) searchApp.activateGuest();
 }
 async function signedIn(value) {
   const expectedToken = getToken();
@@ -190,7 +236,10 @@ async function signedIn(value) {
   $('account-status').textContent = '';
   resetNicknameEditor(); renderDisplayName();
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; $('auth-password').type = 'password'; errorKey = '';
-  if (!['#account', '#favorites', '#cards', '#graded', ...CART_HASHES].includes(location.hash)) location.hash = '#search';
+  restoring = false;
+  const returnTo = takeReturnTo();
+  if (returnTo && location.hash === '#login') location.hash = returnTo;
+  else if (!MEMBER_HASHES.includes(location.hash)) location.hash = '#search';
   showPage(); refresh();
 }
 $('auth-form').addEventListener('submit', async event => {
@@ -227,6 +276,24 @@ $('auth-forgot').addEventListener('click', () => {
   $('auth-password').value = ''; $('auth-confirm-password').value = ''; refresh();
   $('password-reset-email').focus();
 });
+$('auth-guest').addEventListener('click', () => {
+  authGeneration++; resetEmails(); forgotten = false; registering = false; errorKey = ''; setReturnTo('');
+  location.hash = '#search'; showPage(); refresh();
+  enterGuest();
+});
+$('guest-login').addEventListener('click', event => { event.preventDefault(); openLogin(false); });
+$('guest-page-login').addEventListener('click', () => openLogin(false));
+$('guest-page-register').addEventListener('click', () => openLogin(true));
+// Search-page actions that need an account explain why in a dialog before leaving the results.
+document.addEventListener('loginrequired', event => {
+  if (user) return;
+  $('login-dialog-message').textContent = t(event.detail?.reason === 'cart' ? 'guest_dialog_cart' : 'guest_dialog_favorite');
+  $('login-dialog').showModal();
+});
+$('login-dialog-cancel').addEventListener('click', () => $('login-dialog').close());
+for (const [id, register] of [['login-dialog-login', false], ['login-dialog-register', true]]) {
+  $(id).addEventListener('click', () => { $('login-dialog').close(); openLogin(register, '#search'); });
+}
 $('password-reset-back').addEventListener('click', () => {
   authGeneration++; resetEmails(); forgotten = false; errorKey = ''; refresh();
 });
@@ -363,8 +430,9 @@ let restoreGeneration = 0;
 async function restoreSession() {
   const generation = ++restoreGeneration;
   const token = getToken();
-  const destination = location.hash;
-  signedOut('', false);
+  const destination = location.hash || '#search';
+  restoring = Boolean(token);
+  signedOut('', false, destination);
   if (!token) { yuyuteiClient.deactivate(); hobbystationClient.deactivate(); cardmaxClient.deactivate(); $('auth-submit').disabled = false; return; }
   $('auth-submit').disabled = true;
   try {
@@ -372,10 +440,14 @@ async function restoreSession() {
     const value = response.ok ? await response.json() : null;
     if (generation !== restoreGeneration || token !== getToken()) return;
     if (response.ok) { location.hash = destination; await signedIn(value); }
-    else if (response.status === 401) signedOut('auth_expired');
-    else {errorKey = 'auth_unavailable'; refresh();}
-  } catch {if (generation === restoreGeneration) {errorKey = 'auth_unavailable'; refresh();}}
-  finally {if (generation === restoreGeneration) $('auth-submit').disabled = false;}
+    else if (response.status === 401) { restoring = false; signedOut('auth_expired'); }
+    else unavailable();
+  } catch {if (generation === restoreGeneration) unavailable();}
+  finally {if (generation === restoreGeneration) { restoring = false; $('auth-submit').disabled = false; }}
+  function unavailable() {
+    restoring = false; showPage();
+    errorKey = 'auth_unavailable'; refresh();
+  }
 }
 window.addEventListener('storage', event => {
   if (event.key === TOKEN_KEY || event.key === null) {

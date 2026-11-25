@@ -26,6 +26,9 @@
 <div id="user-bar" class="sidebar-user" hidden>
 <a href="#account" id="account-link" class="user-link"><span class="avatar" id="user-avatar" aria-hidden="true"></span><span class="user-meta"><span id="current-username"></span><span class="user-sub" data-i18n="auth_account"></span></span></a>
 </div>
+<div id="guest-bar" class="sidebar-user" hidden>
+<a href="#login" id="guest-login" class="user-link"><span class="avatar guest-avatar" aria-hidden="true"><i class="bi bi-person"></i></span><span class="user-meta"><span data-i18n="guest_sign_in"></span></span></a>
+</div>
 </aside>
 <main id="auth-panel">
 <label class="auth-language"><i class="bi bi-globe2"></i><select id="auth-language" data-i18n-aria-label="language"><option value="en">English</option><option value="zh-CN">简体中文</option></select></label>
@@ -45,6 +48,7 @@
 </div>
 <p id="auth-error" role="alert"></p>
 <button id="auth-submit" type="submit" disabled></button>
+<button id="auth-guest" type="button" class="secondary" data-i18n="auth_continue_guest"></button>
 <button id="auth-forgot" type="button" class="text-button" data-i18n="password_forgot"></button>
 <button id="auth-switch" type="button" class="text-button"></button>
 </form>
@@ -428,6 +432,14 @@
 <div class="more-wrap"><button class="secondary" hidden="" id="more"><i class="bi bi-chevron-down"></i><span data-i18n="show_more"></span></button></div>
 </section>
 </main>
+<main id="guest-panel" hidden>
+<header><h1 id="guest-page-title"></h1></header>
+<section class="empty guest-empty">
+<i class="bi bi-person-lock" id="guest-page-icon" aria-hidden="true"></i>
+<h3 id="guest-page-heading"></h3>
+<div class="guest-actions"><button id="guest-page-login" type="button"><i class="bi bi-box-arrow-in-right"></i><span data-i18n="auth_login"></span></button><button id="guest-page-register" type="button" class="secondary"><i class="bi bi-person-plus"></i><span data-i18n="auth_register_short"></span></button></div>
+</section>
+</main>
 <main id="favorites-panel" hidden>
 <header><h1 data-i18n="favorites"></h1></header>
 <section class="results">
@@ -663,6 +675,15 @@
 <div class="dialog-actions">
 <button id="cards-bulk-delete-cancel" type="button" class="secondary" autofocus data-i18n="detail_cancel"></button>
 <button id="cards-bulk-delete-confirm" type="button"><i class="bi bi-trash3"></i><span data-i18n="cards_delete"></span></button>
+</div>
+</dialog>
+<dialog id="login-dialog" class="form-dialog confirm-dialog" aria-labelledby="login-dialog-title" aria-describedby="login-dialog-message">
+<div class="dialog-head"><h2 id="login-dialog-title" data-i18n="guest_dialog_title"></h2></div>
+<p id="login-dialog-message"></p>
+<div class="dialog-actions">
+<button id="login-dialog-cancel" type="button" class="secondary dialog-existing" data-i18n="detail_cancel"></button>
+<button id="login-dialog-register" type="button" class="secondary" data-i18n="auth_register_short"></button>
+<button id="login-dialog-login" type="button" autofocus data-i18n="auth_login"></button>
 </div>
 </dialog>
 <dialog id="favorites-bulk-remove-dialog" class="form-dialog confirm-dialog" aria-labelledby="favorites-bulk-remove-title" aria-describedby="favorites-bulk-remove-message">

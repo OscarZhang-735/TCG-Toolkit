@@ -1,11 +1,11 @@
-"""Authenticated HTTP access to the shared card search registry."""
+"""HTTP access (signed-in or rate-limited guest) to the shared card search registry."""
 from typing import Annotated
 from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
-from ..auth.dependencies import current_user
+from ..auth.dependencies import guest_access
 from .errors import SearchParseError, SearchRequestError
 from .hobby_images import HOBBY_IMAGE_ROOT, HOBBY_ORIGIN, IMAGE_TYPES, public_hobby_image_url, valid_image
 from .models import Game, SearchSource
@@ -43,7 +43,7 @@ def hobby_card_image(game_dir: str, filename: str):
     })
 
 
-@router.get("/api/search", dependencies=[Depends(current_user)])
+@router.get("/api/search", dependencies=[Depends(guest_access("search", 120))])
 def search(request: Request, game: Game, keyword: Annotated[str, Query(min_length=1)],
            page: Annotated[int, Query(ge=1)] = 1, source: SearchSource = SearchSource.YUYUTEI,
            stock: bool = False):

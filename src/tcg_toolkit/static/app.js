@@ -31,6 +31,7 @@ import {showFeedback, markDot} from './shared/feedback.js';
 import {messageTier} from './shared/notices.js';
 import {createCartStock} from './cart/cart-stock.js';
 import {SEARCH_SOURCES, searchTargets, searchParams} from './catalog/search-sources.js';
+import {apiRequest} from './api.js';
 const $ = id => document.getElementById(id);
 const checked = name => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(el => el.value);
 const gameKeys = {"wsr": "wsr", "lycee": "lycee", "chaos": "chaostcg", "ws": "ws", "pm": "pm", "sev": "sev", "sev_en": "sev_en"};
@@ -79,6 +80,16 @@ $('currency').addEventListener('change', async () => {
 const proxySettings = createProxySettings();
 // Effective subscription recipient (custom notification email or verified account email).
 let userId = null, requestAPI = fetch, notificationEmail = null;
+// Signed-out visitors can search; account features ask them to sign in instead.
+let guest = false;
+const loginRequired = reason => document.dispatchEvent(new CustomEvent('loginrequired', {detail: {reason}}));
+function guestButton(className, iconName, key, reason) {
+  const button = el('button', `icon-button ${className} guest-action`); button.type = 'button';
+  button.append(icon(iconName));
+  button.setAttribute('aria-label', t(key)); button.title = t(key);
+  button.addEventListener('click', () => loginRequired(reason));
+  return button;
+}
 let history = [];
 const favorites = createFavorites(removedItem => {
   if (removedItem) subscriptions.forget(removedItem);
@@ -125,7 +136,7 @@ const summaryRows = Object.entries(SHOP_CART_PAGES).map(([href, {source}]) => {
 function renderCartSummary() {
   const selected = checked('merchant');
   for (const {source, href, row, link, status, refresh} of summaryRows) {
-    row.hidden = !selected.includes(source);
+    row.hidden = !userId || !selected.includes(source);
     if (row.hidden) continue;
     const state = shopCarts[source].state;
     link.href = state.configured ? href : '#account';
@@ -153,6 +164,7 @@ function renderCartNav() {
 // The displayed quantity comes from the corresponding merchant's cart.
 function cartControls(item) {
   const source = item.source ?? 'yuyutei', cart = shopCarts[source];
+  if (!userId) { const box = el('div', 'cart-controls'); box.append(guestButton('cart-login', 'bi-cart-plus', 'guest_cart', 'cart')); return box; }
   const target = cartTargets[source](item);
   if (!target || !cart.state.configured) { const box = el('div', 'cart-controls'); box.append(el('span', 'muted', '—')); return box; }
   const quantity = cart.quantity(target);
@@ -250,6 +262,7 @@ function cardLink(item, className = '') {
   return link;
 }
 function favoriteToggle(item) {
+  if (!userId) return guestButton('fav-toggle', 'bi-star', 'guest_favorite', 'favorite');
   const saved = favorites.find(item), subscribed = saved && subscriptions.find(item);
   const busy = favorites.state.busy.has(cardKey(item)) || subscriptions.state.busy.has(subscriptionKey(item));
   const button = el('button', 'icon-button fav-toggle'); button.type = 'button';
@@ -546,7 +559,7 @@ function wait(signal) {
   });
 }
 $('search-form').addEventListener('submit', async event => {
-  event.preventDefault(); if (!userId) return; validateSearch(); if ($('search-button').disabled) return;
+  event.preventDefault(); if (!userId && !guest) return; validateSearch(); if ($('search-button').disabled) return;
   history = appendHistory(history, $('keyword').value); saveHistory(localStorage, history, userId); closeHistory();
   controller?.abort(); const current = ++batch;
   const active = new AbortController(); controller = active;
@@ -613,7 +626,7 @@ $('detail-dialog').addEventListener('close', () => $('detail-confirm').removeAtt
 refreshLanguage(); setView(view);
 
 export function clearUser() {
-  ++batch; ++currencyRequest; controller?.abort(); controller = null;
+  guest = false; ++batch; ++currencyRequest; controller?.abort(); controller = null;
   proxySettings.clear(); favoriteGroups.close(); $('favorites-bulk-remove-dialog').close(); selection.clear(); favorites.clear(); subscriptions.clear(); clearCards(); clearGraded(); cartSettings.reset(); hobbystationSettings.reset(); cardmaxSettings.reset(); hobbystationSettings.render(); cardmaxSettings.render(); hsCart.clear(); cmCart.clear(); cartPage.close(); productDetails.clear(); cartStock.clear(); cart.clear();
   userId = null; notificationEmail = null; showDetails = false; items = []; history = []; started = false; errors = [];
   displayCurrency = 'JPY'; exchangeRate = 1; currencyStatus = null;
@@ -624,10 +637,23 @@ export function clearUser() {
   $('detail-confirm').removeAttribute('href');
   setStatus(''); renderErrors(); renderCurrencyStatus(); searchFilters.reset(); favoriteFilters.reset(); validateSearch();
 }
+export function activateGuest() {
+  if (guest) return;  // already browsing as a guest: keep the results on screen
+  clearUser(); guest = true; requestAPI = apiRequest;
+  history = readHistory(localStorage, null); $('search').inert = false;
+  refreshLanguage();
+}
 export function activateUser(id, request, email = null) {
+  // Results a guest just found stay on screen after signing in from them.
+  const kept = guest && !controller ? {items, started, errors, keyword: $('keyword').value, statusKey, statusIcon} : null;
   clearUser(); userId = id; requestAPI = request; notificationEmail = email;
   history = readHistory(localStorage, userId); $('search').inert = false;
   proxySettings.activate(); favorites.activate(requestAPI); subscriptions.activate(requestAPI); activateCards(requestAPI); activateGraded(requestAPI); productDetails.activate(requestAPI); cartStock.activate(requestAPI); cart.refresh();
+  if (kept) {
+    ({items, started, errors} = kept); $('keyword').value = kept.keyword;
+    for (const item of items) rememberProduct(item);
+    setStatus(kept.statusKey, kept.statusIcon); renderErrors(); validateSearch();
+  }
   refreshLanguage();
   // Credentials kept in this tab across a reload are re-checked once, like the YuYu-Tei cart.
   for (const [shop, settings] of [[hobbystationClient, hobbystationSettings], [cardmaxClient, cardmaxSettings]]) {

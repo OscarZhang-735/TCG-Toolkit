@@ -1,16 +1,16 @@
-"""Authenticated currency conversion HTTP boundary."""
+"""Currency conversion HTTP boundary."""
 from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from ..auth.dependencies import current_user
+from ..auth.dependencies import guest_access
 from .client import CurrencyClient, CurrencyConfigError, CurrencyRequestError, TargetCurrency
 
 router = APIRouter()
 
 
-@router.get("/api/currency/convert", dependencies=[Depends(current_user)])
+@router.get("/api/currency/convert", dependencies=[Depends(guest_access("currency", 30))])
 def convert_currency(request: Request, to: TargetCurrency, amount: Annotated[float, Query(ge=0, allow_inf_nan=False)] = 1):
     try:
         with CurrencyClient(store=request.app.state.database) as currency:

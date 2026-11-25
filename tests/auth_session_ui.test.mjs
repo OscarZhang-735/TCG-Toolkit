@@ -6,7 +6,8 @@ import {runInNewContext} from 'node:vm';
 const source = (await readFile(new URL('../src/tcg_toolkit/static/auth.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\r?\n/gm, '');
 const noop = () => {};
-async function mount(initialToken = null, initialResponse) {
+async function mount(initialToken = null, initialResponse, initialHash = '#login') {
+  const location = {hash: initialHash};
   let token = initialToken, request = async () => initialResponse;
   const nodes = new Map();
   const node = id => {
@@ -19,8 +20,8 @@ async function mount(initialToken = null, initialResponse) {
   };
   const ui = {refresh: noop, reset: noop};
   await runInNewContext(`(async () => {${source}\n})()`, {
-    document: {getElementById: node, body: node('body'), querySelectorAll: () => []},
-    window: {addEventListener: noop}, location: {hash: '#login'}, setInterval: noop,
+    document: {getElementById: node, body: node('body'), querySelectorAll: () => [], addEventListener: noop},
+    window: {addEventListener: noop}, location, setInterval: noop,
     apiRequest: (...args) => request(...args), getToken: () => token, setToken: value => {token = value;}, TOKEN_KEY: 'tcg.session',
     t: key => key, applyLanguage: noop, setLanguage: noop, getLanguage: () => 'en',
     createAuthenticatedRequest: () => ({invalidate: noop, fetch: (...args) => request(...args)}),
@@ -30,7 +31,7 @@ async function mount(initialToken = null, initialResponse) {
     createPasswordUI: () => ui, createSubscriptionSettingsUI: () => ui, createNotificationEmailUI: () => ui,
     createAvatarCropper: () => ({}), loadImage: noop,
   });
-  return {node, getToken: () => token, setToken: value => {token = value;},
+  return {node, location, getToken: () => token, setToken: value => {token = value;},
     deferRequest() {let resolve; request = () => new Promise(r => {resolve = r;}); return value => resolve(value);}};
 }
 
@@ -60,4 +61,26 @@ test('restoring an invalidated session explains why sign-in is required', async 
   const view = await mount('invalidated-session', {ok: false, status: 401});
   assert.equal(view.getToken(), null);
   assert.equal(view.node('auth-error').textContent, 'auth_expired');
+});
+
+test('signed-out visitors start on search and see a sign-in placeholder on other pages', async () => {
+  const start = await mount(null, undefined, '');
+  assert.equal(start.location.hash, '#search');
+  assert.equal(start.node('search').hidden, false);
+  assert.equal(start.node('auth-panel').hidden, true);
+  assert.equal(start.node('guest-bar').hidden, false);
+
+  const favorites = await mount(null, undefined, '#favorites');
+  assert.equal(favorites.location.hash, '#favorites');
+  assert.equal(favorites.node('guest-panel').hidden, false);
+  assert.equal(favorites.node('search').hidden, true);
+  assert.equal(favorites.node('auth-panel').hidden, true);
+  assert.equal(favorites.node('favorites-panel').hidden, true);
+  assert.equal(favorites.node('guest-page-heading').textContent, 'guest_page_heading');
+
+  favorites.node('guest-page-register').listeners.click();
+  assert.equal(favorites.location.hash, '#login');
+  assert.equal(favorites.node('auth-panel').hidden, false);
+  assert.equal(favorites.node('auth-confirm-field').hidden, false);  // opened in register mode
+  assert.equal(favorites.node('auth-error').textContent, '');
 });
