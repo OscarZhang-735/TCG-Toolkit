@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from auth_helpers import install_mailbox, register_user
 from card_photos import corner_error, photo
+from cos_bucket import BUCKET, cos, signed_object_url
 from tcg_toolkit.grading import adapters, lookup as grading
 from tcg_toolkit.grading.concurrency import cancellable_client
 from tcg_toolkit.web import app
@@ -24,21 +25,9 @@ pytestmark = pytest.mark.skipif(os.getenv('TCG_BROWSER_TEST') != '1', reason='Se
 FIXTURES = Path(__file__).parent / 'fixtures'
 
 
-def test_graded_webui(postgres_schema, monkeypatch, tmp_path):
+def test_graded_webui(postgres_schema, monkeypatch, tmp_path, cos):
     from playwright.sync_api import sync_playwright, expect
 
-    # Uploaded card photos go to an in-memory bucket; the page serves its URLs from a fixture.
-    monkeypatch.setenv('TCG_AVATAR_COS_URL', 'https://cos.test')
-    bucket, removed = {}, []
-
-    class Stored:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
-    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.put', lambda url, content, **kwargs: (bucket.__setitem__(url, content), Stored())[1])
-    monkeypatch.setattr('tcg_toolkit.media.objects.httpx.delete', lambda url, **kwargs: (removed.append(url), bucket.pop(url, None), Stored())[2])
     slab, slab_corners = photo('slab', 'busy', 9, .06, (1600, 1200), 21)
     (tmp_path / 'slab.jpg').write_bytes(slab)
     flat, _ = photo('card', 'dark', -4, .03, (1200, 1600), 22)
@@ -97,6 +86,8 @@ def test_graded_webui(postgres_schema, monkeypatch, tmp_path):
                 image = (Path(__file__).parents[1] / 'src/tcg_toolkit/static/game-wsr.webp').read_bytes()
                 page.route('https://**/*', lambda route: route.fulfill(status=200, body=image, content_type='image/webp')
                            if route.request.resource_type == 'image' else route.continue_())
+                page.route(BUCKET + '/**', lambda route: route.fulfill(
+                    body=cos.objects[signed_object_url(route.request.url)], content_type='image/webp'))
 
                 def exchange_rate(route):
                     currency = httpx.URL(route.request.url).params['to']
@@ -306,15 +297,15 @@ def test_graded_webui(postgres_schema, monkeypatch, tmp_path):
                 page.locator('#graded-crop-save').click()
                 expect(crop).not_to_be_visible()
                 expect(page.locator('#graded-detail-body figure').first).to_contain_text('User photo')
-                assert len(bucket) == 1
-                stored_url = next(iter(bucket))
-                assert stored_url.startswith('https://cos.test/tcgtoolkit/graded/')
+                assert len(cos.objects) == 1
+                stored_url = next(iter(cos.objects))
+                assert stored_url.startswith(BUCKET + '/tcgtoolkit/graded/')
                 from PIL import Image
                 from io import BytesIO
-                with Image.open(BytesIO(bucket[stored_url])) as stored:
+                with Image.open(BytesIO(cos.objects[stored_url])) as stored:
                     assert stored.format == 'WEBP' and 0.5 < stored.width / stored.height < 0.7  # a slab, upright
                 expect(page.locator('#graded-grid article[data-id]').filter(has_text='047088950114')
-                       .locator('.graded-images img').first).to_have_attribute('src', stored_url)
+                       .locator('.graded-images img').first).to_have_attribute('src', re.compile(re.escape(stored_url) + r'\?'))
                 # Scanning the back takes the camera path and also starts from the detected outline.
                 page.locator('#graded-detail-body .graded-image-button').nth(1).click()
                 menu.get_by_role('menuitem', name='Scan card (camera)').click()
@@ -331,7 +322,7 @@ def test_graded_webui(postgres_schema, monkeypatch, tmp_path):
                 expect(page.locator('#graded-detail-body .graded-source-tag.uploaded')).to_have_count(1)
                 expect(page.locator('#graded-detail-body figure').first).to_contain_text('Click to upload the front image')
                 expect(page.locator('#graded-detail-body figure').first.locator('.graded-source-tag')).to_have_count(0)
-                assert removed == [stored_url]
+                assert cos.deleted == [stored_url]
                 page.locator('#graded-detail-close').click()
 
                 # A slow lookup is a card of the same size; cancelling ends the upstream request.

@@ -1,10 +1,16 @@
+from io import BytesIO
+from time import time
+
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import func, select, update
 
 from auth_helpers import register_user
+from cos_bucket import BUCKET, cos, signed_object_url
 from tcg_toolkit.auth.service import token_hash
-from tcg_toolkit.persistence.models import LoginSession, User
+from tcg_toolkit.media.objects import cleanup_image
+from tcg_toolkit.persistence.models import AvatarCleanup, LoginSession, User
 from tcg_toolkit.web import app
 
 ORIGIN = "https://testserver"
@@ -61,6 +67,38 @@ def test_new_login_replaces_other_device_and_stale_logout_is_harmless(client):
     with app.state.database.session() as db:
         assert db.scalar(select(func.count()).select_from(LoginSession).where(
             LoginSession.user_id == response.json()["user"]["id"])) == 1
+
+
+def test_private_avatar_reads_and_cleanup_retry(client, cos):
+    registered = register_user(client, **BODY).json()
+    client.headers['Authorization'] = 'Bearer ' + registered['token']
+    store = app.state.database
+    user_id = registered['user']['id']
+    # Existing records store the original object URL, without a signature.
+    original = BUCKET + '/tcgtoolkit/avatars/' + 'a' * 32 + '.webp'
+    with store.session() as db:
+        db.get(User, user_id).avatar_url = original
+    assert signed_object_url(client.get('/api/auth/me').json()['avatar_url']) == original
+
+    cos.deny_delete = True
+    photo = BytesIO()
+    Image.new('RGB', (32, 32)).save(photo, format='PNG')
+    response = client.put('/api/auth/avatar', content=photo.getvalue(), headers={'Content-Type': 'image/png'})
+    assert response.status_code == 200
+    replacement = signed_object_url(response.json()['avatar_url'])
+    assert replacement in cos.objects and cos.deleted == [original]
+    with store.session() as db:
+        assert db.get(User, user_id).avatar_url == replacement
+        pending = db.get(AvatarCleanup, original)
+        assert pending.next_attempt_at > time()
+        pending.next_attempt_at = 0
+
+    cos.deny_delete = False
+    # The object is already absent. COS returns 404 and the retry clears the queue.
+    assert cleanup_image(store, original)
+    assert cos.deleted == [original, original]
+    with store.session() as db:
+        assert db.get(AvatarCleanup, original) is None
 
 
 def test_validation_and_errors(client):

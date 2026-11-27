@@ -153,7 +153,7 @@ class GradedCard(Base):
     created_at: Mapped[int]
     refreshed_at: Mapped[int]
     sort_id: Mapped[int] = mapped_column(Identity(always=True))
-    # Photos the user uploaded (public COS WebP); shown instead of the provider's images
+    # Stable COS URLs for user photos; signed for display in place of the provider's images
     # and never touched by a lookup refresh.
     front_image_url: Mapped[str | None]
     back_image_url: Mapped[str | None]

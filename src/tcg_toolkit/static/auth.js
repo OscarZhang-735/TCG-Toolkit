@@ -10,7 +10,7 @@ import {createPasswordUI} from './account/password-ui.js';
 import {createSubscriptionSettingsUI} from './subscriptions/subscription-settings-ui.js';
 import {createNotificationEmailUI} from './account/notification-email-ui.js';
 import {createAvatarCropper} from './account/avatar-crop-ui.js';
-import {loadImage} from './shared/load-image.js';
+import {expiredImageSignature, loadImage} from './shared/load-image.js';
 const $ = id => document.getElementById(id);
 let user = null, searchApp = null, registering = false, errorKey = '';
 let bindError = '', authGeneration = 0, forgotten = false;
@@ -155,11 +155,27 @@ function updateConfirmState() {
   if (value && !match) $('auth-confirm-password').setAttribute('aria-invalid', 'true');
   else $('auth-confirm-password').removeAttribute('aria-invalid');
 }
+let lastAvatarRenewal;
+async function renewAvatar(url) {
+  if (user?.avatar_url !== url || lastAvatarRenewal === url || !expiredImageSignature(url)) return;
+  lastAvatarRenewal = url;
+  const generation = authGeneration;
+  try {
+    const response = await api.fetch('/api/auth/me', {cache: 'no-store'});
+    if (!response.ok) return;
+    const profile = await response.json();
+    if (authGeneration === generation && user?.avatar_url === url) {
+      user.avatar_url = profile.avatar_url;
+      renderDisplayName();
+    }
+  } catch { /* The initials remain visible. */ }
+}
 function setAvatar(name, url) {
   const [first = ''] = name;
   const initial = first.toUpperCase();
   for (const id of ['user-avatar', 'account-avatar']) {
     const avatar = $(id);
+    if (url && avatar.firstElementChild?.getAttribute('src') === url) continue;
     avatar.textContent = initial;
     if (!url) continue;
     const image = document.createElement('img');
@@ -168,6 +184,7 @@ function setAvatar(name, url) {
     image.addEventListener('load', () => {
       if (user?.avatar_url === url) avatar.replaceChildren(image);
     }, {once: true});
+    image.addEventListener('error', () => renewAvatar(image.src), {once: true});
     image.src = url;
   }
 }

@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from PIL import Image, ImageOps
 
 from ..persistence.models import AvatarCleanup, User
-from ..media.objects import AVATAR_PREFIX, cleanup_image, image_bucket, is_stored_image, store_webp
+from ..media.objects import AVATAR_PREFIX, cleanup_image, image_bucket, is_stored_image, signed_image_url, store_webp
 
 AVATAR_LIMIT = 5 * 1024 * 1024
 AVATAR_TYPES = {'image/jpeg': 'JPEG', 'image/png': 'PNG', 'image/webp': 'WEBP'}
@@ -44,4 +44,4 @@ def save_avatar(store, user_id, content, media_type):
             previous = None
     if previous:
         cleanup_image(store, previous)
-    return {"avatar_url": url}
+    return {"avatar_url": signed_image_url(url)}

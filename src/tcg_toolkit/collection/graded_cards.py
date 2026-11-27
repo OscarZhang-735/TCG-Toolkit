@@ -7,7 +7,7 @@ the provider answers. A lookup sent with a ``request_id`` can be cancelled throu
 
 Users may also replace either side's image with their own photo: ``detect-card`` finds the
 card or slab outline with OpenCV, and the upload is perspective-cropped to the four
-corners the user confirmed, then stored as public WebP in the avatar COS bucket.
+corners the user confirmed, then stored as WebP in the private COS bucket.
 """
 import json
 import re
@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..auth.dependencies import current_user, require_trusted_origin, write_guard
 from ..grading.lookup import LOOKUPS, lookup_certificate, normalize_request, present
-from ..media.objects import GRADED_PREFIX, cleanup_image, image_bucket, is_stored_image, store_webp
+from ..media.objects import GRADED_PREFIX, cleanup_image, image_bucket, is_stored_image, signed_image_url, store_webp
 from ..persistence.database import is_unique_violation
 from ..persistence.models import AvatarCleanup, GradedCard, GradedCardGroup
 from .card_detect import ImageError, crop_card, detect_card, load_image
@@ -90,7 +90,7 @@ def slab_images(images, uploaded):
     result = []
     for side in SIDES:
         if uploaded.get(side):
-            result.append({'url': uploaded[side], 'alt': f'Uploaded {side}', 'side': side,
+            result.append({'url': signed_image_url(uploaded[side]), 'alt': f'Uploaded {side}', 'side': side,
                            'thumbnail_url': None, 'uploaded': True})
             continue
         image = sides[side] or next(untagged, None)

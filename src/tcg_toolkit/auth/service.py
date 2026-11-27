@@ -7,6 +7,7 @@ import uuid
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from ..media.objects import signed_image_url
 from ..persistence.database import email_lock, is_unique_violation
 from ..persistence.models import EmailChallenge, LoginSession, User
 from .passwords import hasher, verify_password
@@ -16,7 +17,8 @@ SESSION_SECONDS = 7 * 24 * 60 * 60
 
 
 def public_user(user: User):
-    return {**{key: getattr(user, key) for key in ("id", "username", "nickname", "created_at", "email", "avatar_url")},
+    return {**{key: getattr(user, key) for key in ("id", "username", "nickname", "created_at", "email")},
+            "avatar_url": signed_image_url(user.avatar_url),
             "email_verified": user.email_verified_at is not None}
 
 

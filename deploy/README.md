@@ -19,6 +19,7 @@
 - `PGDATABASE=tcg`、`PGUSER=tcg`、随机 `PGPASSWORD` 和另一个随机 `TCG_PG_ADMIN_PASSWORD`。
 - `TCG_POSTGRES_IMAGE`：与本次发布匹配的 PostgreSQL 17 digest；大版本升级必须另行安排。
 - `TCG_DB_SUBNET=10.205.0.0/24`：数据库内部网络，可按宿主机网络调整。
+- 使用头像或评级卡照片时，将 COS 桶设为私有读写，`TCG_AVATAR_COS_URL` 填腾讯云桶源站 `https://<bucket-appid>.cos.<region>.myqcloud.com`。仅在后端设置 `TCG_COS_SECRET_ID` 和 `TCG_COS_SECRET_KEY`，授予该身份对 `tcgtoolkit/avatars/*` 和 `tcgtoolkit/graded/*` 的 `cos:GetObject`、`cos:PutObject` 和 `cos:DeleteObject` 权限。
 - `PROXY_GO_API` / `PROXY_GO_API_KEY`：PSA、CGC 证书网页查询使用的 `proxy-go` 网关地址和密钥，地址支持基础 URL 或完整 `/v1/fetch`。缺少任一项时查询返回 503 `psa_not_configured` 或 `cgc_not_configured`。迁移 Proxy-Go 到服务器时更新这两项并重新创建 Web 容器；地址须能从容器访问。ARS 直连官网。返回结构与验收方式见[开发文档](../docs/developer.md#评级卡证书查询)。
 - 保留 `API_DOMAIN`、`TCG_PROXY_IPS`、RapidAPI、搜索代理、SMTP 参数及稳定的 `TCG_EMAIL_CODE_SECRET`。
 
@@ -101,7 +102,7 @@ sudo python3 /opt/tcg-http/releases/当前版本/deploy.py /opt/tcg-http --rollb
 
 ## 验收
 
-评级卡 WebUI 需要 schema **19**（`0015_graded_cards.py` 至 `0019_graded_card_display_names.py`）；Web 镜像新增 `opencv-python-headless` 依赖（约 +100 MB），评级卡上传图片使用与头像相同的 `TCG_AVATAR_COS_URL` 存储桶（前缀 `/tcgtoolkit/graded/`，需允许 PUT/DELETE）；共同发布先备份并迁移，再启动匹配的 Web。确认前端发布包含 `graded-cards.js`、`graded-cards-ui.js`、`grading-scan.js` 和 `jsqr.js`。反向代理的读取超时需覆盖慢查询（建议至少 300 秒）；HTTPS 下才能在公网使用摄像头扫码。
+评级卡 WebUI 需要 schema **19**（`0015_graded_cards.py` 至 `0019_graded_card_display_names.py`）；Web 镜像新增 `opencv-python-headless` 依赖（约 +100 MB），评级卡照片使用上文配置的私有 COS 桶和后端凭据；共同发布先备份并迁移，再启动匹配的 Web。确认前端发布包含 `graded-cards.js`、`graded-cards-ui.js`、`grading-scan.js` 和 `jsqr.js`。反向代理的读取超时需覆盖慢查询（建议至少 300 秒）；HTTPS 下才能在公网使用摄像头扫码。
 
 登录后进入“评级卡牌”，分别验证 PSA/CGC/ARS 新增、刷新页面后的持久化、重复提示、重新查询、详情和正反面图片、照片识别、删除确认及另一个账号的数据隔离。ARS 无图片时显示占位。自动化命令与浏览器验收范围见[评级卡验收](../docs/developer.md#评级卡验收)。
 
