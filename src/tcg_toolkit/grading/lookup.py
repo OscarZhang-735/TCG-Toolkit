@@ -1,10 +1,12 @@
 """Provider registry, certificate presentation and lookup lifecycle."""
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Callable
 
 from fastapi import HTTPException
 
+from ..persistence.models import User
 from .adapters import fetch_ars, fetch_cgc, fetch_pcgcn, fetch_psa
 from .concurrency import LookupRegistry, LookupSlots, raise_if_cancelled
 
@@ -67,6 +69,7 @@ def present(provider_id, certificate):
 
 LOOKUPS = LookupRegistry()
 LOOKUP_SLOTS = LookupSlots()
+DAILY_PAID_LOOKUP_LIMIT = 20
 
 
 def normalize_request(provider_id, cert_number):
@@ -79,11 +82,26 @@ def normalize_request(provider_id, cert_number):
     return provider, cert_number
 
 
-def lookup_certificate(provider_id, cert_number, user_id):
+def reserve_paid_lookup(database, user_id):
+    """Commit the attempt before contacting the provider, then release the account lock."""
+    with database.session() as db:
+        user = db.get_one(User, user_id, with_for_update=True)
+        today = datetime.now(UTC).date()
+        if user.grading_lookup_date != today:
+            user.grading_lookup_date = today
+            user.grading_lookup_count = 0
+        if user.grading_lookup_count >= DAILY_PAID_LOOKUP_LIMIT:
+            raise HTTPException(429, detail='grading_daily_limit')
+        user.grading_lookup_count += 1
+
+
+def lookup_certificate(provider_id, cert_number, user_id, database):
     """Validate, take a lookup slot and fetch. Blocking: call it from a worker thread."""
     provider, cert_number = normalize_request(provider_id, cert_number)
     raise_if_cancelled()
     with LOOKUP_SLOTS.hold(user_id):
+        if provider.id in ('psa', 'cgc'):
+            reserve_paid_lookup(database, user_id)
         try:
             result = provider.fetch(cert_number)
         except Exception:

@@ -144,7 +144,7 @@ def add(body: GradedCardInput, request: Request, user=Depends(current_user)):
         if body.group_id is not None:
             collection_groups.owned(db, user['id'], body.group_id)
     with LOOKUPS.track(user['id'], body.request_id) as token:
-        result = lookup_certificate(provider.id, cert_number, user['id'])
+        result = lookup_certificate(provider.id, cert_number, user['id'], request.app.state.database)
         keep_result(token)
         now = int(time.time())
         with request.app.state.database.session() as db:
@@ -204,7 +204,7 @@ def refresh(card_id: str, request: Request, body: LookupInput, user=Depends(curr
         provider, cert_number = row.provider, row.cert_number
     # A failed or cancelled lookup raises before the write, so the saved snapshot stays.
     with LOOKUPS.track(user['id'], body.request_id) as token:
-        result = lookup_certificate(provider, cert_number, user['id'])
+        result = lookup_certificate(provider, cert_number, user['id'], request.app.state.database)
         keep_result(token)
         with request.app.state.database.session() as db:
             row = owned(db, user['id'], card_id, lock=True)

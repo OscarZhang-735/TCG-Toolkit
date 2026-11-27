@@ -1,5 +1,5 @@
 """Authenticated HTTP endpoints for grading providers and certificates."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from starlette.concurrency import run_in_threadpool
 
 from ..auth.dependencies import current_user
@@ -15,5 +15,5 @@ def providers():
 
 
 @router.get('/{provider}/certificates/{cert_number}')
-async def certificate(provider: str, cert_number: str, user=Depends(current_user)):
-    return await run_in_threadpool(lookup_certificate, provider, cert_number, user['id'])
+async def certificate(provider: str, cert_number: str, request: Request, user=Depends(current_user)):
+    return await run_in_threadpool(lookup_certificate, provider, cert_number, user['id'], request.app.state.database)

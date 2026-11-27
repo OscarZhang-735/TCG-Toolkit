@@ -27,6 +27,8 @@ class User(Base):
     notification_email_verified_at: Mapped[int | None]
     avatar_url: Mapped[str | None]
     subscription_interval_hours: Mapped[int] = mapped_column(Integer, server_default="24")
+    grading_lookup_date: Mapped[date | None] = mapped_column(Date)
+    grading_lookup_count: Mapped[int] = mapped_column(Integer, server_default="0")
     __table_args__ = (Index("users_username", func.lower(username), unique=True),
                      CheckConstraint("subscription_interval_hours >= 1", name="users_subscription_interval_positive"))
 
