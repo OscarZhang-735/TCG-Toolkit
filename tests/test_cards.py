@@ -1,10 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
+from xlsxwriter import Workbook
 
 from auth_helpers import register_user
-from tcg_toolkit.collection.transfer import XLSX_MEDIA_TYPE
+from tcg_toolkit.collection import transfer
 from tcg_toolkit.web import app
 
 ORIGIN = 'https://testserver'
@@ -25,7 +27,7 @@ def client(monkeypatch, postgres_schema):
         yield client
 
 
-@pytest.mark.parametrize('format,media_type', [('json', 'application/json'), ('xlsx', XLSX_MEDIA_TYPE)])
+@pytest.mark.parametrize('format,media_type', [('json', 'application/json'), ('xlsx', transfer.XLSX_MEDIA_TYPE)])
 def test_import_exported_cards_into_current_account(client, format, media_type):
     group = client.post('/api/cards/groups', json={'name': 'Binder'}).json()
     card = {**CARD, 'card_number': '00123', 'price': 12.34, 'currency': 'CAD',
@@ -48,6 +50,28 @@ def test_import_exported_cards_into_current_account(client, format, media_type):
     client.put('/api/cards/' + imported['id'], json={**imported, 'quantity': 0})
     assert client.post(path, content=exported, headers=headers).json() == {'imported': 0, 'skipped': 1}
     assert client.get('/api/cards').json()['items'][0]['quantity'] == 0
+
+
+def test_xlsx_import_row_limit_counts_blank_rows(client, monkeypatch):
+    content = BytesIO()
+    with Workbook(content, {'in_memory': True}) as workbook:
+        sheet = workbook.add_worksheet()
+        sheet.write_row(0, 0, [*CARD, 'group'])
+        sheet.write_row(2, 0, [*CARD.values(), 'Binder'])
+        sheet.set_row(3, 24)  # A blank fourth row with a custom height.
+
+    path = '/api/cards/import?format=xlsx'
+    headers = {'Content-Type': transfer.XLSX_MEDIA_TYPE}
+    monkeypatch.setattr(transfer, 'XLSX_IMPORT_MAX_ROWS', 3)
+    response = client.post(path, content=content.getvalue(), headers=headers)
+    assert response.status_code == 413
+    assert response.json()['detail'] == 'cards_import_too_large'
+    assert client.get('/api/cards').json()['items'] == []
+    assert client.get('/api/cards/groups').json()['items'] == []
+
+    monkeypatch.setattr(transfer, 'XLSX_IMPORT_MAX_ROWS', 4)
+    response = client.post(path, content=content.getvalue(), headers=headers)
+    assert response.json() == {'imported': 1, 'skipped': 0}
 
 
 def test_import_rejects_invalid_rows_without_writing_any_cards(client):

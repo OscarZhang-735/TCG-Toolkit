@@ -66,7 +66,7 @@ async function ready(options = {}, init = {}) {
   return {graded, backend, changes};
 }
 
-test('error details map to one message per kind, and only number problems are final', () => {
+test('error details map to localized messages and distinguish immediately retryable errors', () => {
   assert.deepEqual(gradingError('psa_timeout', 504), {key: 'graded_error_timeout', retryable: true, code: 'psa_timeout'});
   assert.equal(gradingError('cgc_rate_limited', 502).key, 'graded_error_rate_limited');
   // A provider added later needs no new strings.
@@ -77,6 +77,7 @@ test('error details map to one message per kind, and only number problems are fi
     assert.equal(gradingError(detail, 404).retryable, false, detail);
   }
   assert.deepEqual(gradingError('grading_busy', 429), {key: 'graded_error_busy', retryable: true, code: 'grading_busy'});
+  assert.deepEqual(gradingError('grading_daily_limit', 429), {key: 'graded_error_daily_limit', retryable: false, code: 'grading_daily_limit'});
   assert.deepEqual(gradingError(undefined, 0), {key: 'graded_error_network', retryable: true, code: ''});
   assert.deepEqual(gradingError([{msg: 'bad'}], 500), {key: 'graded_error_failed', retryable: true, code: 'HTTP 500'});
   assert.equal(gradingError('something_new_but_unknown', 502).key, 'graded_error_failed');

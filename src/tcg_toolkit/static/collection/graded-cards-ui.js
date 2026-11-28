@@ -5,7 +5,7 @@ import {createGradedCards, filterGraded, formatElapsed, slabImages, fullCorners,
 import {parseScan, getDecoder, decodePhoto, startCamera, cameraSupported} from './grading-scan.js';
 import {t, getLanguage} from '../i18n.js';
 import {cardImage, openPreview} from '../catalog/card-view.js';
-import {loadImage} from '../shared/load-image.js';
+import {expiredImageSignature, loadImage} from '../shared/load-image.js';
 import {createCropEditor} from './graded-crop.js';
 import {numberButton} from '../shared/copy-number.js';
 import {setNavCount} from '../shared/nav-count.js';
@@ -39,6 +39,39 @@ const groups = bindGroups(graded, {prefix: 'graded', deleteMessage: 'graded_grou
 const groupName = id => graded.state.groups.find(group => group.id === id)?.name ?? null;
 let displayCurrency = 'JPY', requestAPI;
 const rateCache = createRateCache(() => render());
+
+// A tab can keep its list longer than a private photo's signature. One read
+// refreshes the listed photos if an expired link actually fails to load.
+let attemptedPhotoUrls = new Set();
+async function renewExpiredPhoto(event) {
+  const url = event.target.src;
+  if (!url || !requestAPI || attemptedPhotoUrls.has(url) || !expiredImageSignature(url)) return;
+  const previous = new Map(graded.state.records.map(row => [row.id, row.images]));
+  const urls = new Set([...previous.values()].flat().filter(image => image.uploaded && image.url)
+    .map(image => image.url).filter(expiredImageSignature));
+  if (!urls.has(url)) return;
+  attemptedPhotoUrls = urls;
+  try {
+    const response = await requestAPI('/api/graded-cards', {cache: 'no-store'});
+    if (!response.ok) return;
+    const {items} = await response.json(), latest = new Map(items.map(row => [row.id, row.images]));
+    const preview = $('preview-image');
+    for (const row of graded.state.records) {
+      // Uploads, removals and account switches may finish during the read.
+      if (row.images !== previous.get(row.id) || !latest.has(row.id)) continue;
+      const openPhoto = row.images.find(image => image.url && image.url === preview.src);
+      row.images = latest.get(row.id);
+      if (openPhoto) {
+        const replacement = row.images.find(image => image.side === openPhoto.side);
+        if (replacement?.url) preview.src = replacement.url;
+      }
+    }
+    render();
+  } catch { /* The existing image fallback remains visible. */ }
+}
+for (const id of ['graded-panel', 'graded-detail-dialog', 'preview-image']) {
+  $(id).addEventListener('error', renewExpiredPhoto, true);
+}
 
 export function setGradedCurrency(currency, rate) {
   displayCurrency = currency;
@@ -674,7 +707,7 @@ function detailSide(row, side, image) {
   // An empty side invites an upload (the menu opens on click).
   const placeholder = node('span', t(side === 'front' ? 'graded_detail_upload_front' : 'graded_detail_upload_back'), 'image-fallback');
   button.append(placeholder);
-  if (image) {
+  if (image?.url) {
     const picture = document.createElement('img');
     picture.alt = `${labelName(row)} · ${label}`; picture.decoding = 'async'; picture.referrerPolicy = 'no-referrer';
     picture.addEventListener('load', () => { placeholder.hidden = true; });
@@ -709,7 +742,7 @@ function toggleImageMenu(figure, button, row, side, image) {
     entry.addEventListener('click', () => { closeImageMenu(); button.focus(); handler(); });
     return entry;
   };
-  if (image) {
+  if (image?.url) {
     menu.append(item('bi-zoom-in', t('graded_image_view'), () => openPreview(
       {name: `${labelName(row)} · ${sideLabel(side)}`, card_number: row.cert_number}, image.thumbnail_url || image.url, image.url)));
   }
@@ -1065,6 +1098,7 @@ $('language').addEventListener('change', () => { chipsSignature = ''; detailSign
 
 export function clearGraded() {
   requestAPI = undefined; displayCurrency = 'JPY'; rateCache.reset();
+  attemptedPhotoUrls.clear();
   stopScan(); photoGeneration++; photoBusy = false;
   for (const id of ['graded-dialog', 'graded-detail-dialog', 'graded-delete-dialog', 'graded-crop-dialog']) $(id).close();
   filters = blankFilters(); $('graded-query').value = ''; chipsSignature = ''; pendingDelete = null; detailId = null;

@@ -1,5 +1,7 @@
 """Saved certificate API acceptance against the isolated PostgreSQL schema."""
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import date
 
 import pytest
 from fastapi import HTTPException
@@ -9,7 +11,7 @@ from sqlalchemy import select
 from auth_helpers import register_user
 from tcg_toolkit.grading import lookup as grading
 from tcg_toolkit.grading.concurrency import LookupSlots
-from tcg_toolkit.persistence.models import GradedCard
+from tcg_toolkit.persistence.models import GradedCard, User
 from tcg_toolkit.persistence.runtime import open_database
 from tcg_toolkit.web import app
 
@@ -80,6 +82,48 @@ def test_duplicate_is_detected_before_lookup(client, monkeypatch):
     response = add(client, ' 00123 ')
     assert response.status_code == 409
     assert response.json()['detail'] == {'type': 'graded_card_duplicate', 'id': saved['id']}
+
+
+def test_daily_quota_is_shared_by_paid_providers_and_lookup_routes(client, monkeypatch):
+    monkeypatch.setattr(grading, 'DAILY_PAID_LOOKUP_LIMIT', 2)
+    card = add(client).json()
+    assert client.get('/api/grading/cgc/certificates/234').status_code == 200
+
+    fetch_with(monkeypatch, lambda number: pytest.fail('quota must be checked before fetching'))
+    denied = [client.get('/api/grading/psa/certificates/456'),
+              add(client, '456'),
+              client.post(f"{PATH}/{card['id']}/refresh", json={})]
+    for response in denied:
+        assert response.status_code == 429
+        assert response.json()['detail'] == 'grading_daily_limit'
+    for provider in ('ars', 'pcgcn'):
+        assert client.get(f'/api/grading/{provider}/certificates/234').status_code == 200
+
+    client.headers['Authorization'] = 'Bearer ' + register_user(client, 'bob').json()['token']
+    assert client.get('/api/grading/cgc/certificates/234').status_code == 200
+
+
+def test_failed_paid_lookup_counts_until_the_next_day(client, monkeypatch):
+    monkeypatch.setattr(grading, 'DAILY_PAID_LOOKUP_LIMIT', 1)
+
+    def unavailable(number):
+        raise HTTPException(504, detail='psa_timeout')
+
+    fetch_with(monkeypatch, unavailable)
+    assert client.get('/api/grading/psa/certificates/123').status_code == 504
+    path = '/api/grading/cgc/certificates/123'
+    assert client.get(path).status_code == 429
+    with app.state.database.session() as db:
+        db.scalar(select(User).where(User.username == 'alice')).grading_lookup_date = date(2000, 1, 1)
+    assert client.get(path).status_code == 200
+    assert client.get(path).status_code == 429
+
+
+def test_concurrent_paid_lookups_share_the_last_slot(client, monkeypatch):
+    monkeypatch.setattr(grading, 'DAILY_PAID_LOOKUP_LIMIT', 1)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = pool.map(client.get, ['/api/grading/psa/certificates/123', '/api/grading/cgc/certificates/456'])
+    assert sorted(response.status_code for response in responses) == [200, 429]
 
 
 def test_authentication_write_guards_and_account_isolation(client, monkeypatch):

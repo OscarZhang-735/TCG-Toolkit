@@ -13,9 +13,9 @@ const KIND_KEYS = {timeout: 'graded_error_timeout', rate_limited: 'graded_error_
   authentication_failed: 'graded_error_gateway', not_configured: 'graded_error_not_configured'};
 const DETAIL_KEYS = {grading_certificate_not_found: 'graded_error_not_found', invalid_cert_number: 'graded_error_invalid_number',
   unsupported_grading_provider: 'graded_error_provider', grading_busy: 'graded_error_busy',
-  graded_card_not_found: 'graded_error_missing'};
-// Asking again cannot help these: the number or provider has to change.
-const FINAL = new Set(['graded_error_not_found', 'graded_error_invalid_number', 'graded_error_provider']);
+  grading_daily_limit: 'graded_error_daily_limit', graded_card_not_found: 'graded_error_missing'};
+// An immediate retry cannot resolve these errors.
+const FINAL = new Set(['graded_error_not_found', 'graded_error_invalid_number', 'graded_error_provider', 'graded_error_daily_limit']);
 const KIND = /^[a-z0-9]+_(timeout|rate_limited|unavailable|unreadable|authentication_failed|not_configured)$/;
 export const ERROR_KEYS = [...new Set([...Object.values(KIND_KEYS), ...Object.values(DETAIL_KEYS),
   'graded_error_network', 'graded_error_client_timeout', 'graded_error_failed'])];

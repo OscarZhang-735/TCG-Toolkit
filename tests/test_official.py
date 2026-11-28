@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 
 import httpx
@@ -62,6 +63,22 @@ def test_pm_metadata_and_duplicate_numbers():
     assert all(x['game'] == 'PM' and x['card_number'] == '01-001' for x in items)
     assert items[0]['rarity'] == 'UC' and items[1]['rarity'] == 'R'
     assert items[0]['name'] != items[1]['name']
+
+
+@pytest.mark.parametrize('location', ['http://127.0.0.1/', 'http://10.0.0.1/', 'https://other.example/'])
+def test_pm_rejects_redirect_without_following(monkeypatch, location):
+    requests = []
+
+    def respond(request):
+        requests.append(request.url)
+        assert len(requests) == 1
+        return httpx.Response(302, headers={'Location': location})
+
+    monkeypatch.setattr(httpx, 'Client', partial(httpx.Client, transport=httpx.MockTransport(respond)))
+    with pytest.raises(official_routes.HTTPException) as exc:
+        official_routes.search_pm('01-001')
+    assert (exc.value.status_code, exc.value.detail) == (502, 'official_unavailable')
+    assert requests == [httpx.URL(official.PM_SEARCH, params={'s_flg': 'on', 'keyword_card': '01-001'})]
 
 
 @pytest.mark.parametrize('parse,file,number,game,name,rarity', [

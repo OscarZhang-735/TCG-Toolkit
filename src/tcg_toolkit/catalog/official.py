@@ -138,7 +138,7 @@ def search_pm(word: str = Query(min_length=1, max_length=100), exact: bool = Fal
     if not word.strip():
         raise HTTPException(422, detail='empty_keyword')
     try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
+        with httpx.Client(timeout=20, follow_redirects=False) as client:
             params = {'s_flg': 'on', 'keyword_card': word.strip()}
             matches, previous = [], None
             page = 0  # Drupal's first results page is zero.

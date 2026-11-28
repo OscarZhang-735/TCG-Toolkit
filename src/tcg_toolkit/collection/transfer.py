@@ -26,6 +26,7 @@ EXPORT_COLUMNS = ('game', 'card_number', 'rarity', 'name', 'quantity', 'price', 
                   'image_url', 'id', 'created_at', 'updated_at')
 XLSX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 IMPORT_LIMIT = 10 * 1024 * 1024
+XLSX_IMPORT_MAX_ROWS = 10_000  # Includes the header and blank rows.
 REQUIRED_COLUMNS = {key for key, field in CardInput.model_fields.items() if field.is_required()}
 IMPORT_COLUMNS = {*CardInput.model_fields, 'group'}
 EXPORT_WIDTHS = {'game': 20, 'card_number': 20, 'rarity': 20, 'name': 36, 'quantity': 18, 'price': 18, 'currency': 12,
@@ -110,6 +111,8 @@ def xlsx_import_rows(content):
                 or len(set(headers)) != len(headers) or not REQUIRED_COLUMNS.issubset(headers)):
             raise HTTPException(422, detail='cards_import_headers')
         for line, cells in enumerate(rows, 2):
+            if line > XLSX_IMPORT_MAX_ROWS:
+                raise HTTPException(413, detail='cards_import_too_large')
             if not any(cell.value is not None for cell in cells):
                 continue
             if any(cell.value is not None for cell in cells[len(headers):]):

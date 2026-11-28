@@ -10,7 +10,7 @@ from sqlalchemy import func, inspect, select
 from .database import Database
 from .models import SchemaMigration
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 def alembic_config(connection):

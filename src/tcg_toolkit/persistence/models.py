@@ -27,6 +27,8 @@ class User(Base):
     notification_email_verified_at: Mapped[int | None]
     avatar_url: Mapped[str | None]
     subscription_interval_hours: Mapped[int] = mapped_column(Integer, server_default="24")
+    grading_lookup_date: Mapped[date | None] = mapped_column(Date)
+    grading_lookup_count: Mapped[int] = mapped_column(Integer, server_default="0")
     __table_args__ = (Index("users_username", func.lower(username), unique=True),
                      CheckConstraint("subscription_interval_hours >= 1", name="users_subscription_interval_positive"))
 
@@ -153,7 +155,7 @@ class GradedCard(Base):
     created_at: Mapped[int]
     refreshed_at: Mapped[int]
     sort_id: Mapped[int] = mapped_column(Identity(always=True))
-    # Photos the user uploaded (public COS WebP); shown instead of the provider's images
+    # Stable COS URLs for user photos; signed for display in place of the provider's images
     # and never touched by a lookup refresh.
     front_image_url: Mapped[str | None]
     back_image_url: Mapped[str | None]

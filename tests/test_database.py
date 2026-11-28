@@ -63,12 +63,13 @@ def test_existing_pre_orm_schema_is_stamped_without_recreating_data(empty_databa
                    game_key='wsr', number_key='a-001', rarity_key='r', created_at=1, updated_at=1))
     assert schema.migrate(empty_database) == schema.SCHEMA_VERSION
     with open_database(empty_database) as store, store.session() as db:
-        assert db.get(User, 'legacy').username == 'alice'
+        user = db.get(User, 'legacy')
+        assert (user.username, user.grading_lookup_date, user.grading_lookup_count) == ('alice', None, 0)
         assert db.get(LoginSession, 'legacy-token').user_id == 'legacy'
         assert db.get(Favorite, 'favorite').snapshot == '{}'
         assert db.get(Favorite, 'favorite').group_id is None
         assert db.get(OwnedCard, 'card').quantity == 3
-        assert MigrationContext.configure(db.connection()).get_current_revision() == '0019'
+        assert MigrationContext.configure(db.connection()).get_current_revision() == f'{schema.SCHEMA_VERSION:04d}'
 
 
 def test_orm_metadata_matches_the_deployed_schema():
@@ -132,9 +133,10 @@ def test_newer_schema_is_rejected():
 def test_failed_migration_rolls_back_schema_and_version(empty_database, tmp_path, monkeypatch):
     scripts = tmp_path / 'migrations'
     shutil.copytree(str(files('tcg_toolkit').joinpath('migrations')), scripts)
-    (scripts / 'versions' / '0020_failure.py').write_text(
+    next_revision = f'{schema.SCHEMA_VERSION + 1:04d}'
+    (scripts / 'versions' / f'{next_revision}_failure.py').write_text(
         "from alembic import op\nimport sqlalchemy as sa\n"
-        "revision='0020'\ndown_revision='0019'\n"
+        f"revision='{next_revision}'\ndown_revision='{schema.SCHEMA_VERSION:04d}'\n"
         "def upgrade():\n    op.create_table('partial',sa.Column('id',sa.Integer))\n"
         "    raise RuntimeError('simulated migration failure')\n")
     original = schema.alembic_config
